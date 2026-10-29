@@ -12,6 +12,8 @@
 #include "native_outer_bank.hpp"
 #include "native_outer_anchors.hpp"
 #include "xr_sizes.hpp"
+#include "native_xr_views.hpp"
+#include "resource_diagnostics.hpp"
 #include "../prototype/lmu_reconstructed.hpp"
 #include "vendor/minhook-1.3.4/include/MinHook.h"
 #include <wincrypt.h>
@@ -34,6 +36,7 @@ using MaskFn = void (*)(void*, void*);
 using MainPassFn = void (*)(void*, void*, void*, std::uint32_t, bool);
 using WorldSortFn = void (*)(void*, void*, void*, std::int32_t, std::uint32_t, bool, void*);
 using NativeViewFn = void (*)(void*,void*,void*,bool,bool);
+using FovScaleFn = const float* (*)(void*);
 
 #pragma pack(push,1)
 struct UiArgs { std::uint32_t mode; TransformRecord transform[2]; };
@@ -50,6 +53,12 @@ MaskFn maskOriginal{};
 MainPassFn mainPassOriginal{};
 WorldSortFn worldSortOriginal{};
 NativeViewFn nativeViewOriginal{};
+FovScaleFn fovScaleOriginal{};
+constexpr std::uintptr_t fovScaleRva=0x5bb4c0;
+constexpr std::array<std::uint8_t,8> fovScaleAnchor{0x48,0x8d,0x81,0xe0,0x70,0x07,0x00,0xc3};
+constexpr std::array<std::uintptr_t,3> fovScaleCallers{0x5bd63c,0x5bd652,0x5baaf1};
+constexpr std::array<std::uint8_t,6> fovScaleCallAnchor{0xff,0x90,0x78,0x0c,0x00,0x00};
+bool fovScaleLogged=false;
 NativeOuterBank nativeOuterBanks[2];
 bool nativeOuterOptIn=false,nativeOuterFailed=false;
 // Failure to allocate an optional small bank is recoverable. A size mismatch
@@ -57,6 +66,24 @@ bool nativeOuterOptIn=false,nativeOuterFailed=false;
 bool nativeQuadSubmissionBlocked=false;
 XrOutputSizes nativeOuterSizes;
 bool nativeRuntimeSettings=false,nativeOuterSeparateBanks=false;
+const float* fovScaleHook(void* renderer){
+    const auto* original=fovScaleOriginal(renderer);
+    const auto caller=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
+    // Only native eye allocation/crop offsets and raw projection consume unity.
+    // Configuration readers keep seeing the user's original crop preference.
+    bool renderCaller=false;
+    for(auto rva:fovScaleCallers)renderCaller|=caller==base+rva;
+    if(!nativeRuntimeSettings||!renderCaller)return original;
+    if(!fovScaleLogged){
+        char message[224]{};
+        std::snprintf(message,sizeof(message),
+            "engine: runtime FOV crop bypass nativeScale=%.6g/%.6g effectiveScale=1/1 callerRVA=%llx; saved settings preserved",
+            original[0],original[1],static_cast<unsigned long long>(caller-base));
+        log_line(message);fovScaleLogged=true;
+    }
+    static constexpr float runtimeScale[2]{1.f,1.f};
+    return runtimeScale;
+}
 bool nativeOuterDimensions(unsigned eye,unsigned fullW,unsigned fullH,unsigned& width,unsigned& height){
     if(nativeRuntimeSettings){
         uint32_t focusW=0,focusH=0;
@@ -177,6 +204,12 @@ bool readable(const void* pointer, std::size_t bytes) {
     }
     return true;
 }
+void diagnoseNativeEye(const char* stage,unsigned eye,ID3D11Texture2D* texture,ID3D11RenderTargetView* rtv,
+                       ID3D11ShaderResourceView* srv,ID3D11DeviceContext* context){
+    diagnose_eye_resource(stage,eye,readable(texture,sizeof(void*))?texture:nullptr,
+        readable(rtv,sizeof(void*))?rtv:nullptr,readable(srv,sizeof(void*))?srv:nullptr,
+        readable(context,sizeof(void*))?context:nullptr,log_line);
+}
 bool correctDiskBuild() {
     wchar_t path[32768]{};
     if(!GetModuleFileNameW(nullptr,path,32768) ||
@@ -202,11 +235,36 @@ template<std::size_t N> bool matches(std::uintptr_t rva,const std::array<std::ui
 }
 Fov fov(const XrView& v) { return {v.fov.angleLeft,v.fov.angleRight,v.fov.angleUp,v.fov.angleDown}; }
 bool projection(const XrView& v,float nearZ,float farZ,Matrix& result) {
+    if(nativeRuntimeSettings)return make_engine_projection(fov(v),nearZ,farZ,1.f,1.f,result);
     auto renderer=*address<std::uintptr_t>(0x1b12be8);
     if(!readable(reinterpret_cast<void*>(renderer+0x770e0),8)) return false;
     float sx{},sy{};std::memcpy(&sx,reinterpret_cast<void*>(renderer+0x770e0),4);
     std::memcpy(&sy,reinterpret_cast<void*>(renderer+0x770e4),4);
     return make_engine_projection(fov(v),nearZ,farZ,sx,sy,result);
+}
+PFN_xrEnumerateViewConfigurationViews nativeEnumerateOriginal{};
+constexpr std::array<std::uint8_t,16> nativeEnumerateAnchor{
+    0x40,0x53,0x56,0x57,0x41,0x54,0x41,0x56,0x41,0x57,0x48,0x81,0xec,0xc8,0x00,0x00};
+XrResult XRAPI_CALL nativeEnumerateHook(XrInstance instance,XrSystemId system,XrViewConfigurationType type,
+                                      uint32_t capacity,uint32_t* count,XrViewConfigurationView* views){
+    const auto caller=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
+    const auto result=nativeEnumerateOriginal(instance,system,type,capacity,count,views);
+    if(!nativeRuntimeSettings||caller!=base+0x5bd214||XR_FAILED(result))return result;
+    uint32_t ow=0,oh=0,w=0,h=0;
+    if(!count||!readable(count,sizeof(*count))||capacity<2||*count!=2||!readable(views,2*sizeof(*views))||
+       !xr_runtime_sizes(0,ow,oh,w,h)){
+        nativeQuadSubmissionBlocked=true;
+        log_line("native XR enumeration invalid final game-facing result; quad scene blocked, original enumeration preserved");return result;
+    }
+    char line[320]{};std::snprintf(line,sizeof(line),
+        "native XR boundary after upper layers before normalization eye0=%ux%u eye1=%ux%u canonical=%ux%u",
+        views[0].recommendedImageRectWidth,views[0].recommendedImageRectHeight,
+        views[1].recommendedImageRectWidth,views[1].recommendedImageRectHeight,w,h);log_line(line);
+    if(!normalize_native_views(true,caller-base,type,capacity,*count,views,w,h)){
+        nativeQuadSubmissionBlocked=true;log_line("native XR normalization failed; quad scene blocked, original enumeration preserved");return result;
+    }
+    log_line("native XR boundary: runtime focus dimensions delivered directly to LMU; extra recommendation scaling bypassed");
+    return result;
 }
 bool equalPose(const XrPosef& a,const XrPosef& b) {
     const float sign=a.orientation.x*b.orientation.x+a.orientation.y*b.orientation.y+
@@ -642,6 +700,10 @@ void renderHook(void* unknown, bool laterPass) {
         char msg[400];std::snprintf(msg,sizeof(msg),"engine outer eye=%u call=%llu view=%p texture=%p size=%ux%u samples=%u flags=%x",
             eye,static_cast<unsigned long long>(calls),static_cast<void*>(view),static_cast<void*>(source),
             desc.Width,desc.Height,desc.SampleDesc.Count,view->flags);log_line(msg);
+        const auto renderer=*address<std::uintptr_t>(0x1b12be8);
+        auto* context=readable(reinterpret_cast<void*>(renderer+0x76f68),sizeof(void*))?*reinterpret_cast<ID3D11DeviceContext**>(renderer+0x76f68):nullptr;
+        diagnoseNativeEye(smallOuterSource?"small-outer-scene":"native-final-outer-scene",eye,source,
+            *address<ID3D11RenderTargetView*>(0x1b1c6c8+eye*8),*address<ID3D11ShaderResourceView*>(0x1b1c6d8+eye*8),context);
     }
     float nearZ{},farZ{};
     std::memcpy(&nearZ,reinterpret_cast<std::byte*>(view)+0x24,4);
@@ -704,6 +766,13 @@ void uiHook(void* object,ID3D11DeviceContext* context,const UiArgs* originalArgs
     }
     const bool menu=originalArgs->mode==3 && !xr_outer_rtv(0) && !xr_outer_rtv(1);
     auto targetSlots=reinterpret_cast<ID3D11RenderTargetView**>(static_cast<std::byte*>(object)+0xd8);
+    static uint64_t diagnostics=0;
+    if(++diagnostics<=4||diagnostics%600==0){
+        for(unsigned eye=0;eye<2;++eye)diagnoseNativeEye(menu?"menu-final-before-ui":"scene-focus-before-ui",eye,
+            *address<ID3D11Texture2D*>(0x1b1c6b8+eye*8),targetSlots[eye],*address<ID3D11ShaderResourceView*>(0x1b1c6d8+eye*8),context);
+        char line[200]{};std::snprintf(line,sizeof(line),"native final extent=%ux%u copyOffsets left=%u,%u right=%u,%u",
+            *address<unsigned>(0x1b1c654),*address<unsigned>(0x1b1c658),*address<unsigned>(0x1b1c644),*address<unsigned>(0x1b1c64c),*address<unsigned>(0x1b1c648),*address<unsigned>(0x1b1c650));log_line(line);
+    }
     if(menu) {
         // The menu's artwork is sampled from obj+c8, separate from these final eye targets.
         // Mode 3 also runs while a scene is allocated during loading. Only prepare backgrounds
@@ -767,6 +836,8 @@ const Hook hooks[]{
     {0x557810,reinterpret_cast<void*>(&projectionHook),reinterpret_cast<void**>(&projectionOriginal)},
     {0x557870,reinterpret_cast<void*>(&derivedHook),reinterpret_cast<void**>(&derivedOriginal)},
     {0x6188d0,reinterpret_cast<void*>(&maskHook),reinterpret_cast<void**>(&maskOriginal)},
+    {fovScaleRva,reinterpret_cast<void*>(&fovScaleHook),reinterpret_cast<void**>(&fovScaleOriginal)},
+    {0x8c2d30,reinterpret_cast<void*>(&nativeEnumerateHook),reinterpret_cast<void**>(&nativeEnumerateOriginal)},
     {0x51d8a0,reinterpret_cast<void*>(&mainPassHook),reinterpret_cast<void**>(&mainPassOriginal)},
     {0x51f040,reinterpret_cast<void*>(&worldSortHook),reinterpret_cast<void**>(&worldSortOriginal)},
     {0x5df6f0,reinterpret_cast<void*>(&nativeViewHook),reinterpret_cast<void**>(&nativeViewOriginal)}
@@ -775,6 +846,24 @@ void removeHooks(std::size_t count) {
     for(std::size_t i=0;i<count;++i) MH_DisableHook(address<void>(hooks[i].rva));
     for(std::size_t i=0;i<count;++i) MH_RemoveHook(address<void>(hooks[i].rva));
 }
+}
+
+unsigned engine_game_eye(XrSwapchain chain){
+    if(!installed.load()||!nativeRuntimeSettings||chain==XR_NULL_HANDLE||
+       chain==reinterpret_cast<XrSwapchain>(std::uintptr_t(1)))return 2;
+    // LMU passes these exact two vector elements to xrCreateSwapchain and
+    // reads the completed handles back for xrEnumerateSwapchainImages.
+    auto* vector=address<std::uintptr_t>(0x19b28d0);
+    if(!readable(vector,2*sizeof(std::uintptr_t)))return 2;
+    std::uintptr_t begin{},end{};
+    std::memcpy(&begin,vector,sizeof(begin));std::memcpy(&end,vector+1,sizeof(end));
+    if(!begin||begin%alignof(XrSwapchain)||end<begin||end-begin!=2*sizeof(XrSwapchain)||
+       !readable(reinterpret_cast<void*>(begin),2*sizeof(XrSwapchain)))return 2;
+    XrSwapchain eyes[2]{};std::memcpy(eyes,reinterpret_cast<void*>(begin),sizeof(eyes));
+    const bool left=chain==eyes[0],right=chain==eyes[1];
+    // The first eye is enumerated before the second is created. An empty or
+    // sentinel sibling does not weaken exact identity of the requested handle.
+    return left!=right?(left?0u:1u):2u;
 }
 
 bool engine_start() {
@@ -798,6 +887,12 @@ bool engine_start() {
     nativeQuadSubmissionBlocked=false;
     char runtimeSetting[8]{};GetEnvironmentVariableA("LMU_QV_USE_RUNTIME_SETTINGS",runtimeSetting,sizeof(runtimeSetting));
     nativeRuntimeSettings=!stereoTiming&&!std::strcmp(runtimeSetting,"1");nativeOuterSeparateBanks=false;
+    fovScaleLogged=false;
+    if(nativeRuntimeSettings){
+        bool cropAnchors=matches(fovScaleRva,fovScaleAnchor);
+        for(auto caller:fovScaleCallers)cropAnchors&=matches(caller-fovScaleCallAnchor.size(),fovScaleCallAnchor);
+        if(!cropAnchors){log_line("engine: native FOV crop ABI anchor mismatch; hooks refused");return false;}
+    }
     nativeOuterWarmupView=nullptr;nativeOuterWarmupCalls=0;nativeOuterCompleted[0]=nativeOuterCompleted[1]=0;
     nativeOuterFull[0]=nativeOuterFull[1]=0;nativeBindingProbes[0]=nativeBindingProbes[1]=0;
     if(nativeOuterOptIn){
@@ -853,7 +948,10 @@ bool engine_start() {
         timingTrigger=trigger;
         log_line("engine GPU timing: waiting for explicit trigger file");
     }
-    const std::size_t hookCount=stereoTiming?1:(nativeOuterOptIn?std::size(hooks):(worldVrsOptIn?7:5));
+    const std::size_t hookCount=stereoTiming?1:(nativeOuterOptIn?std::size(hooks):(worldVrsOptIn?9:(nativeRuntimeSettings?7:5)));
+    if(hookCount>6&&!matches(0x8c2d30,nativeEnumerateAnchor)){
+        log_line("engine: native XR enumeration anchor mismatch; hooks refused");return false;
+    }
     auto status=MH_Initialize();
     if(status!=MH_OK && status!=MH_ERROR_ALREADY_INITIALIZED) {log_line("engine: MH_Initialize failed");return false;}
     std::size_t created=0;

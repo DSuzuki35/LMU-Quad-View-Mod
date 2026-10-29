@@ -25,4 +25,7 @@ void log_line(const char* message);
 // No hook in trace mode. Never patch on unrecognized executable/build.
 bool engine_start();
 void engine_stop();
+// Identity from the pinned game's native XR eye-handle vector, not dimensions
+// or creation order. Returns 2 for unproven/auxiliary handles.
+unsigned engine_game_eye(XrSwapchain chain);
 }

@@ -366,6 +366,7 @@ XrResult XRAPI_CALL layerEnumerateViewConfigurationViews(XrInstance instance,XrS
             out[eye].recommendedImageRectWidth=out[eye].maxImageRectWidth=s.runtimeFocusWidth;
             out[eye].recommendedImageRectHeight=out[eye].maxImageRectHeight=s.runtimeFocusHeight;
             out[eye].recommendedSwapchainSampleCount=out[eye].maxSwapchainSampleCount=1;
+            logf("XR boundary advertised stereo eye=%u recommended=%ux%u max=%ux%u",eye,out[eye].recommendedImageRectWidth,out[eye].recommendedImageRectHeight,out[eye].maxImageRectWidth,out[eye].maxImageRectHeight);
         }
         return XR_SUCCESS;
     }
@@ -507,13 +508,11 @@ XrResult XRAPI_CALL layerCreateSwapchain(XrSession session,const XrSwapchainCrea
     logf("xrCreateSwapchain %ux%u format=%lld samples=%u array=%u usage=%llu result=%d",info->width,info->height,static_cast<long long>(info->format),info->sampleCount,info->arraySize,static_cast<unsigned long long>(info->usageFlags),r);
     if(XR_SUCCEEDED(r)){
         AppChain app{};app.info=*info;app.info.next=nullptr;
-        // Color attachments can also be OSD/HUD swapchains created by an upper
-        // API layer. Only the first two matching focus buffers are game eyes.
-        const bool focusCandidate=(info->usageFlags&XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT)&&s.nextAppEye<2&&
-            (!s.runtimeSettings||(s.runtimeSizesReady&&info->width==s.runtimeFocusWidth&&info->height==s.runtimeFocusHeight&&
-              info->sampleCount==1&&info->arraySize==1&&info->faceCount==1&&info->mipCount==1&&!info->createFlags));
+        // Runtime mode waits for proof from LMU's eye-handle vector at image
+        // enumeration. Preserve the old heuristic only for legacy experiments.
+        const bool focusCandidate=!s.runtimeSettings&&(info->usageFlags&XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT)&&s.nextAppEye<2;
         if(focusCandidate)app.eye=s.nextAppEye++;
-        if(s.runtimeSettings)logf("Swapchain role=%s eye=%u dimensions=%ux%u",focusCandidate?"game-focus":"auxiliary",app.eye,info->width,info->height);
+        if(s.runtimeSettings)logf("Swapchain role=unassigned handle=%p dimensions=%ux%u; awaiting native eye identity",static_cast<void*>(*chain),info->width,info->height);
         s.appChains[*chain]=std::move(app);
         if(s.quad&&focusCandidate&&!createOuter(*info)&&s.runtimeSettings){
             next.DestroySwapchain(*chain);s.appChains.erase(*chain);--s.nextAppEye;*chain=XR_NULL_HANDLE;
@@ -529,14 +528,46 @@ XrResult XRAPI_CALL layerDestroySwapchain(XrSwapchain chain) {
 }
 XrResult XRAPI_CALL layerEnumerateSwapchainImages(XrSwapchain chain,uint32_t cap,uint32_t* count,XrSwapchainImageBaseHeader* images) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    auto identity=s.appChains.find(chain);
+    if(s.quad&&s.runtimeSettings&&identity!=s.appChains.end()&&identity->second.eye==2){
+        const unsigned eye=lmuqv::engine_game_eye(chain);
+        if(eye<2){
+            auto& app=identity->second;const auto& ci=app.info;
+            const bool shape=s.runtimeSizesReady&&ci.width==s.runtimeFocusWidth&&ci.height==s.runtimeFocusHeight&&
+                ci.sampleCount==1&&ci.arraySize==1&&ci.faceCount==1&&ci.mipCount==1&&!ci.createFlags&&
+                (ci.usageFlags&XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT);
+            bool eligible=shape;
+            if(!shape){
+                logf("Native game eye rejected eye=%u chain=%p actual=%ux%u required=%ux%u samples=%u array=%u; another layer may have rewritten the create request",eye,static_cast<void*>(chain),ci.width,ci.height,s.runtimeFocusWidth,s.runtimeFocusHeight,ci.sampleCount,ci.arraySize);
+            }
+            for(const auto& existing:s.appChains)if(existing.first!=chain&&existing.second.eye==eye){
+                logf("Native game eye rejected: duplicate live identity eye=%u",eye);eligible=false;
+            }
+            // LMU ignores enumeration errors and later dereferences the images.
+            // Always preserve its image lifecycle, even when quad use is refused.
+            if(eligible&&createOuter(ci)){
+                app.eye=eye;
+                logf("Swapchain role=game-focus proof=native-eye-vector eye=%u chain=%p dimensions=%ux%u",eye,static_cast<void*>(chain),ci.width,ci.height);
+            }else logf("Native game eye remains unassigned eye=%u; forwarding image enumeration to preserve app lifecycle",eye);
+        }
+    }
     XrResult r=next.EnumerateSwapchainImages(chain,cap,count,images);
+    if(s.runtimeSettings&&XR_SUCCEEDED(r)&&cap&&count&&*count<=cap&&*count<=64&&images){
+        auto* d3d=reinterpret_cast<XrSwapchainImageD3D11KHR*>(images);
+        for(uint32_t i=0;i<*count;++i){
+            if(d3d[i].type!=XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR)break;
+            if(!d3d[i].texture)continue;
+            D3D11_TEXTURE2D_DESC d{};d3d[i].texture->GetDesc(&d);
+            logf("XR image chain=%p index=%u resource=%p size=%ux%u resourceFmt=%u samples=%u bind=%u",static_cast<void*>(chain),i,static_cast<void*>(d3d[i].texture),d.Width,d.Height,unsigned(d.Format),d.SampleDesc.Count,d.BindFlags);
+        }
+    }
     auto found=s.appChains.find(chain);
     if((s.pixelEnabled||s.debugFocus)&&s.device&&XR_SUCCEEDED(r)&&cap&&count&&*count<=cap&&*count<=64&&images&&found!=s.appChains.end()&&found->second.eye<2){
         auto& app=found->second;clearFocusRtvs(app);app.images.clear();
         auto* d3d=reinterpret_cast<XrSwapchainImageD3D11KHR*>(images);
         for(uint32_t i=0;i<*count;++i){if(d3d[i].type!=XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR){app.images.clear();break;}app.images.push_back(d3d[i].texture);}
     }
-    logf("xrEnumerateSwapchainImages cap=%u count=%u result=%d",cap,count?*count:0,r);
+    logf("xrEnumerateSwapchainImages chain=%p cap=%u count=%u result=%d",static_cast<void*>(chain),cap,count?*count:0,r);
     return r;
 }
 XrResult XRAPI_CALL layerAcquireSwapchainImage(XrSwapchain chain,const XrSwapchainImageAcquireInfo* info,uint32_t* index) {
@@ -548,7 +579,7 @@ XrResult XRAPI_CALL layerAcquireSwapchainImage(XrSwapchain chain,const XrSwapcha
         if(app.acquired.size()>=64){app.trackingInvalid=true;app.acquired.clear();}
         if(!app.trackingInvalid)app.acquired.push_back({*index,false});
     }
-    if(XR_FAILED(r)||s.frames<10||s.frames%120==0)logf("xrAcquireSwapchainImage index=%u result=%d",XR_SUCCEEDED(r)&&index?*index:0,r);
+    if(XR_FAILED(r)||s.frames<10||s.frames%120==0)logf("xrAcquireSwapchainImage chain=%p index=%u result=%d",static_cast<void*>(chain),XR_SUCCEEDED(r)&&index?*index:0,r);
     return r;
 }
 XrResult XRAPI_CALL layerWaitSwapchainImage(XrSwapchain chain,const XrSwapchainImageWaitInfo* info) {
@@ -611,13 +642,20 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
         const auto* layer=info->layers[i];
         if(!layer||layer->type!=XR_TYPE_COMPOSITION_LAYER_PROJECTION){if(layer)layers.push_back(layer);continue;}
         auto* projection=reinterpret_cast<const XrCompositionLayerProjection*>(layer);
+        if(projection->views&&(s.frames<10||s.frames%120==0))for(unsigned eye=0;eye<(std::min)(2u,projection->viewCount);++eye){
+            const auto& sub=projection->views[eye].subImage;
+            logf("Projection input eye=%u chain=%p rect=%d,%d %dx%d array=%u",eye,static_cast<void*>(sub.swapchain),sub.imageRect.offset.x,sub.imageRect.offset.y,sub.imageRect.extent.width,sub.imageRect.extent.height,sub.imageArrayIndex);
+        }
         if(projection->viewCount!=2||!projection->views||
            !validInner(projection->views[0].subImage,0)||!validInner(projection->views[1].subImage,1)){
             if(s.runtimeSettings&&(s.frames<10||s.frames%120==0))
-                logf("Projection refused: expected the two game focus swapchains at exact runtime dimensions=%ux%u; auxiliary chains and resized game buffers cannot supply focus views",s.runtimeFocusWidth,s.runtimeFocusHeight);
+                logf("Projection refused: native eye identity, format, or subImage bounds invalid; required focus=%ux%u. If native handles are wrapped by another layer, disable that layer's resolution override/upscaler for diagnosis",s.runtimeFocusWidth,s.runtimeFocusHeight);
             continue;
         }
-        if(!captured||projection->space!=s.locateSpace)continue;
+        if(!captured||projection->space!=s.locateSpace){
+            if(s.frames<10||s.frames%120==0)logf("Projection refused: released=%d begun=%d shouldRender=%d located=%d captures=%d/%d timeMatch=%d spaceMatch=%d",released,s.frame,s.shouldRender,s.located,s.captures[0],s.captures[1],s.locateTime==info->displayTime,projection->space==s.locateSpace);
+            continue;
+        }
         // One engine scene capture pair cannot represent a second projection layer.
         if(submitted)continue;
         views.emplace_back();auto& v=views.back();
@@ -779,6 +817,7 @@ bool xr_copy_outer(unsigned eye,ID3D11Texture2D* source) {
     if(outer.index<outer.images.size()&&outer.images[outer.index].texture){
         ID3D11Texture2D* destination=outer.images[outer.index].texture;D3D11_TEXTURE2D_DESC dst{};destination->GetDesc(&dst);
         if(dst.Width==outer.width&&dst.Height==outer.height&&dst.ArraySize==src.ArraySize&&dst.MipLevels==src.MipLevels&&dst.SampleDesc.Count==1&&formatFamily(dst.Format)==formatFamily(src.Format)){
+            if(s.frames<10||s.frames%120==0)logf("outer transfer eye=%u source=%p sourceFmt=%u size=%ux%u destination=%p resourceFmt=%u size=%ux%u chain=%p image=%u operation=%s",eye,static_cast<void*>(source),unsigned(src.Format),src.Width,src.Height,static_cast<void*>(destination),unsigned(dst.Format),dst.Width,dst.Height,static_cast<void*>(outer.chain),outer.index,resized?"shader-resample":"CopyResource");
             if(!resized){s.context->CopyResource(destination,source);copied=SUCCEEDED(s.device->GetDeviceRemovedReason());}
             else if(outer.index<outer.rtvs.size())copied=outerResample.draw(s.context,source,outer.rtvs[outer.index],outer.width,outer.height);
         }

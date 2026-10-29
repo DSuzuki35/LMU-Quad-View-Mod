@@ -35,7 +35,11 @@ This is a custom LMU integration, not mbucchia's Quad-Views-Foveated project. It
 
 ## Compatibility and current fix
 
-Auxiliary swapchains such as VectorXR's OSD pass through separately from game-eye buffers. The OSD initialization fix has been confirmed in a live session. An auxiliary buffer matching the exact game-eye dimensions and created before the game buffers remains an identification limitation.
+**Current working tree: crop/eye-identity test candidate, pending confirmation on the two reported tester setups.** See [tester instructions](TEST-CROP-IDENTITY.txt). The earlier freeze-fix confirmation below applies to the previous alpha build.
+
+Auxiliary swapchains such as VectorXR's OSD pass through separately from game-eye buffers. The earlier OSD initialization fix has been confirmed in a live session. In this candidate's runtime-settings mode, the verified native eye-handle vector identifies game-eye swapchains; creation order and matching dimensions alone do not. Regression tests cover an auxiliary buffer with identical dimensions created before the game buffers. The final view-size answer reaching the supported LMU build is normalized to the runtime focus dimensions and logged at both boundaries. An upper API layer that wraps eye handles or rewrites swapchain creation may still be incompatible; the source of the first tester's larger swapchains remains unconfirmed.
+
+This candidate bypasses LMU's horizontal/vertical FOV crop during native eye allocation and projection in runtime-settings quad mode. Saved crop preferences remain unchanged, and Pimax/runtime focus FOV and resolution settings still apply. This avoids treating a cropped native eye texture as a complete uncropped eye. It is a compatibility workaround, not support for rendering with LMU's crop enabled. Proper crop support is tracked in [TODO.md](TODO.md). Existing resource-size validation, UNORM/sRGB format-family handling and color-space behavior remain intact.
 
 The menu-to-track freeze fix separates a recoverable small-bank failure from a fatal rendering-state failure. If small-bank creation is unsupported, live quad rendering continues with a full-resolution outer render resampled to the runtime's requested outer output. **This compatibility fallback does not provide the smaller outer scene's GPU savings.** The log states when fallback is active and records the rejected resource role/stage. Unsafe dimension or restoration failures still block submission.
 
@@ -57,7 +61,7 @@ From the repository root in PowerShell:
 ./package.ps1
 ```
 
-`build.ps1` runs native math, hook policy, fallback, timing, statistics, render-target, state-restoration, and fake-OpenXR-runtime tests, then builds the DLL. WARP tests validate graphics helpers without a headset. They do not prove live engine or compositor correctness.
+`build.ps1` runs native math, hook policy, crop normalization, view-size boundary, eye identity, fallback, timing, statistics, render-target, state-restoration, and fake-OpenXR-runtime tests, then builds the DLL. WARP tests validate graphics helpers without a headset. They do not prove live engine or compositor correctness. The current candidate still requires the menu/track/return/relaunch checks on the affected PCs, including a run with native outer optimization disabled.
 
 The scope-policy test runs without a game dump. An optional private compatible PE image can be supplied with `-AnchorImage <absolute-path>` for additional anchor validation; it is neither required nor distributed. Runtime build and code-anchor checks remain enabled independently.
 

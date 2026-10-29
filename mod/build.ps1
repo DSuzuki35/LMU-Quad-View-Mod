@@ -15,6 +15,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Focus box tests compilation failed' }
     & .\build\focus_box_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Focus box tests failed' }
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/native_xr_views_test.cpp -o build/native_xr_views_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native XR view tests compilation failed' }
+    & .\build\native_xr_views_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native XR view tests failed' }
     foreach ($part in @('buffer','hook','trampoline')) {
         & gcc -O2 -c "vendor/minhook-1.3.4/src/$part.c" -o "build/mh_$part.o"
         if ($LASTEXITCODE -ne 0) { throw "MinHook $part compilation failed" }

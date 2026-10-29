@@ -12,6 +12,11 @@
 #include <vector>
 
 namespace lmuqv {
+XrSwapchain nativeEyeChains[2]{};
+unsigned engine_game_eye(XrSwapchain chain){
+    for(unsigned eye=0;eye<2;++eye)if(chain&&chain==nativeEyeChains[eye])return eye;
+    return 2;
+}
 bool engine_start() { assert(false && "Test executable must never hook engine"); return false; }
 void engine_stop() {}
 ID3D11RenderTargetView* xr_outer_rtv(unsigned eye);
@@ -477,9 +482,18 @@ int main(int argc,char** argv) {
     XrSessionBeginInfo bi{};bi.type=XR_TYPE_SESSION_BEGIN_INFO;bi.primaryViewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
     assert(reinterpret_cast<PFN_xrBeginSession>(load("xrBeginSession"))(session,&bi)==XR_SUCCESS);
     auto createChain=reinterpret_cast<PFN_xrCreateSwapchain>(load("xrCreateSwapchain"));
+    auto createEye=[&](unsigned eye,const XrSwapchainCreateInfo* info,XrSwapchain* chain){
+        auto result=createChain(session,info,chain);if(XR_FAILED(result))return result;
+        lmuqv::nativeEyeChains[eye]=*chain;
+        uint32_t images=0;
+        return reinterpret_cast<PFN_xrEnumerateSwapchainImages>(load("xrEnumerateSwapchainImages"))(*chain,0,&images,nullptr);
+    };
     XrSwapchainCreateInfo ci{};ci.type=XR_TYPE_SWAPCHAIN_CREATE_INFO;ci.width=ci.height=32;ci.sampleCount=ci.arraySize=ci.mipCount=ci.faceCount=1;
     ci.format=srgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_UNORM;ci.usageFlags=XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
-    XrSwapchain left{},right{};assert(createChain(session,&ci,&left)==XR_SUCCESS);assert(createChain(session,&ci,&right)==XR_SUCCESS);
+    XrSwapchain left{},right{};
+    // Same-size auxiliary buffers must not consume the native eye identities.
+    // Covered independently below by the overlay regression sequence.
+    assert(createEye(0,&ci,&left)==XR_SUCCESS);assert(createEye(1,&ci,&right)==XR_SUCCESS);
     for(auto appChain:{left,right}){
         XrSwapchainImageD3D11KHR image{};image.type=XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
         assert(reinterpret_cast<PFN_xrEnumerateSwapchainImages>(load("xrEnumerateSwapchainImages"))(appChain,1,&count,reinterpret_cast<XrSwapchainImageBaseHeader*>(&image))==XR_SUCCESS&&count==1);
@@ -732,7 +746,7 @@ int main(int argc,char** argv) {
         assert(SUCCEEDED(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,&feature,nullptr)));
         binding.device=device;assert(createSessionFn(instance,&si,&session)==XR_SUCCESS);
         assert(reinterpret_cast<PFN_xrBeginSession>(load("xrBeginSession"))(session,&bi)==XR_SUCCESS);
-        ci.width=ci.height=128;assert(createChain(session,&ci,&left)==XR_SUCCESS&&createChain(session,&ci,&right)==XR_SUCCESS);
+        ci.width=ci.height=128;assert(createEye(0,&ci,&left)==XR_SUCCESS&&createEye(1,&ci,&right)==XR_SUCCESS);
         for(auto appChain:{left,right}){
             XrSwapchainImageD3D11KHR image{};image.type=XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
             assert(reinterpret_cast<PFN_xrEnumerateSwapchainImages>(load("xrEnumerateSwapchainImages"))(appChain,1,&count,reinterpret_cast<XrSwapchainImageBaseHeader*>(&image))==XR_SUCCESS);
@@ -772,13 +786,14 @@ int main(int argc,char** argv) {
         assert(SUCCEEDED(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,&feature,nullptr)));
         binding.device=device;assert(createSessionFn(instance,&si,&session)==XR_SUCCESS);
         assert(reinterpret_cast<PFN_xrBeginSession>(load("xrBeginSession"))(session,&bi)==XR_SUCCESS);
-        auto overlayInfo=ci;overlayInfo.width=960;overlayInfo.height=768;
+        auto overlayInfo=ci;overlayInfo.width=overlayInfo.height=128;
         XrSwapchain before{},after{},sameSize{};
         assert(createChain(session,&overlayInfo,&before)==XR_SUCCESS&&textures.size()==1);
         ci.width=ci.height=128;
-        assert(createChain(session,&ci,&overlayLeft)==XR_SUCCESS&&textures.size()==4);
+        assert(createEye(0,&ci,&overlayLeft)==XR_SUCCESS&&textures.size()==4);
         overlayOuter0=swapchains[2];overlayOuter1=swapchains[3];
-        assert(createChain(session,&ci,&overlayRight)==XR_SUCCESS&&textures.size()==5);
+        assert(createEye(1,&ci,&overlayRight)==XR_SUCCESS&&textures.size()==5);
+        overlayInfo.width=960;overlayInfo.height=768;
         assert(createChain(session,&overlayInfo,&after)==XR_SUCCESS&&textures.size()==6);
         assert(createChain(session,&ci,&sameSize)==XR_SUCCESS&&textures.size()==7);
         for(auto appChain:{before,overlayLeft,overlayRight,after,sameSize}){
@@ -838,6 +853,17 @@ int main(int argc,char** argv) {
             assert(reinterpret_cast<PFN_xrEndFrame>(load("xrEndFrame"))(session,&osdEnd)==XR_SUCCESS);
             assert(std::memcmp(&osd,&osdBefore,sizeof(osd))==0);
         }
+        // A rewritten native-eye size must remain enumerable: LMU ignores the
+        // XR error code and dereferences image[0]. Refuse quad role, not images.
+        auto rewrittenInfo=ci;rewrittenInfo.width=256;rewrittenInfo.height=240;
+        XrSwapchain rewritten{};
+        assert(createEye(0,&rewrittenInfo,&rewritten)==XR_SUCCESS);
+        XrSwapchainImageD3D11KHR rewrittenImage{};rewrittenImage.type=XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
+        assert(reinterpret_cast<PFN_xrEnumerateSwapchainImages>(load("xrEnumerateSwapchainImages"))(rewritten,1,&count,reinterpret_cast<XrSwapchainImageBaseHeader*>(&rewrittenImage))==XR_SUCCESS&&count==1&&rewrittenImage.texture);
+        assert(currentLog().find("Native game eye rejected eye=0")!=std::string::npos);
+        beginOverlay();assert(lmuqv::xr_copy_outer(0,textures[1])&&lmuqv::xr_copy_outer(1,textures[4]));
+        eyeViews[0].subImage.swapchain=rewritten;
+        assert(reinterpret_cast<PFN_xrEndFrame>(load("xrEndFrame"))(session,&osdEnd)==XR_SUCCESS);
         assert(reinterpret_cast<PFN_xrDestroySession>(load("xrDestroySession"))(session)==XR_SUCCESS);
         for(auto* texture:textures)texture->Release();
         device->Release();
