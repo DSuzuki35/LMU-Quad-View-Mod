@@ -1,0 +1,17 @@
+# Build products and local diagnostics
+**/build/
+**/logs/
+**/captures/
+/dist/
+*.exe
+*.dll
+*.o
+*.obj
+*.pdb
+*.dmp
+*.bin
+*.zip
+launcher-settings.xml
+.vs/
+.vscode/
+__pycache__/

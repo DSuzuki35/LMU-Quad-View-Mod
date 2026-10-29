@@ -1,0 +1,26 @@
+LMU Quad View Mod - experimental offline build
+
+Extract the whole ZIP into a writable folder outside LMU.
+Run LMU-QuadView-Launcher.exe, choose the LMU installation, then launch.
+PowerShell 7 and Windows x64/.NET Framework 4.x are required.
+Do not copy the DLL into LMU; the launcher enables it for the game process.
+
+Enable QuadView Foveated Rendering and eye tracking in Pimax EVO, using native
+Pimax OpenXR. Set center/edge resolution and horizontal/vertical FOV in EVO.
+Restart LMU after changing these settings. The launcher adds no extra scaling.
+The optional green outline shows the focus region. Close LMU before relaunching.
+
+MENU-TO-TRACK FREEZE UPDATE
+Unsupported small render-target layouts now fall back to a full-resolution
+outer render, resampled to the runtime's outer output. Quad scene submission
+continues. This fallback loses the small outer render's performance savings.
+Logs identify fallback and the rejected resource role/stage. This update has
+regression-test coverage but still needs confirmation on the affected PC.
+If testing this issue, share the new quad log after reaching the track, after
+reviewing it for personal paths. Do not assume MSAA is the proven cause.
+
+Keep the game-build guard enabled. No game executable is replaced. Launching
+normally omits the mod. Offline use only: no anti-cheat approval is claimed.
+See README.md for implementation, limitations and build instructions.
+Original code: PolyForm Noncommercial 1.0.0 (LICENSE.md).
+Dependencies retain their own licenses (licenses/ and THIRD_PARTY_NOTICES.md).
