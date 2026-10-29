@@ -39,7 +39,7 @@ Auxiliary swapchains such as VectorXR's OSD pass through separately from game-ey
 
 The menu-to-track freeze fix separates a recoverable small-bank failure from a fatal rendering-state failure. If small-bank creation is unsupported, live quad rendering continues with a full-resolution outer render resampled to the runtime's requested outer output. **This compatibility fallback does not provide the smaller outer scene's GPU savings.** The log states when fallback is active and records the rejected resource role/stage. Unsafe dimension or restoration failures still block submission.
 
-The fallback regression test reproduces the previous scene-submission suppression and passes with the fix. The fix still needs confirmation on the reporting user's setup; the precise resource incompatibility on that PC was not recorded by the old build. Do not assume changing anti-aliasing is a proven solution.
+The fallback regression test reproduces the previous scene-submission suppression and passes with the fix. On 29 October 2026, the reporting user confirmed that the updated build works on the affected setup. This confirms recovery from the freeze, not reduced outer-render GPU work. The precise resource incompatibility remains unconfirmed without a new diagnostic log. Do not assume changing anti-aliasing is a proven solution.
 
 Temporal history is not fully isolated for every engine effect. Performance varies with settings and scene, and no universal FPS gain is claimed. This is an experimental offline build, not an approved online integration. LMU's license and applicable law must be considered independently of this project's license.
 

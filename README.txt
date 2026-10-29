@@ -15,7 +15,8 @@ Unsupported small render-target layouts now fall back to a full-resolution
 outer render, resampled to the runtime's outer output. Quad scene submission
 continues. This fallback loses the small outer render's performance savings.
 Logs identify fallback and the rejected resource role/stage. This update has
-regression-test coverage but still needs confirmation on the affected PC.
+regression-test coverage and was confirmed working on the affected PC on
+29 October 2026. This confirms freeze recovery, not a performance gain.
 If testing this issue, share the new quad log after reaching the track, after
 reviewing it for personal paths. Do not assume MSAA is the proven cause.
 
