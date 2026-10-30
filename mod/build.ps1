@@ -49,6 +49,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Stereo audit tests failed' }
     & .\build\stereo_audit_test.exe --diagnostics-off
     if ($LASTEXITCODE -ne 0) { throw 'Stereo audit master-off tests failed' }
+    & .\build\stereo_audit_test.exe --shader-export
+    if ($LASTEXITCODE -ne 0) { throw 'Stereo audit shader export tests failed' }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/benchmark_engine_test.cpp nv_vrs.cpp stereo_audit.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ladvapi32 -luser32 -o build/benchmark_engine_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Benchmark engine tests compilation failed' }
     & .\build\benchmark_engine_test.exe

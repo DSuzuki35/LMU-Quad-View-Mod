@@ -3,6 +3,7 @@
 #include "stereo_audit.hpp"
 #include "stereo_instancing.hpp"
 #include "diagnostics.hpp"
+#include "caller_address.hpp"
 #include "vendor/minhook-1.3.4/include/MinHook.h"
 #include <d3dcompiler.h>
 #include <wincrypt.h>
@@ -15,13 +16,18 @@
 #include <filesystem>
 #include <limits>
 #include <locale>
+#include <memory>
 #include <mutex>
+#include <set>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace lmuqv { namespace {
 constexpr unsigned framesWanted=2,maxDrawsPerPass=4096;
+constexpr size_t maxShaderAliases=32768,maxShaderPrograms=8192;
+constexpr size_t maxReflectionBytes=16*1024*1024,maxBytecodeBytes=64*1024*1024;
 const GUID resourceGuid={0x8d9afcd1,0x561d,0x4724,{0xb2,0x13,0x28,0xfa,0x73,0x65,0x22,0x11}};
 const GUID layoutGuid={0x8d9afcd2,0x561d,0x4724,{0xb2,0x13,0x28,0xfa,0x73,0x65,0x22,0x11}};
 struct Tag {uint32_t id=0,version=0;};
@@ -35,25 +41,35 @@ struct Record {
     uint32_t rtWidth=0,rtHeight=0,rtFormat=0,rtSamples=0,rtCount=0,blend=0,classes=0;
 };
 struct Pass {uint64_t calls=0,dropped=0,wallTicks=0,snapshotTicks=0,apiTicks=0,maps=0,unmaps=0,updates=0,copies=0,dispatches=0,commandLists=0;};
-struct Shader {uint32_t id=0;std::string stage,sha,reflection;};
+// LMU creates many shader objects containing identical DXBC. Keep reflection
+// and optional local bytecode once per program, with cheap object-ID aliases.
+struct Program {std::string stage,sha,reflection;std::vector<BYTE> bytecode;};
 struct LayoutDefinition {uint32_t id=0;std::string elements;};
 std::recursive_mutex mutex;
 std::atomic<bool> enabled{false};
 ID3D11DeviceContext* selected=nullptr;ID3D11Device* device=nullptr;
 std::atomic<DWORD> owner{0};unsigned installed=0,openScopes=0,nextId=1,completedFrames=0;
-unsigned bufferEpoch=0,shaderDefinitionsDropped=0;
+unsigned bufferEpoch=0,shaderDefinitionsDropped=0,layoutDefinitionsDropped=0;
+size_t reflectionBytes=0,bytecodeBytes=0;unsigned bytecodeProgramsDropped=0;
+bool captureBytecode=false,earlyDevice=false;
 std::atomic<ID3D11DeviceContext*> watchedContext{nullptr};std::atomic<ID3D11Device*> watchedDevice{nullptr};
 bool capturing=false,keyWasDown=false,sawScene=false,deferredStop=false;
 long long started=0,frequency=0;std::filesystem::path directory;
 void(*logger)(const char*)=nullptr;
 StereoCapabilities capabilities;
-std::array<Pass,framesWanted*4> passes{};std::vector<Record> records;std::vector<Shader> shaders;
+std::array<Pass,framesWanted*4> passes{};std::vector<Record> records;
+std::unordered_map<uint32_t,std::shared_ptr<Program>> shaders;
+std::unordered_map<std::string,std::shared_ptr<Program>> programs;
 std::vector<LayoutDefinition> layouts;
 thread_local int activeSlot=-1,group=-1;thread_local bool suspended=false;
 // Context methods followed by device shader/input-layout creation methods.
 constexpr unsigned contextCount=14,totalHooks=22;
 constexpr auto indices=stereo_audit_vtable;
 std::array<void*,totalHooks> targets{},originals{};
+std::array<void*,2> factoryTargets{},factoryOriginals{};
+unsigned factoryInstalled=0;bool factoryReady=false;
+std::filesystem::path earlyDirectory;void(*earlyLogger)(const char*)=nullptr;
+thread_local bool insideFactory=false;
 long long ticks(){LARGE_INTEGER t{};QueryPerformanceCounter(&t);return t.QuadPart;}
 void emit(const char* s){if(logger)logger(s);}
 struct Suspend {bool prior=suspended;Suspend(){suspended=true;}~Suspend(){suspended=prior;}};
@@ -82,11 +98,16 @@ std::string sha256(const void* data,SIZE_T size){
 }
 void remember_shader(ID3D11DeviceChild* child,const void* data,SIZE_T size,const char* stage){
     std::lock_guard<std::recursive_mutex> lock(mutex);if(!enabled)return;const auto id=tag(child).id;
-    for(const auto& known:shaders)if(known.id==id)return;
-    if(shaders.size()>=1024){++shaderDefinitionsDropped;return;}
-    Shader s;s.id=id;s.stage=stage;s.sha=sha256(data,size);s.reflection="null";
+    if(shaders.find(id)!=shaders.end())return;
+    if(!id||shaders.size()>=maxShaderAliases){++shaderDefinitionsDropped;return;}
+    const auto hash=sha256(data,size);if(hash.empty()){++shaderDefinitionsDropped;return;}
+    const auto key=std::string(stage)+hash;const auto existing=programs.find(key);
+    if(existing!=programs.end()){shaders.emplace(id,existing->second);return;}
+    if(programs.size()>=maxShaderPrograms||reflectionBytes>maxReflectionBytes-32768){++shaderDefinitionsDropped;return;}
+    auto program=std::make_shared<Program>();auto& s=*program;s.stage=stage;s.sha=hash;s.reflection="null";
     ID3D11ShaderReflection* reflection=nullptr;
     if(SUCCEEDED(D3DReflect(data,size,__uuidof(ID3D11ShaderReflection),reinterpret_cast<void**>(&reflection)))){
+        const std::unique_ptr<ID3D11ShaderReflection,void(*)(ID3D11ShaderReflection*)> release(reflection,[](ID3D11ShaderReflection* p){p->Release();});
         D3D11_SHADER_DESC d{};reflection->GetDesc(&d);std::ostringstream out;out.imbue(std::locale::classic());out<<"{\"inputs\":"<<d.InputParameters<<",\"outputs\":"<<d.OutputParameters<<",\"resources_total\":"<<d.BoundResources<<",\"constant_buffers\":[";bool first=true;
         for(UINT i=0;i<(std::min)(d.BoundResources,128u);++i){D3D11_SHADER_INPUT_BIND_DESC binding{};if(FAILED(reflection->GetResourceBindingDesc(i,&binding))||binding.Type!=D3D_SIT_CBUFFER)continue;
             if(!first)out<<',';first=false;D3D11_SHADER_BUFFER_DESC b{};auto* cb=reflection->GetConstantBufferByName(binding.Name);cb->GetDesc(&b);
@@ -96,8 +117,14 @@ void remember_shader(ID3D11DeviceChild* child,const void* data,SIZE_T size,const
             out<<"]}";
         }out<<"],\"resources\":[";
         for(UINT i=0;i<(std::min)(d.BoundResources,128u);++i){D3D11_SHADER_INPUT_BIND_DESC binding{};reflection->GetResourceBindingDesc(i,&binding);if(i)out<<',';out<<"{\"name\":"<<quoted(binding.Name)<<",\"type\":"<<unsigned(binding.Type)<<",\"slot\":"<<binding.BindPoint<<",\"count\":"<<binding.BindCount<<'}';}
-        out<<"]}";s.reflection=out.str();if(s.reflection.size()>32768){s.reflection="null";++shaderDefinitionsDropped;}drop(reflection);
-    }shaders.push_back(std::move(s));
+        out<<"]}";s.reflection=out.str();if(s.reflection.size()>32768||s.reflection.size()>maxReflectionBytes-reflectionBytes){s.reflection="null";++shaderDefinitionsDropped;}
+    }
+    reflectionBytes+=s.reflection.size();
+    if(captureBytecode){
+        if(size<=maxBytecodeBytes-bytecodeBytes){const auto* begin=static_cast<const BYTE*>(data);s.bytecode.assign(begin,begin+size);bytecodeBytes+=size;}
+        else ++bytecodeProgramsDropped;
+    }
+    programs.emplace(key,program);shaders.emplace(id,std::move(program));
 }
 Record snapshot(ID3D11DeviceContext* c,unsigned kind,const std::array<UINT,5>& args){
     Suspend pause;Record r;r.slot=unsigned(activeSlot);r.kind=kind;r.group=group;r.bufferEpoch=bufferEpoch;std::copy(args.begin(),args.end(),r.args);
@@ -167,7 +194,9 @@ HRESULT STDMETHODCALLTYPE create_layout(ID3D11Device* d,const D3D11_INPUT_ELEMEN
         Layout l;l.steps=1469598103934665603ull;std::ostringstream definition;definition.imbue(std::locale::classic());definition<<'[';
         for(UINT i=0;i<count;++i){if(elements[i].InputSlotClass==D3D11_INPUT_PER_INSTANCE_DATA&&elements[i].InputSlot<32){l.instanceSlots|=1u<<elements[i].InputSlot;l.steps=mix(mix(l.steps,elements[i].InputSlot),elements[i].InstanceDataStepRate);}
             if(i)definition<<',';const auto& e=elements[i];definition<<"{\"semantic\":"<<quoted(e.SemanticName)<<",\"semantic_index\":"<<e.SemanticIndex<<",\"format\":"<<unsigned(e.Format)<<",\"slot\":"<<e.InputSlot<<",\"offset\":"<<e.AlignedByteOffset<<",\"classification\":"<<unsigned(e.InputSlotClass)<<",\"step_rate\":"<<e.InstanceDataStepRate<<'}';}
-        definition<<']';(*result)->SetPrivateData(layoutGuid,sizeof(l),&l);if(layouts.size()<2048)layouts.push_back({tag(*result).id,definition.str()});
+        definition<<']';(*result)->SetPrivateData(layoutGuid,sizeof(l),&l);
+        const auto id=tag(*result).id;const auto known=std::find_if(layouts.begin(),layouts.end(),[&](const LayoutDefinition& d){return d.id==id;});
+        if(known==layouts.end()){if(layouts.size()<8192)layouts.push_back({id,definition.str()});else ++layoutDefinitionsDropped;}
     }catch(...){enabled=false;emit("stereo_audit disabled: layout metadata allocation failed; rendering remains legacy");}return hr;
 }
 void STDMETHODCALLTYPE execute(ID3D11DeviceContext* c,ID3D11CommandList* list,BOOL restore){
@@ -179,13 +208,67 @@ void STDMETHODCALLTYPE execute(ID3D11DeviceContext* c,ID3D11CommandList* list,BO
 const std::array<void*,totalHooks> detours{
     reinterpret_cast<void*>(&indexed),reinterpret_cast<void*>(&plain),reinterpret_cast<void*>(&indexed_instanced),reinterpret_cast<void*>(&instanced),reinterpret_cast<void*>(&automatic),reinterpret_cast<void*>(&indirect<5>),reinterpret_cast<void*>(&indirect<6>),reinterpret_cast<void*>(&dispatch),reinterpret_cast<void*>(&dispatch_indirect),reinterpret_cast<void*>(&map),reinterpret_cast<void*>(&unmap),reinterpret_cast<void*>(&update),reinterpret_cast<void*>(&copy),reinterpret_cast<void*>(&copy_region),
     reinterpret_cast<void*>(&create_shader<ID3D11VertexShader,14>),reinterpret_cast<void*>(&create_shader<ID3D11PixelShader,15>),reinterpret_cast<void*>(&create_shader<ID3D11GeometryShader,16>),reinterpret_cast<void*>(&create_shader<ID3D11HullShader,17>),reinterpret_cast<void*>(&create_shader<ID3D11DomainShader,18>),reinterpret_cast<void*>(&create_shader<ID3D11ComputeShader,19>),reinterpret_cast<void*>(&create_layout),reinterpret_cast<void*>(&execute)};
+bool main_caller(const void* caller){
+    HMODULE module=nullptr;
+    return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(caller),&module)&&module==GetModuleHandleW(nullptr);
+}
+struct FactoryScope {bool previous=insideFactory;FactoryScope(){insideFactory=true;}~FactoryScope(){insideFactory=previous;}};
+void factory_device(ID3D11Device* created,ID3D11DeviceContext* context){
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if(!factoryReady||selected||!created)return;
+    ID3D11DeviceContext* immediate=context;if(immediate)immediate->AddRef();else created->GetImmediateContext(&immediate);
+    if(stereo_audit_configure(immediate,true,earlyDirectory.c_str(),earlyLogger)){
+        earlyDevice=true;emit("stereo_audit early device interception active; observing shader and layout creation before xrCreateSession");
+    }
+    drop(immediate);
+}
+HRESULT WINAPI create_device(IDXGIAdapter* adapter,D3D_DRIVER_TYPE driver,HMODULE software,UINT flags,const D3D_FEATURE_LEVEL* levels,UINT count,UINT sdk,ID3D11Device** result,D3D_FEATURE_LEVEL* level,ID3D11DeviceContext** context){
+    const bool observe=!insideFactory&&main_caller(LMU_CALLER_ADDRESS);FactoryScope scope;
+    const auto fn=reinterpret_cast<decltype(&D3D11CreateDevice)>(factoryOriginals[0]);
+    const auto hr=fn(adapter,driver,software,flags,levels,count,sdk,result,level,context);
+    if(observe&&SUCCEEDED(hr)&&result&&*result)try{factory_device(*result,context?*context:nullptr);}catch(...){if(earlyLogger)earlyLogger("stereo_audit early device metadata unavailable; rendering remains legacy");}
+    return hr;
+}
+HRESULT WINAPI create_device_swapchain(IDXGIAdapter* adapter,D3D_DRIVER_TYPE driver,HMODULE software,UINT flags,const D3D_FEATURE_LEVEL* levels,UINT count,UINT sdk,const DXGI_SWAP_CHAIN_DESC* desc,IDXGISwapChain** swapchain,ID3D11Device** result,D3D_FEATURE_LEVEL* level,ID3D11DeviceContext** context){
+    const bool observe=!insideFactory&&main_caller(LMU_CALLER_ADDRESS);FactoryScope scope;
+    const auto fn=reinterpret_cast<decltype(&D3D11CreateDeviceAndSwapChain)>(factoryOriginals[1]);
+    const auto hr=fn(adapter,driver,software,flags,levels,count,sdk,desc,swapchain,result,level,context);
+    if(observe&&SUCCEEDED(hr)&&result&&*result)try{factory_device(*result,context?*context:nullptr);}catch(...){if(earlyLogger)earlyLogger("stereo_audit early device metadata unavailable; rendering remains legacy");}
+    return hr;
+}
+// Export only programs used in the sampled focus views. Never export the full
+// startup shader cache, mapped memory, textures, or game code. Opt-in local files
+// are named by stage/SHA and cannot contain supplied paths or machine identity.
+bool export_program(const Program& p,std::string& relative){
+    if(p.bytecode.empty())return false;
+    relative="stereo-shaders/"+p.stage+"-"+p.sha+".dxbc";
+    std::error_code error;std::filesystem::create_directory(directory/L"stereo-shaders",error);if(error)return false;
+    const auto path=directory/std::filesystem::path(relative);
+    HANDLE file=CreateFileW(path.c_str(),GENERIC_WRITE,FILE_SHARE_READ,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(file==INVALID_HANDLE_VALUE){
+        if(GetLastError()!=ERROR_FILE_EXISTS)return false;
+        // Reuse an existing file only after verifying size and SHA, so an old or
+        // partial file is never silently accepted or overwritten.
+        file=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);if(file==INVALID_HANDLE_VALUE)return false;
+        LARGE_INTEGER size{};bool okay=GetFileSizeEx(file,&size)&&size.QuadPart==static_cast<long long>(p.bytecode.size());
+        std::vector<BYTE> data;if(okay){try{data.resize(p.bytecode.size());}catch(...){CloseHandle(file);throw;}DWORD read=0;okay=ReadFile(file,data.data(),DWORD(data.size()),&read,nullptr)&&read==data.size();}
+        CloseHandle(file);return okay&&sha256(data.data(),data.size())==p.sha;
+    }
+    DWORD written=0;const bool okay=WriteFile(file,p.bytecode.data(),DWORD(p.bytecode.size()),&written,nullptr)&&written==p.bytecode.size()&&FlushFileBuffers(file);CloseHandle(file);return okay;
+}
 void save_impl(const char* reason){
     if(!capturing)return;capturing=false;
     SYSTEMTIME time{};GetSystemTime(&time);wchar_t name[128]{};std::swprintf(name,std::size(name),L"stereo-audit-%04u%02u%02u-%02u%02u%02u-%llx.json",time.wYear,time.wMonth,time.wDay,time.wHour,time.wMinute,time.wSecond,static_cast<unsigned long long>(started));
     const auto path=directory/name;
-    std::ostringstream out;out.imbue(std::locale::classic());out<<"{\"schema\":1,\"rendering\":\"legacy\",\"reason\":"<<quoted(reason)<<",\"frequency\":"<<frequency<<",\"scene_frames\":"<<completedFrames<<",\"open_scopes_at_save\":"<<openScopes<<",\"capacity_per_pass\":"<<maxDrawsPerPass<<",\"shader_definitions_dropped\":"<<shaderDefinitionsDropped<<",\"capabilities\":{\"feature_level\":"<<unsigned(capabilities.featureLevel)<<",\"vprt\":"<<unsigned(capabilities.vertexArrayIndex)<<",\"route\":"<<quoted(stereo_route_name(capabilities.route))<<"},\"tracking\":\"owner-thread observed writes; CB signatures are resource identities and versions, not content hashes; existing shaders may lack definitions; indirect arguments are not read; PS SRVs/samplers cover slots 0-15; other-stage SRVs, UAV writes and mapped contents are not observed\",\"layouts\":[";
-    bool firstLayout=true;for(const auto& l:layouts){if(!firstLayout)out<<',';firstLayout=false;out<<"{\"id\":"<<l.id<<",\"elements\":"<<l.elements<<'}';}out<<"],\"shaders\":[";
-    bool first=true;for(const auto& s:shaders){if(!first)out<<',';first=false;out<<"{\"id\":"<<s.id<<",\"stage\":"<<quoted(s.stage.c_str())<<",\"sha256\":"<<quoted(s.sha.c_str())<<",\"reflection\":"<<s.reflection<<'}';}out<<"],\"passes\":[";
+    std::set<uint32_t> usedShaders,usedLayouts,focusShaders;
+    for(const auto& r:records){usedLayouts.insert(r.layout);for(auto id:r.shaders)if(id){usedShaders.insert(id);if(r.slot%4>=2)focusShaders.insert(id);}}
+    std::unordered_map<const Program*,std::string> exported;unsigned exportFailures=0;
+    if(captureBytecode)for(auto id:focusShaders){const auto found=shaders.find(id);if(found==shaders.end())continue;const auto* p=found->second.get();if(exported.find(p)!=exported.end())continue;
+        std::string relative;if(!export_program(*p,relative)){relative.clear();++exportFailures;}exported.emplace(p,std::move(relative));}
+    std::ostringstream out;out.imbue(std::locale::classic());out<<"{\"schema\":1,\"rendering\":\"legacy\",\"reason\":"<<quoted(reason)<<",\"frequency\":"<<frequency<<",\"scene_frames\":"<<completedFrames<<",\"open_scopes_at_save\":"<<openScopes<<",\"capacity_per_pass\":"<<maxDrawsPerPass<<",\"shader_definitions_dropped\":"<<shaderDefinitionsDropped<<",\"layout_definitions_dropped\":"<<layoutDefinitionsDropped<<",\"metadata_cache\":{\"shader_aliases\":"<<shaders.size()<<",\"unique_programs\":"<<programs.size()<<",\"reflection_bytes\":"<<reflectionBytes<<",\"early_device\":"<<unsigned(earlyDevice)<<"},\"shader_export\":{\"enabled\":"<<unsigned(captureBytecode)<<",\"cached_bytes\":"<<bytecodeBytes<<",\"programs_dropped\":"<<bytecodeProgramsDropped<<",\"write_failures\":"<<exportFailures<<"},\"capabilities\":{\"feature_level\":"<<unsigned(capabilities.featureLevel)<<",\"vprt\":"<<unsigned(capabilities.vertexArrayIndex)<<",\"route\":"<<quoted(stereo_route_name(capabilities.route))<<"},\"tracking\":\"owner-thread observed writes; CB signatures are resource identities and versions, not content hashes; existing shaders may lack definitions; indirect arguments are not read; PS SRVs/samplers cover slots 0-15; other-stage SRVs, UAV writes and mapped contents are not observed\",\"layouts\":[";
+    bool firstLayout=true;for(const auto& l:layouts){if(!usedLayouts.count(l.id))continue;if(!firstLayout)out<<',';firstLayout=false;out<<"{\"id\":"<<l.id<<",\"elements\":"<<l.elements<<'}';}out<<"],\"shaders\":[";
+    bool first=true;for(auto id:usedShaders){const auto found=shaders.find(id);if(found==shaders.end())continue;const auto& s=*found->second;if(!first)out<<',';first=false;out<<"{\"id\":"<<id<<",\"stage\":"<<quoted(s.stage.c_str())<<",\"sha256\":"<<quoted(s.sha.c_str())<<",\"reflection\":"<<s.reflection;
+        const auto file=exported.find(&s);if(focusShaders.count(id)&&file!=exported.end()&&!file->second.empty())out<<",\"bytecode_file\":"<<quoted(file->second.c_str());out<<'}';}out<<"],\"passes\":[";
     for(unsigned i=0;i<passes.size();++i){if(i)out<<',';const auto& p=passes[i];out<<"{\"slot\":"<<i<<",\"draw_calls\":"<<p.calls<<",\"dropped\":"<<p.dropped<<",\"wall_ticks\":"<<p.wallTicks<<",\"snapshot_ticks\":"<<p.snapshotTicks<<",\"api_ticks\":"<<p.apiTicks<<",\"maps\":"<<p.maps<<",\"unmaps\":"<<p.unmaps<<",\"updates\":"<<p.updates<<",\"copies\":"<<p.copies<<",\"dispatches\":"<<p.dispatches<<",\"command_lists\":"<<p.commandLists<<'}';}
     out<<"],\"draws\":[";first=true;
     for(const auto& r:records){if(!first)out<<',';first=false;out<<"{\"slot\":"<<r.slot<<",\"kind\":"<<r.kind<<",\"group\":"<<r.group<<",\"args\":[";for(unsigned i=0;i<5;++i){if(i)out<<',';out<<r.args[i];}
@@ -199,24 +282,51 @@ void save_impl(const char* reason){
     char line[640]{};std::snprintf(line,sizeof(line),"stereo_audit %s reason=%s frames=%u records=%zu file=%s; diagnostic overhead is included; game rendering remains legacy",okay?"complete":"save_failed",reason,completedFrames,records.size(),path.filename().u8string().c_str());emit(line);
 }
 void save(const char* reason){try{save_impl(reason);}catch(...){capturing=false;emit("stereo_audit save failed: serialization allocation error; rendering remains legacy");}}
-void cleanup(){
+void cleanup_methods(){
     watchedContext=nullptr;watchedDevice=nullptr;for(unsigned i=0;i<installed;++i)MH_DisableHook(targets[i]);for(unsigned i=0;i<installed;++i)MH_RemoveHook(targets[i]);installed=0;drop(selected);drop(device);deferredStop=false;
+    shaders.clear();programs.clear();layouts.clear();records.clear();earlyDevice=false;
 }
+void cleanup_factories(){
+    factoryReady=false;for(unsigned i=0;i<factoryInstalled;++i)MH_DisableHook(factoryTargets[i]);for(unsigned i=0;i<factoryInstalled;++i)MH_RemoveHook(factoryTargets[i]);factoryInstalled=0;
+    earlyDirectory.clear();earlyLogger=nullptr;
+}
+void cleanup(){cleanup_methods();cleanup_factories();}
 } // namespace
 bool stereo_audit_enabled(){return enabled.load(std::memory_order_relaxed);}
-bool stereo_audit_configure(ID3D11DeviceContext* context,bool enable,const wchar_t* output,void(*log)(const char*)){
+bool stereo_audit_prepare(bool enable,const wchar_t* output,void(*log)(const char*)){
     stereo_audit_stop();std::lock_guard<std::recursive_mutex> lock(mutex);logger=log;
-    if(installed||!enable||!diagnostics_enabled())return false;
+    if(installed||factoryInstalled||!enable||!diagnostics_enabled())return false;
+    std::error_code error;earlyDirectory=output?output:L"";
+    if(!earlyDirectory.is_absolute()||!std::filesystem::is_directory(earlyDirectory,error)||error){emit("stereo_audit early interception unavailable: existing absolute output directory required");return false;}
+    const auto status=MH_Initialize();if(status!=MH_OK&&status!=MH_ERROR_ALREADY_INITIALIZED)return false;
+    const auto module=GetModuleHandleW(L"d3d11.dll");if(!module)return false;
+    factoryTargets={reinterpret_cast<void*>(GetProcAddress(module,"D3D11CreateDevice")),reinterpret_cast<void*>(GetProcAddress(module,"D3D11CreateDeviceAndSwapChain"))};
+    const std::array<void*,2> factoryDetours{reinterpret_cast<void*>(&create_device),reinterpret_cast<void*>(&create_device_swapchain)};
+    for(unsigned i=0;i<2;++i){if(!factoryTargets[i]||MH_CreateHook(factoryTargets[i],factoryDetours[i],&factoryOriginals[i])!=MH_OK){cleanup_factories();emit("stereo_audit early factory hook creation failed; late session capture remains available");return false;}++factoryInstalled;}
+    earlyLogger=log;factoryReady=true;
+    for(unsigned i=0;i<2;++i)if(MH_EnableHook(factoryTargets[i])!=MH_OK){cleanup_factories();emit("stereo_audit early factory hook activation failed; late session capture remains available");return false;}
+    emit("stereo_audit early factory interception armed; only main-executable D3D11 device creation qualifies");return true;
+}
+bool stereo_audit_configure(ID3D11DeviceContext* context,bool enable,const wchar_t* output,void(*log)(const char*)){
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if(!enable||!diagnostics_enabled()){stereo_audit_stop();logger=log;return false;}
+    if(enabled&&context==selected&&output&&directory==std::filesystem::path(output)){
+        logger=log;emit("stereo_audit session confirmed existing device; preserving early shader/layout definitions");return true;
+    }
+    enabled=false;save("reconfigure");logger=log;
+    if(openScopes){deferredStop=true;return false;}cleanup_methods();
     std::error_code error;directory=output?output:L"";
     if(!context||context->GetType()!=D3D11_DEVICE_CONTEXT_IMMEDIATE||!directory.is_absolute()||!std::filesystem::is_directory(directory,error)||error){emit("stereo_audit unavailable: immediate context and existing absolute output directory required");return false;}
-    selected=context;selected->AddRef();selected->GetDevice(&device);owner=0;shaders.clear();layouts.clear();records.clear();passes={};keyWasDown=false;openScopes=0;shaderDefinitionsDropped=0;bufferEpoch=0;
-    LARGE_INTEGER f{};QueryPerformanceFrequency(&f);frequency=f.QuadPart;if(!frequency){cleanup();return false;}
+    selected=context;selected->AddRef();selected->GetDevice(&device);owner=0;passes={};keyWasDown=false;openScopes=0;shaderDefinitionsDropped=layoutDefinitionsDropped=0;bufferEpoch=0;
+    reflectionBytes=bytecodeBytes=0;bytecodeProgramsDropped=0;
+    char shaderSetting[8]{};captureBytecode=GetEnvironmentVariableA("LMU_QV_STEREO_SHADER_CAPTURE",shaderSetting,sizeof(shaderSetting))==1&&shaderSetting[0]=='1';
+    LARGE_INTEGER f{};QueryPerformanceFrequency(&f);frequency=f.QuadPart;if(!frequency){cleanup_methods();return false;}
     capabilities=query_stereo_capabilities(device);char line[256]{};std::snprintf(line,sizeof(line),"portable_stereo capabilities feature_level=0x%x vprt=%u route=%s; synthetic backend available, LMU rendering remains legacy",unsigned(capabilities.featureLevel),unsigned(capabilities.vertexArrayIndex),stereo_route_name(capabilities.route));emit(line);
-    const auto status=MH_Initialize();if(status!=MH_OK&&status!=MH_ERROR_ALREADY_INITIALIZED){cleanup();return false;}
+    const auto status=MH_Initialize();if(status!=MH_OK&&status!=MH_ERROR_ALREADY_INITIALIZED){cleanup_methods();return false;}
     auto** contextTable=*reinterpret_cast<void***>(selected);auto** deviceTable=*reinterpret_cast<void***>(device);
-    for(unsigned i=0;i<totalHooks;++i){targets[i]=(i<contextCount||i==21?contextTable:deviceTable)[indices[i]];for(unsigned j=0;j<i;++j)if(targets[j]==targets[i]){emit("stereo_audit unavailable: aliased method targets");cleanup();return false;}}
-    for(unsigned i=0;i<totalHooks;++i){if(MH_CreateHook(targets[i],detours[i],&originals[i])!=MH_OK){emit("stereo_audit unavailable: method hook creation failed");cleanup();return false;}++installed;}
-    for(unsigned i=0;i<totalHooks;++i)if(MH_EnableHook(targets[i])!=MH_OK){emit("stereo_audit unavailable: method hook activation failed");cleanup();return false;}
+    for(unsigned i=0;i<totalHooks;++i){targets[i]=(i<contextCount||i==21?contextTable:deviceTable)[indices[i]];for(unsigned j=0;j<i;++j)if(targets[j]==targets[i]){emit("stereo_audit unavailable: aliased method targets");cleanup_methods();return false;}}
+    for(unsigned i=0;i<totalHooks;++i){if(MH_CreateHook(targets[i],detours[i],&originals[i])!=MH_OK){emit("stereo_audit unavailable: method hook creation failed");cleanup_methods();return false;}++installed;}
+    for(unsigned i=0;i<totalHooks;++i)if(MH_EnableHook(targets[i])!=MH_OK){emit("stereo_audit unavailable: method hook activation failed");cleanup_methods();return false;}
     watchedContext=selected;watchedDevice=device;enabled=true;emit("stereo_audit armed hotkey=Ctrl+Alt+F8 scene_frames=2 max_draws_per_pass=4096; heavy diagnostic capture, not a performance benchmark; rendering remains legacy");return true;
 }
 void stereo_audit_frame(bool keyDown){

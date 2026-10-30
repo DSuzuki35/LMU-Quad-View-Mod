@@ -137,11 +137,18 @@ class GuiLayoutTests {
                 Check(vectorValues.RenderProfiling,"Profiling GUI setting lost");
                 ((CheckBox)Named(form,"StereoDrawAudit")).Checked=true;
                 Check(((LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null)).StereoDrawAudit,"Stereo audit GUI preference lost");
+                Check(Named(form,"StereoShaderCapture").Enabled,"Shader export control disabled with audit on");
+                ((CheckBox)Named(form,"StereoShaderCapture")).Checked=true;
+                Check(((LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null)).StereoShaderCapture,"Shader export GUI preference lost");
+                ((CheckBox)Named(form,"StereoDrawAudit")).Checked=false;
+                Check(!Named(form,"StereoShaderCapture").Enabled,"Shader export enabled with audit off");
+                ((CheckBox)Named(form,"StereoDrawAudit")).Checked=true;
                 Check(vectorValues.RenderProfileSeconds==180&&Named(form,"RenderProfileSeconds").Enabled,"Capture length GUI setting lost/disabled");
                 ((CheckBox)Named(form,"DiagnosticsEnabled")).Checked=false;
                 var quietValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
                 Check(!quietValues.DiagnosticsEnabled&&!Named(form,"RenderProfileSeconds").Enabled,"Diagnostics-off did not disable captures");
                 Check(!Named(form,"StereoDrawAudit").Enabled,"Diagnostics-off did not disable audit control");
+                Check(!Named(form,"StereoShaderCapture").Enabled,"Diagnostics-off did not disable shader export control");
                 ((CheckBox)Named(form,"DiagnosticsEnabled")).Checked=true;
                 Check(Named(form,"RenderProfileSeconds").Enabled,"Re-enabling diagnostics lost saved capture preference");
                 Check(vectorValues.Backend=="VectorXR"&&vectorValues.VectorXrManifest==vector.VectorXrManifest&&vectorValues.QuadViewsManifest==vector.QuadViewsManifest,"VectorXR GUI settings roundtrip");

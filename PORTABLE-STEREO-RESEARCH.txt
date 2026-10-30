@@ -1,4 +1,4 @@
-PORTABLE STEREO RESEARCH 1
+PORTABLE STEREO RESEARCH 2
 
 STATUS
 
@@ -12,6 +12,29 @@ calls. It adds the bounded game draw audit needed to select and convert the firs
 LMU shader/pass family. Ordinary LMU rendering remains the current legacy path.
 No in-game CPU or FPS improvement is claimed for this research package.
 
+CHANGES AFTER THE FIRST LIVE CAPTURE
+
+The first captures completed but filled the 1,024-object shader cache. Many of
+those objects contained identical programs (96 unique programs in 1,024 objects).
+This build shares reflection/optional bytecode by stage and SHA256, and keeps up
+to 32,768 object aliases and 8,192 unique programs. Reflection and optional raw
+program storage are bounded to 16 MiB and 64 MiB respectively. Cache overflow
+is reported. Only definitions used by the sampled draws are written to JSON.
+
+Input-layout/shader creation is now observed from main-executable D3D11 device
+creation after XR instance initialization, rather than waiting for xrCreateSession.
+Runtime/provider helper devices are ignored. Session confirmation preserves the
+early metadata when its immediate context matches. This cannot recover definitions
+created before interception, or guarantee coverage if device creation comes from
+another DLL. The log and metadata_cache.early_device report early interception.
+
+An optional, default-off shader-program capture supplies actual DXBC for local
+conversion work. It only exports unique programs used by the sampled focus views;
+the rest of the startup shader cache stays in memory. It is disabled when either
+the draw audit or master diagnostics is off. These files are never packaged or
+included in source contributions. Existing files are reused only if their SHA and
+size match, and are never overwritten.
+
 GAME DRAW AUDIT
 
 1. Extract the whole research ZIP into a separate writable folder. Keep the
@@ -19,6 +42,9 @@ GAME DRAW AUDIT
 2. In Setup, enable diagnostics and logging, and tick:
        Record stereo draw audit (Ctrl+Alt+F8)
    Leave ordinary render profiling unticked for this diagnostic run.
+   For the first LMU pass conversion, also tick:
+       Include shader programs for stereo conversion
+   This saves local game program files as described below.
 3. Launch LMU, load a track and wait until the scene/shaders have warmed up.
 4. Keep LMU focused on the desktop. Press and release Ctrl+Alt+F8 once while
    driving or viewing a stable replay segment. Two scene frames are recorded.
@@ -29,6 +55,7 @@ GAME DRAW AUDIT
        stereo_audit armed ...
        stereo_audit complete reason=frames frames=2 ...
    Normal close saves a partial capture too, including other-thread teardown.
+   If shader capture was enabled, keep logs/stereo-shaders/ alongside the JSON.
 6. Untick the draw audit and relaunch before ordinary play or FPS comparisons.
    Audit hooks add overhead while armed. These are compatibility diagnostics,
    not timings suitable for measuring an optimization's performance.
@@ -47,8 +74,12 @@ signatures, VS/PS constant-buffer bindings with observed write generations,
 render-target dimensions, and first-16-slot PS texture/sampler signatures.
 It records snapshot overhead separately from original draw-API wall intervals.
 
-There is no raw game shader bytecode, mapped-buffer content, image dump or system
-identity in this audit format. Shader definitions created before audit hooks may
+The JSON contains no raw game shader bytecode, mapped-buffer content, image dump
+or system identity. If explicitly enabled, separate local .dxbc files contain
+the game's compiled shader programs and can contain embedded compilation metadata.
+They are development inputs, not redistributable mod source; keep them out of
+GitHub. The repository ignores .dxbc files and stereo-shaders folders. This option
+does not upload anything. Shader definitions created before audit hooks may
 be unavailable. Mapped WRITE memory is never read. Resource IDs/write generations
 are not content hashes, and matching signatures do not prove common object
 identity or stereo replay safety. Other shader-stage resources, GPU RT/UAV writes,
@@ -62,6 +93,10 @@ Optional local summary with Python 3:
 The original focus draw calls are all forwarded. The native build/ABI guards,
 provider configuration and existing image acquisition/release behavior remain.
 Diagnostic JSON and run files stay out of source commits.
+
+Tests cover real device-factory interception, keeping pre-session input layouts,
+more than 1,024 distinct programs, shared program definitions, used-only output,
+optional local DXBC export/reuse, diagnostics-off, and cross-thread normal close.
 
 HARDWARE PROOF TOOL
 

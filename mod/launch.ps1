@@ -7,6 +7,7 @@ param(
     [switch]$RenderProfiling,
     [switch]$DisableDiagnostics,
     [switch]$StereoDrawAudit,
+    [switch]$StereoShaderCapture,
     [ValidateRange(30,300)][int]$RenderProfileSeconds=120,
     [switch]$DebugFocus,
     [switch]$Benchmark,
@@ -25,7 +26,7 @@ param(
     [string]$GameDirectory = 'D:\SteamLibrary\steamapps\common\Le Mans Ultimate'
 )
 $ErrorActionPreference = 'Stop'
-if($DisableDiagnostics){$RenderProfiling=$false;$GpuTiming=$false;$Benchmark=$false;$CaptureViews=$false;$PixelStats=$false;$ScenePixelStats=$false;$StereoDrawAudit=$false}
+if($DisableDiagnostics){$RenderProfiling=$false;$GpuTiming=$false;$Benchmark=$false;$CaptureViews=$false;$PixelStats=$false;$ScenePixelStats=$false;$StereoDrawAudit=$false;$StereoShaderCapture=$false}
 . (Join-Path $PSScriptRoot 'portable-launch.ps1')
 if ($Backend -ne 'Native' -and ($Mode -ne 'quad' -or !$UseRuntimeSettings)) { throw "$Backend requires quad mode with runtime-controlled settings." }
 if ($UseRuntimeSettings) {
@@ -93,6 +94,7 @@ $info.Environment['LMU_QV_PROFILE'] = $(if ($RenderProfiling) { '1' } else { '0'
 $info.Environment['LMU_QV_DIAGNOSTICS'] = $(if ($DisableDiagnostics) { '0' } else { '1' })
 $info.Environment['LMU_QV_STEREO_AUDIT'] = $(if ($StereoDrawAudit) { '1' } else { '0' })
 $info.Environment['LMU_QV_STEREO_AUDIT_DIR'] = $(if ($StereoDrawAudit) { $logDirectory } else { '' })
+$info.Environment['LMU_QV_STEREO_SHADER_CAPTURE'] = $(if ($StereoDrawAudit -and $StereoShaderCapture) { '1' } else { '0' })
 $info.Environment['LMU_QV_PROFILE_SECONDS'] = $RenderProfileSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
 $info.Environment['LMU_QV_USE_RUNTIME_SETTINGS'] = $(if ($UseRuntimeSettings) { '1' } else { '0' })
 $info.Environment['LMU_QV_LOG'] = $(if($DisableDiagnostics){''}else{$logPath})
@@ -120,6 +122,7 @@ $run = [pscustomobject]@{
     GpuTiming=[bool]$GpuTiming;TimingTrigger=$timingTrigger
     RenderProfiling=[bool]$RenderProfiling;RenderProfileSeconds=$RenderProfileSeconds
     StereoDrawAudit=[bool]$StereoDrawAudit
+    StereoShaderCapture=[bool]($StereoDrawAudit -and $StereoShaderCapture)
     DebugFocus=[bool]$DebugFocus
     Benchmark=[bool]$Benchmark;BenchmarkControl=$benchmarkControl;EnableOuterVrs=[bool]$EnableOuterVrs
     NativeOuterResolution=[bool]$NativeOuterResolution

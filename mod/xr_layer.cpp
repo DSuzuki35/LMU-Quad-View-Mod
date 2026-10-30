@@ -370,6 +370,7 @@ XrResult XRAPI_CALL layerDestroyInstance(XrInstance instance) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     logf("xrDestroyInstance");
     if(s.session) {lmuqv::engine_stop();clearSession();}
+    lmuqv::stereo_audit_stop(); // Also releases early hooks when no session was created.
     XrResult r=next.DestroyInstance(instance);
     if(XR_SUCCEEDED(r)) s=State{};
     lmuqv::flush_log();
@@ -805,6 +806,11 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
         logf("capture_config valid=%d existingDirectory=%s trigger=%s (four fixed BMP names; CREATE_NEW; scene gate)",s.capture.valid,s.capture.directory.u8string().c_str(),s.capture.trigger.u8string().c_str());
     }
     if(s.pixelEnabled)logf("pixel_stats_enabled minimumFrame=30 oneFrame=1 requireScene=%d",s.pixelRequireScene);
+    char auditSetting[8]{};
+    if(quad&&lmuqv::diagnostics_enabled()&&GetEnvironmentVariableA("LMU_QV_STEREO_AUDIT",auditSetting,sizeof(auditSetting))==1&&auditSetting[0]=='1'){
+        const auto auditDirectory=environmentWide(L"LMU_QV_STEREO_AUDIT_DIR");
+        lmuqv::stereo_audit_prepare(true,auditDirectory.c_str(),lmuqv::log_line);
+    }
     char debugEnv[8]{};GetEnvironmentVariableA("LMU_QV_DEBUG_FOCUS",debugEnv,sizeof(debugEnv));s.debugFocus=quad&&!std::strcmp(debugEnv,"1");
     if(s.debugFocus)logf("debug_focus enabled: lime runtime Focus-FOV outline; current cached FOV, not a synthetic gaze signal");
     return r;

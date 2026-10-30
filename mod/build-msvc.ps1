@@ -39,6 +39,7 @@ try {
     Run-Test 'xr_layer_tests' @('--runtime-settings','--diagnostics-off')
     Run-Test 'render_profile_test' @('--diagnostics-off')
     Run-Test 'stereo_audit_test' @('--diagnostics-off')
+    Run-Test 'stereo_audit_test' @('--shader-export')
     Compile ($common+@('/LD','xr_layer.cpp','engine_bridge.cpp','nv_vrs.cpp','stereo_audit.cpp')+$hooks+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+$LayerOutput)))
     Get-FileHash -LiteralPath $LayerOutput -Algorithm SHA256
 } finally {Pop-Location}

@@ -7,6 +7,10 @@ enum class StereoAuditPass:unsigned {outer0,outer1,focus0,focus1,none};
 inline StereoAuditPass stereo_audit_eye(bool focus,unsigned eye){return StereoAuditPass((focus?2:0)+eye);}
 struct StereoAuditToken {bool entered=false;unsigned slot=0;long long started=0;};
 bool stereo_audit_configure(ID3D11DeviceContext*,bool,const wchar_t* directory,void(*log)(const char*));
+// Arm before the game creates its D3D11 device, to observe input layouts and
+// shaders that already exist by xrCreateSession. Only main-executable factory
+// calls qualify; runtime/provider helper devices are ignored.
+bool stereo_audit_prepare(bool,const wchar_t* directory,void(*log)(const char*));
 bool stereo_audit_enabled();
 void stereo_audit_frame(bool keyDown);
 void stereo_audit_frame_end();

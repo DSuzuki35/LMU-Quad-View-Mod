@@ -27,18 +27,25 @@ int main(int argc,char** argv){
     std::locale::global(std::locale(std::locale::classic(),new GroupedNumbers));
     const bool quiet=argc>1&&!std::strcmp(argv[1],"--diagnostics-off");if(quiet)SetEnvironmentVariableA("LMU_QV_DIAGNOSTICS","0");
     const bool hardware=argc>1&&!std::strcmp(argv[1],"--hardware");
+    bool exportShaders=false;for(int i=1;i<argc;++i)exportShaders|=!std::strcmp(argv[i],"--shader-export");
+    SetEnvironmentVariableA("LMU_QV_STEREO_SHADER_CAPTURE",exportShaders?"1":"0");
     wchar_t executable[32768]{};assert(GetModuleFileNameW(nullptr,executable,32768));
     const auto directory=std::filesystem::path(executable).parent_path()/("stereo-audit-test-"+std::to_string(GetTickCount64()));assert(std::filesystem::create_directory(directory));
+    assert(!stereo_audit_prepare(false,directory.c_str(),log));
+    assert(!stereo_audit_configure(nullptr,false,directory.c_str(),log)&&!stereo_audit_enabled());
+    if(!quiet){assert(!stereo_audit_configure(nullptr,true,directory.c_str(),log));assert(stereo_audit_prepare(true,directory.c_str(),log));}
+    else assert(!stereo_audit_prepare(true,directory.c_str(),log));
     ID3D11Device* device=nullptr;ID3D11DeviceContext* context=nullptr;D3D_FEATURE_LEVEL level{};
     assert(SUCCEEDED(D3D11CreateDevice(nullptr,hardware?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,&level,&context)));
-    assert(!stereo_audit_configure(context,false,directory.c_str(),log)&&!stereo_audit_enabled());
     if(quiet){assert(!stereo_audit_configure(context,true,directory.c_str(),log));stereo_audit_frame(true);{StereoAuditScope pass(StereoAuditPass::focus0);}stereo_audit_frame_end();stereo_audit_stop();assert(files(directory).empty()&&messages.empty());drop(context);drop(device);std::cout<<"Stereo audit diagnostics-off: no hooks/capture/files\n";return 0;}
-    assert(!stereo_audit_configure(nullptr,true,directory.c_str(),log));
-    assert(stereo_audit_configure(context,true,directory.c_str(),log)&&stereo_audit_enabled());
+    assert(stereo_audit_enabled()&&contains("early device interception active"));
     auto* code=compile("cbuffer C:register(b2){float4 offset;} float4 main(float2 p:POSITION):SV_Position{return float4(p+offset.xy,0.5,1);}","vs_5_0");
     ID3D11VertexShader* vs=nullptr;assert(SUCCEEDED(device->CreateVertexShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&vs)));
     ID3D11InputLayout* layout=nullptr;D3D11_INPUT_ELEMENT_DESC element{"POSITION",0,DXGI_FORMAT_R32G32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0};assert(SUCCEEDED(device->CreateInputLayout(&element,1,code->GetBufferPointer(),code->GetBufferSize(),&layout)));drop(code);
     code=compile("float4 main():SV_Target{return float4(0,1,0,1);}","ps_5_0");ID3D11PixelShader* ps=nullptr;assert(SUCCEEDED(device->CreatePixelShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&ps)));drop(code);
+    // xrCreateSession happens after the game's mesh layouts and some shader
+    // objects exist. Confirming the same device must preserve that metadata.
+    assert(stereo_audit_configure(context,true,directory.c_str(),log)&&contains("preserving early shader/layout definitions"));
     ID3D11Texture2D* texture=nullptr;D3D11_TEXTURE2D_DESC td{};td.Width=td.Height=8;td.ArraySize=td.MipLevels=td.SampleDesc.Count=1;td.Format=DXGI_FORMAT_R8G8B8A8_UNORM;td.BindFlags=D3D11_BIND_RENDER_TARGET;
     assert(SUCCEEDED(device->CreateTexture2D(&td,nullptr,&texture)));ID3D11RenderTargetView* rtv=nullptr;assert(SUCCEEDED(device->CreateRenderTargetView(texture,nullptr,&rtv)));
     ID3D11Buffer *vb=nullptr,*ib=nullptr,*cb=nullptr;const float vertices[]={-1,-1,-1,3,3,-1};const UINT indices[]={0,1,2};
@@ -58,11 +65,32 @@ int main(int argc,char** argv){
     auto first=read(files(directory)[0]);assert(count(first,"\"kind\":")==8&&count(first,"\"sha256\":\"")==2);
     assert(first.find("\"scene_frames\":2")!=std::string::npos&&first.find("\"rendering\":\"legacy\"")!=std::string::npos);
     assert(first.find("\"name\":\"offset\"")!=std::string::npos&&first.find("\"group\":7")!=std::string::npos&&first.find("\"layout_known\":1")!=std::string::npos);
+    assert(first.find("\"early_device\":1")!=std::string::npos&&first.find("\"shader_definitions_dropped\":0")!=std::string::npos);
+    assert(count(first,"\"bytecode_file\":")==unsigned(exportShaders?2:0));
+    unsigned bytecodeFiles=0;if(std::filesystem::exists(directory/L"stereo-shaders"))for(const auto& file:std::filesystem::directory_iterator(directory/L"stereo-shaders")){
+        const auto data=read(file.path());assert(data.size()>4&&data.substr(0,4)=="DXBC");++bytecodeFiles;}
+    assert(bytecodeFiles==unsigned(exportShaders?2:0));
+    // Reproduce cache exhaustion using >1,024 real, distinct programs. Identical
+    // CreateShader calls may return the same object, so merely repeating them
+    // would not exercise the old capacity bug on every D3D11 implementation.
+    std::vector<ID3D11PixelShader*> extra;
+    for(unsigned i=0;i<1100;++i){
+        const auto source="float4 main():SV_Target{return float4("+std::to_string(i+1)+".0/2048.0,1,0,1);}";
+        code=compile(source.c_str(),"ps_5_0");ID3D11PixelShader* shader=nullptr;
+        assert(SUCCEEDED(device->CreatePixelShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&shader)));extra.push_back(shader);drop(code);
+    }
+    // Create another object/program request containing the same DXBC. It must
+    // not consume an extra unique-program slot (objects may be driver-deduped).
+    code=compile("float4 main():SV_Target{return float4(1100.0/2048.0,1,0,1);}","ps_5_0");ID3D11PixelShader* duplicate=nullptr;
+    assert(SUCCEEDED(device->CreatePixelShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&duplicate)));drop(code);
     stereo_audit_frame(false);stereo_audit_frame(true);
+    context->PSSetShader(duplicate,nullptr,0);
     {StereoAuditScope pass(StereoAuditPass::focus0);for(unsigned i=0;i<4100;++i)context->DrawIndexed(3,0,0);}
+    context->PSSetShader(ps,nullptr,0);
     stereo_audit_frame_end();stereo_audit_frame(false);stereo_audit_frame(true); // Save the bounded capture early.
     assert(files(directory).size()==2);bool bounded=false;
-    for(const auto& file:files(directory)){const auto data=read(file);if(data.find("\"reason\":\"hotkey\"")!=std::string::npos){assert(count(data,"\"kind\":")==4096&&data.find("\"dropped\":4")!=std::string::npos);bounded=true;}}
+    for(const auto& file:files(directory)){const auto data=read(file);if(data.find("\"reason\":\"hotkey\"")!=std::string::npos){assert(count(data,"\"kind\":")==4096&&data.find("\"dropped\":4")!=std::string::npos);
+        assert(data.find("\"shader_definitions_dropped\":0")!=std::string::npos&&data.find("\"unique_programs\":1102")!=std::string::npos&&count(data,"\"sha256\":\"")==2);bounded=true;}}
     assert(bounded);
     // A normal close on another thread saves stable buffered records, without
     // D3D context calls there; hook/resource cleanup waits for the open scope.
@@ -72,6 +100,6 @@ int main(int argc,char** argv){
     // Confirm capture hooks never changed the resulting image.
     auto readDesc=td;readDesc.BindFlags=0;readDesc.Usage=D3D11_USAGE_STAGING;readDesc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;ID3D11Texture2D* staging=nullptr;assert(SUCCEEDED(device->CreateTexture2D(&readDesc,nullptr,&staging)));
     context->CopyResource(staging,texture);D3D11_MAPPED_SUBRESOURCE map{};assert(SUCCEEDED(context->Map(staging,0,D3D11_MAP_READ,0,&map)));uint32_t pixel=0;std::memcpy(&pixel,static_cast<const char*>(map.pData)+4*map.RowPitch+4*4,4);assert(pixel==0xff00ff00u);context->Unmap(staging,0);drop(staging);
-    stereo_audit_stop();context->ClearState();drop(cb);drop(ib);drop(vb);drop(rtv);drop(texture);drop(layout);drop(ps);drop(vs);drop(context);drop(device);
-    std::cout<<"Stereo draw audit "<<(hardware?"hardware":"WARP")<<" passed: transparent draws, shader reflection/SHA, layout metadata, CB updates, frame limits, held key, file saving, pixel readback and cross-thread deferred cleanup\n";
+    stereo_audit_stop();context->ClearState();for(auto*& shader:extra)drop(shader);drop(duplicate);drop(cb);drop(ib);drop(vb);drop(rtv);drop(texture);drop(layout);drop(ps);drop(vs);drop(context);drop(device);
+    std::cout<<"Stereo draw audit "<<(hardware?"hardware":"WARP")<<" passed: early device capture, preserved layouts, >1024 programs, deduplicated/used-only definitions, opt-in shader export, transparent draws, reflection/SHA, CB updates, frame limits, held key, file saving, pixel readback and cross-thread deferred cleanup\n";
 }
