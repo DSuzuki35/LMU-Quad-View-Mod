@@ -1,0 +1,42 @@
+using System;
+using System.Globalization;
+using System.IO;
+using System.Threading;
+using LmuQuadViewLauncher;
+class SettingsTests
+{
+    static void Require(bool value, string name) { if (!value) throw new Exception(name); }
+    static void Rejected(Action action) { bool rejected=false; try { action(); } catch(ArgumentException) { rejected=true; } catch(InvalidDataException) { rejected=true; } Require(rejected,"Invalid settings accepted"); }
+    static void Main()
+    {
+        string folder=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"settings-test-"+Guid.NewGuid().ToString("N")); Directory.CreateDirectory(folder);
+        var s=new LauncherSettings { Backend="QVFR", OuterPercent=10,InnerPercent=200,FocusWidthPercent=33,FocusHeightPercent=25 };
+        string old="# custom\n[exe:DCS.exe]\nfocus_multiplier=1.7\n";
+        Thread.CurrentThread.CurrentCulture=CultureInfo.GetCultureInfo("de-DE");
+        string text=QvfrSettings.ProfileText(old,s);
+        Require(text.StartsWith(old.TrimEnd('\n')),"Other app settings changed");
+        Require(text.Contains("peripheral_multiplier=0.1\nfocus_multiplier=2\n"),"Linear resolution / culture conversion");
+        Require(text.Contains("horizontal_focus_section=0.33\nvertical_focus_section=0.25\n"),"Independent size conversion");
+        Require(QvfrSettings.ProfileText(text,s)==text,"Profile idempotency");
+        string scoped=QvfrSettings.ProfileText(text+"sharpen_focus_view=0.1\n",s);
+        Require(scoped.Contains("[exe:Le Mans Ultimate.exe]\nsharpen_focus_view=0.1"),"Unowned suffix key moved into another app section");
+        Require(QvfrSettings.ProfileText(scoped,s)==scoped,"Scope preservation is not idempotent");
+        string path=Path.Combine(folder,"settings.cfg"); File.WriteAllText(path,old);
+        QvfrSettings.SaveProfile(path,s); string[] backups=Directory.GetFiles(folder,"*.lmu-backup-*");
+        Require(backups.Length==1 && File.ReadAllText(backups[0])==old,"Backup preservation");
+        QvfrSettings.SaveProfile(path,s); Require(Directory.GetFiles(folder,"*.lmu-backup-*").Length==1,"Unchanged profile rewritten");
+        s.Backend="Native"; s.OuterPercent=100; QvfrSettings.SaveProfile(path,s); Require(File.ReadAllText(path)==text,"Native overwrote QVFR");
+        s.Backend="QVFR"; Rejected(delegate{QvfrSettings.Validate(s);}); s.OuterPercent=10;
+        Rejected(delegate{QvfrSettings.ProfileText("# BEGIN LMU QUAD VIEW MOD PROFILE",s);});
+        Rejected(delegate{QvfrSettings.ProfileText("# END LMU QUAD VIEW MOD PROFILE\n# BEGIN LMU QUAD VIEW MOD PROFILE",s);});
+        s.OuterPercent=9; Rejected(delegate{QvfrSettings.Validate(s);}); s.OuterPercent=10;
+        s.FocusWidthPercent=100; Rejected(delegate{QvfrSettings.Validate(s);}); s.FocusWidthPercent=33;
+        s.FocusHeightPercent=9; Rejected(delegate{QvfrSettings.Validate(s);}); s.FocusHeightPercent=25;
+        s.OuterBlur=4; Rejected(delegate{QvfrSettings.Validate(s);}); s.OuterBlur=1.25m;
+        string xml=Path.Combine(folder,"launcher-settings.xml"); QvfrSettings.Save(xml,s); var loaded=QvfrSettings.Load(xml);
+        Require(loaded.FocusWidthPercent==33 && loaded.FocusHeightPercent==25 && loaded.InnerPercent==200 && loaded.OuterBlur==1.25m,"Settings roundtrip");
+        File.WriteAllText(xml,"<QuadView><GameDirectory>D:\\Game</GameDirectory><DebugFocus>true</DebugFocus></QuadView>");
+        loaded=QvfrSettings.Load(xml); Require(loaded.Backend=="Native" && loaded.DebugFocus && loaded.OuterPercent==25,"Old settings migration");
+        Console.WriteLine("C# settings tests passed: independent dimensions, invariant culture, backups, preservation, validation, migration.");
+    }
+}

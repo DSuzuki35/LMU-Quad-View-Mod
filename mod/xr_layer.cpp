@@ -89,6 +89,8 @@ struct State {
     bool captures[2]{};
     bool sceneFocus[2]{};
     bool debugFocus=false;
+    float outerBlur=0;
+    unsigned blurEncodingWarnings=0;
     bool debugDrawn[4]{};
     bool waitPending=false, waitShouldRender=false;
     XrTime pendingTime{};
@@ -731,6 +733,11 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
         logf("Invalid LMU_QV_FOVEATION_MODE; use auto or fixed");return XR_ERROR_VALIDATION_FAILURE;
     }
     const bool requestEyeTracking=std::strcmp(foveationMode,"fixed")!=0;
+    char blurText[64]{};float outerBlur=0;
+    const DWORD blurLength=GetEnvironmentVariableA("LMU_QV_OUTER_BLUR",blurText,sizeof(blurText));
+    if(quad&&(blurLength>=sizeof(blurText)||!lmuqv::parse_outer_blur(blurText,outerBlur))){
+        logf("Invalid LMU_QV_OUTER_BLUR; expected finite output-pixel radius 0..3");return XR_ERROR_VALIDATION_FAILURE;
+    }
     for(uint32_t i=0;i<info->enabledExtensionCount;++i)extensions.push_back(info->enabledExtensionNames[i]);
     if(quad)for(const char* extension:{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME,XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME}){
         if(std::none_of(extensions.begin(),extensions.end(),[&](const char* e){return !std::strcmp(e,extension);}))extensions.push_back(extension);
@@ -743,6 +750,8 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
     next.get=chain->nextGetInstanceProcAddr;
     if(!next.load(*instance)){if(next.DestroyInstance)next.DestroyInstance(*instance);*instance=XR_NULL_HANDLE;return XR_ERROR_INITIALIZATION_FAILED;}
     s.instance=*instance;s.quad=quad;s.requestEyeTracking=requestEyeTracking;
+    s.outerBlur=quad?outerBlur:0;
+    if(quad)logf("Outer smoothing radius=%g output pixels; focus source untouched",s.outerBlur);
     if(quad)logf("Foveation request mode=%s; actual eye-tracking availability is determined by the downstream provider",requestEyeTracking?"auto":"fixed");
     char runtimeSetting[8]{};GetEnvironmentVariableA("LMU_QV_USE_RUNTIME_SETTINGS",runtimeSetting,sizeof(runtimeSetting));
     s.runtimeSettings=quad&&!std::strcmp(runtimeSetting,"1");
@@ -836,9 +845,10 @@ bool xr_copy_outer(unsigned eye,ID3D11Texture2D* source) {
         logf("outer copy incompatible eye=%u source=%ux%u fmt=%u samples=%u array=%u mips=%u expected=%ux%u fmt=%lld",eye,src.Width,src.Height,src.Format,src.SampleDesc.Count,src.ArraySize,src.MipLevels,s.colorInfo.width,s.colorInfo.height,static_cast<long long>(s.colorInfo.format));return false;
     }
     bool resized=src.Width!=outer.width||src.Height!=outer.height;
+    const bool shaderTransfer=resized||s.outerBlur>0;
     bool resampleFormat=src.Format==DXGI_FORMAT_R8G8B8A8_TYPELESS||src.Format==DXGI_FORMAT_R8G8B8A8_UNORM||src.Format==DXGI_FORMAT_R8G8B8A8_UNORM_SRGB||
                         src.Format==DXGI_FORMAT_B8G8R8A8_TYPELESS||src.Format==DXGI_FORMAT_B8G8R8A8_UNORM||src.Format==DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
-    if(resized&&(!(src.BindFlags&D3D11_BIND_SHADER_RESOURCE)||!resampleFormat)){
+    if(shaderTransfer&&(!(src.BindFlags&D3D11_BIND_SHADER_RESOURCE)||!resampleFormat)){
         logf("outer resample incompatible source eye=%u format=%u bindFlags=%u",eye,src.Format,src.BindFlags);return false;
     }
     ID3D11Device* sourceDevice{};source->GetDevice(&sourceDevice);bool same=sourceDevice==s.device;if(sourceDevice)sourceDevice->Release();if(!same){logf("outer copy rejected different device");return false;}
@@ -848,9 +858,18 @@ bool xr_copy_outer(unsigned eye,ID3D11Texture2D* source) {
     if(outer.index<outer.images.size()&&outer.images[outer.index].texture){
         ID3D11Texture2D* destination=outer.images[outer.index].texture;D3D11_TEXTURE2D_DESC dst{};destination->GetDesc(&dst);
         if(dst.Width==outer.width&&dst.Height==outer.height&&dst.ArraySize==src.ArraySize&&dst.MipLevels==src.MipLevels&&dst.SampleDesc.Count==1&&formatFamily(dst.Format)==formatFamily(src.Format)){
-            if(s.frames<10||s.frames%120==0)logf("outer transfer eye=%u source=%p sourceFmt=%u size=%ux%u destination=%p resourceFmt=%u size=%ux%u chain=%p image=%u operation=%s",eye,static_cast<void*>(source),unsigned(src.Format),src.Width,src.Height,static_cast<void*>(destination),unsigned(dst.Format),dst.Width,dst.Height,static_cast<void*>(outer.chain),outer.index,resized?"shader-resample":"CopyResource");
-            if(!resized){s.context->CopyResource(destination,source);copied=SUCCEEDED(s.device->GetDeviceRemovedReason());}
-            else if(outer.index<outer.rtvs.size())copied=outerResample.draw(s.context,source,outer.rtvs[outer.index],outer.width,outer.height);
+            bool preserveCopy=!shaderTransfer;
+            if(!resized&&s.outerBlur>0&&outer_resample_detail::typed(src.Format)&&outer.index<outer.rtvs.size()&&outer.rtvs[outer.index]){
+                D3D11_RENDER_TARGET_VIEW_DESC view{};outer.rtvs[outer.index]->GetDesc(&view);
+                if(outer_resample_detail::srgb(src.Format)!=outer_resample_detail::srgb(view.Format)){
+                    preserveCopy=true;
+                    if(s.blurEncodingWarnings++<4||s.frames%120==0)
+                        logf("outer smoothing unavailable for source/RTV encoding mismatch; preserving unblurred copy eye=%u sourceFmt=%u rtvFmt=%u",eye,unsigned(src.Format),unsigned(view.Format));
+                }
+            }
+            if(s.frames<10||s.frames%120==0)logf("outer transfer eye=%u source=%p sourceFmt=%u size=%ux%u destination=%p resourceFmt=%u size=%ux%u chain=%p image=%u operation=%s",eye,static_cast<void*>(source),unsigned(src.Format),src.Width,src.Height,static_cast<void*>(destination),unsigned(dst.Format),dst.Width,dst.Height,static_cast<void*>(outer.chain),outer.index,preserveCopy?"CopyResource":s.outerBlur>0?"shader-blur":"shader-resample");
+            if(preserveCopy){s.context->CopyResource(destination,source);copied=SUCCEEDED(s.device->GetDeviceRemovedReason());}
+            else if(outer.index<outer.rtvs.size())copied=outerResample.draw(s.context,source,outer.rtvs[outer.index],outer.width,outer.height,s.outerBlur);
         }
     }
     s.captures[eye]=copied;

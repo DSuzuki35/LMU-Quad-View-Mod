@@ -36,6 +36,8 @@ bool statsRequested=false, expectStatsBeforeRelease=false;
 bool sceneStatsRequested=false;
 bool captureRequested=false,captureMissing=false,captureInvalid=false;
 bool movingFocusTest=false;
+bool outerBlurRequested=false;
+bool typedSrgbRuntime=false;
 double focusBoxPercent=100;
 double focusHeightPercent=100;
 bool asymmetricFocusRequested=false;
@@ -175,7 +177,7 @@ XrResult XRAPI_CALL createSwapchain(XrSession,const XrSwapchainCreateInfo* in,Xr
     unsigned expectedH=runtimeSettings&&own?runtimeOuterHeight(unsigned(textures.size()-1)):expected;
     assert(overlayTestActive||(in->width==expectedW&&in->height==expectedH&&in->sampleCount==1&&in->format==(srgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_UNORM)));
     D3D11_TEXTURE2D_DESC desc{};desc.Width=in->width;desc.Height=in->height;desc.MipLevels=1;desc.ArraySize=1;
-    desc.Format=srgbRuntime?DXGI_FORMAT_R8G8B8A8_TYPELESS:DXGI_FORMAT(in->format);desc.SampleDesc.Count=1;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_RENDER_TARGET|((scaledRequested||runtimeSettings)?D3D11_BIND_SHADER_RESOURCE:0);
+    desc.Format=srgbRuntime?(typedSrgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_TYPELESS):DXGI_FORMAT(in->format);desc.SampleDesc.Count=1;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_RENDER_TARGET|((scaledRequested||runtimeSettings)?D3D11_BIND_SHADER_RESOURCE:0);
     ID3D11Texture2D* texture=nullptr;assert(SUCCEEDED(device->CreateTexture2D(&desc,nullptr,&texture)));
     *out=reinterpret_cast<XrSwapchain>(textures.size()+10);textures.push_back(texture);swapchains.push_back(*out);ownership.emplace_back();return XR_SUCCESS;
 }
@@ -398,6 +400,8 @@ int main(int argc,char** argv) {
     const auto logPath=testBuildRoot()/L"xr-layer-test-trace.log";
     DeleteFileW(logPath.c_str());SetEnvironmentVariableW(L"LMU_QV_LOG",logPath.c_str());
     for(int arg=1;arg<argc;++arg){
+        outerBlurRequested|=!std::strcmp(argv[arg],"--outer-blur");
+        typedSrgbRuntime|=!std::strcmp(argv[arg],"--typed-srgb-runtime");
         fixedFoveation|=!std::strcmp(argv[arg],"--fixed-foveation");
         noEyeTracking|=!std::strcmp(argv[arg],"--no-eye-tracking");
         srgbRuntime|=!std::strcmp(argv[arg],"--srgb");statsRequested|=!std::strcmp(argv[arg],"--stats");sceneStatsRequested|=!std::strcmp(argv[arg],"--scene-stats");
@@ -417,6 +421,7 @@ int main(int argc,char** argv) {
         runtimeTooTall|=!std::strcmp(argv[arg],"--runtime-too-tall");
     }
     captureRequested|=captureMissing||captureInvalid;sceneStatsRequested|=captureRequested;
+    srgbRuntime|=typedSrgbRuntime;
     statsRequested|=sceneStatsRequested;
     if(captureRequested){
         captureDirectory=testBuildRoot()/("capture-dump-"+testRunToken());
@@ -429,6 +434,7 @@ int main(int argc,char** argv) {
     SetEnvironmentVariableA("LMU_QV_DEBUG_FOCUS",nullptr);
     SetEnvironmentVariableA("LMU_QV_MODE", "quad");
     SetEnvironmentVariableA("LMU_QV_FOVEATION_MODE",fixedFoveation?"fixed":nullptr);
+    SetEnvironmentVariableA("LMU_QV_OUTER_BLUR",outerBlurRequested?"1":nullptr);
     if(invalidSizesRequested)scaledRequested=false;
     SetEnvironmentVariableA("LMU_QV_OUTER_PIXELS_PERCENT",invalidSizesRequested?"NaN":scaledRequested?"10":nullptr);
     SetEnvironmentVariableA("LMU_QV_FOCUS_PIXELS_PERCENT",invalidSizesRequested||scaledRequested?"200":nullptr);
@@ -462,6 +468,11 @@ int main(int argc,char** argv) {
     XrApiLayerCreateInfo chain{XR_LOADER_INTERFACE_STRUCT_API_LAYER_CREATE_INFO,1,sizeof(XrApiLayerCreateInfo),nullptr,{},&next};
     XrInstanceCreateInfo info{}; info.type=XR_TYPE_INSTANCE_CREATE_INFO;
     XrInstance instance{};
+    for(const char* invalid:{"NaN","inf","-1","3.1","1junk","0x1","1,5"}){
+        SetEnvironmentVariableA("LMU_QV_OUTER_BLUR",invalid);
+        assert(req.createApiLayerInstance(&info,&chain,&instance)==XR_ERROR_VALIDATION_FAILURE&&instanceCreateCalls==0);
+    }
+    SetEnvironmentVariableA("LMU_QV_OUTER_BLUR",outerBlurRequested?"1":nullptr);
     SetEnvironmentVariableA("LMU_QV_FOVEATION_MODE","invalid");
     assert(req.createApiLayerInstance(&info,&chain,&instance)==XR_ERROR_VALIDATION_FAILURE&&instanceCreateCalls==0);
     SetEnvironmentVariableA("LMU_QV_FOVEATION_MODE","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
@@ -567,14 +578,14 @@ int main(int argc,char** argv) {
     };
     begin();finish();assert(submittedLayers==0&&submittedViews==0);
     begin();assert(!lmuqv::xr_copy_outer(0,wrongSize));finish();assert(submittedLayers==0&&acquireCount==0);
-    if(scaledRequested){
+    if(scaledRequested||outerBlurRequested){
         auto noSampleDesc=sourceDesc;noSampleDesc.Width=32;noSampleDesc.BindFlags&=~D3D11_BIND_SHADER_RESOURCE;
         ID3D11Texture2D* noSample=nullptr;assert(SUCCEEDED(device->CreateTexture2D(&noSampleDesc,nullptr,&noSample)));
         begin();assert(!lmuqv::xr_copy_outer(0,noSample));finish();assert(submittedLayers==0&&acquireCount==0);noSample->Release();
     }
     begin();assert(lmuqv::xr_copy_outer(0,source));assert(releaseCount==0);assert(lmuqv::xr_outer_rtv(0));
     D3D11_RENDER_TARGET_VIEW_DESC outerView{};lmuqv::xr_outer_rtv(0)->GetDesc(&outerView);
-    assert(outerView.Format==DXGI_FORMAT_R8G8B8A8_UNORM);
+    assert(outerView.Format==(typedSrgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_UNORM));
     assertCopiedPixels(textures[1]);
     finish();assert(submittedLayers==0&&releaseCount==1);
     assert(!lmuqv::xr_outer_rtv(0));
@@ -748,7 +759,7 @@ int main(int argc,char** argv) {
     if(runtimeSettings){
         for(unsigned eye=0;eye<2;++eye){
             D3D11_TEXTURE2D_DESC small{};source->GetDesc(&small);
-            small.Width=runtimeOuterWidth(eye);small.Height=runtimeOuterHeight(eye);small.BindFlags=0;
+            small.Width=runtimeOuterWidth(eye);small.Height=runtimeOuterHeight(eye);small.BindFlags=outerBlurRequested?D3D11_BIND_SHADER_RESOURCE:0;
             std::vector<uint32_t> pixels(small.Width*small.Height,0x7f0a2040u);
             D3D11_SUBRESOURCE_DATA initial{pixels.data(),small.Width*4,0};ID3D11Texture2D* native=nullptr;
             assert(SUCCEEDED(device->CreateTexture2D(&small,&initial,&native)));
@@ -756,6 +767,28 @@ int main(int argc,char** argv) {
         }
         // Arbitrary color chain sizes may belong to an OSD. Projection ownership
         // is checked at EndFrame; creation alone cannot identify their purpose.
+    }
+    if(outerBlurRequested){
+        assert(runtimeEqual); // Deliberately exercise the old same-size CopyResource route.
+        D3D11_TEXTURE2D_DESC desc{};source->GetDesc(&desc);
+        std::vector<uint32_t> checker(desc.Width*desc.Height);
+        for(unsigned y=0;y<desc.Height;++y)for(unsigned x=0;x<desc.Width;++x)checker[y*desc.Width+x]=((x+y)%2)?0xffffffffu:0xff000000u;
+        D3D11_SUBRESOURCE_DATA pixels{checker.data(),desc.Width*4,0};ID3D11Texture2D* checkSource=nullptr;
+        assert(SUCCEEDED(device->CreateTexture2D(&desc,&pixels,&checkSource)));
+        begin();assert(lmuqv::xr_copy_outer(0,checkSource)&&lmuqv::xr_copy_outer(1,checkSource));
+        const auto color=texturePixel(textures[1],4,4);
+        if(typedSrgbRuntime)assert(color==0xff000000u); // Opposite encoding mismatch: retain raw copy.
+        else assert((color&255)>=126&&(color&255)<=129); // Would be 0 with CopyResource.
+        assert(texturePixel(checkSource,4,4)==0xff000000u); // Focus/native source untouched.
+        finish();assert(submittedViews==4);checkSource->Release();
+        // Optional smoothing must not change old CopyResource color encoding.
+        desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+        std::fill(checker.begin(),checker.end(),0x7f808080u);
+        ID3D11Texture2D* encodedSource=nullptr;assert(SUCCEEDED(device->CreateTexture2D(&desc,&pixels,&encodedSource)));
+        begin();assert(lmuqv::xr_copy_outer(0,encodedSource)&&lmuqv::xr_copy_outer(1,encodedSource));
+        assert(texturePixel(textures[1],4,4)==0x7f808080u);
+        finish();assert(submittedViews==4);encodedSource->Release();
+        assert(currentLog().find("outer smoothing unavailable for source/RTV encoding mismatch; preserving unblurred copy")!=std::string::npos);
     }
     if(scaledRequested){
         // A genuinely small native scene already matches the private outer
@@ -937,5 +970,5 @@ int main(int argc,char** argv) {
         assert(locateViews(session,&li,&state,2,&count,located.views)==XR_SUCCESS);
         assert(reinterpret_cast<PFN_xrDestroyInstance>(load("xrDestroyInstance"))(instance)==XR_SUCCESS);
     }
-    std::cout << "xr-layer tests passed (" << (srgbRuntime?"SRGB chain / typeless images / UNORM source":"UNORM chain and source") << "): negotiation, chain advance, dimensions, count isolation, WARP copy/linear RTV, size rejection, quad composition, skipped/incomplete frames, release/wait retry, pipelined WaitFrame, moving asymmetric focus FOVs, stale-time rejection, trace pass-through\n";
+    std::cout << "xr-layer tests passed (" << (typedSrgbRuntime?"typed SRGB images / UNORM source":srgbRuntime?"SRGB chain / typeless images / UNORM source":"UNORM chain and source") << "): negotiation, chain advance, dimensions, count isolation, WARP copy/linear RTV, size rejection, quad composition, skipped/incomplete frames, release/wait retry, pipelined WaitFrame, moving asymmetric focus FOVs, stale-time rejection, trace pass-through\n";
 }

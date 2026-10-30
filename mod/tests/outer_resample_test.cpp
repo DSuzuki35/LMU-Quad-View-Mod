@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <limits>
 
 namespace {
 template<class T> struct Com {
@@ -212,7 +213,7 @@ std::vector<unsigned char> read(Device& dev,ID3D11Texture2D* texture){
     dev.c->Unmap(staging.p,0);return data;
 }
 void pixels(Device& dev,State& state,DXGI_FORMAT sourceFormat,DXGI_FORMAT destFormat,
-            bool checker,int expected){
+            bool checker,int expected,float blurRadius=0){
     std::array<unsigned char,64> data{};
     for(unsigned y=0;y<4;++y)for(unsigned x=0;x<4;++x){
         const unsigned value=checker?((x+y)%2?255:0):128;
@@ -222,11 +223,39 @@ void pixels(Device& dev,State& state,DXGI_FORMAT sourceFormat,DXGI_FORMAT destFo
     Texture src(dev,4,4,sourceFormat,D3D11_BIND_SHADER_RESOURCE,data.data());
     Texture dst(dev,2,2,destFormat,D3D11_BIND_RENDER_TARGET);
     lmuqv::OuterResample pass;state.bind();
-    require(pass.draw(dev.c.p,src.t.p,dst.r.p,2,2),"valid resample draw");state.verify();
+    require(pass.draw(dev.c.p,src.t.p,dst.r.p,2,2,blurRadius),"valid resample draw");state.verify();
     const auto result=read(dev,dst.t.p);
     for(unsigned p=0;p<4;++p){
         for(unsigned c=0;c<3;++c)require(std::abs(int(result[p*4+c])-expected)<=2,"filtered color/gamma mismatch");
         require(std::abs(int(result[p*4+3])-173)<=1,"alpha gamma mismatch");
+    }
+}
+void blur_pixels(Device& dev,State& state){
+    for(unsigned scale:{1u,2u}){
+    for(auto format:{DXGI_FORMAT_R8G8B8A8_UNORM,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB}){
+        const unsigned size=8*scale;
+        std::vector<unsigned char> bytes(size*size*4);
+        for(unsigned y=0;y<size;++y)for(unsigned x=0;x<size;++x){
+            for(unsigned c=0;c<3;++c)bytes[(y*size+x)*4+c]=(x/scale+y/scale)%2?255:0;
+            bytes[(y*size+x)*4+3]=173;
+        }
+        Texture src(dev,size,size,format,D3D11_BIND_SHADER_RESOURCE,bytes.data());
+        Texture dst(dev,8,8,format,D3D11_BIND_RENDER_TARGET);
+        lmuqv::OuterResample pass;state.bind();
+        require(pass.draw(dev.c.p,src.t.p,dst.r.p,8,8,0.f),"blur off draw");state.verify();
+        const auto unblurred=read(dev,dst.t.p);
+        for(unsigned y=0;y<8;++y)for(unsigned x=0;x<8;++x)require(unblurred[(y*8+x)*4]==((x+y)%2?255:0),"blur off changed pixels");
+        require(pass.draw(dev.c.p,src.t.p,dst.r.p,8,8,1.f),"blur draw");state.verify();
+        const auto blurred=read(dev,dst.t.p);const int expected=format==DXGI_FORMAT_R8G8B8A8_UNORM?128:188;
+        for(unsigned y=1;y<7;++y)for(unsigned x=1;x<7;++x){
+            for(unsigned c=0;c<3;++c)require(std::abs(int(blurred[(y*8+x)*4+c])-expected)<=2,"blur failed checker smoothing / gamma");
+            require(std::abs(int(blurred[(y*8+x)*4+3])-173)<=1,"blur changed alpha");
+        }
+        for(float radius:{-1.f,3.1f,std::numeric_limits<float>::infinity(),std::numeric_limits<float>::quiet_NaN()}){
+            require(!pass.draw(dev.c.p,src.t.p,dst.r.p,8,8,radius),"invalid blur accepted");state.verify();
+            require(read(dev,dst.t.p)==blurred,"invalid blur altered destination");
+        }
+    }
     }
 }
 void invalid(Device& dev,State& state){
@@ -322,7 +351,16 @@ int main(){try{
     pixels(device,state,DXGI_FORMAT_B8G8R8A8_TYPELESS,DXGI_FORMAT_B8G8R8A8_UNORM,false,128);
     pixels(device,state,DXGI_FORMAT_R8G8B8A8_UNORM,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,false,188);
     pixels(device,state,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,DXGI_FORMAT_R8G8B8A8_UNORM,false,55);
+    pixels(device,state,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,false,128,1.f);
+    pixels(device,state,DXGI_FORMAT_R8G8B8A8_UNORM,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,false,188,1.f);
+    pixels(device,state,DXGI_FORMAT_R8G8B8A8_TYPELESS,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,false,128,1.f);
+    float radius=5;
+    require(lmuqv::parse_outer_blur(nullptr,radius)&&radius==0,"absent blur default");
+    require(lmuqv::parse_outer_blur("0.25",radius)&&radius==.25f,"fractional blur parse");
+    require(lmuqv::parse_outer_blur("3",radius)&&radius==3,"max blur parse");
+    for(const char* invalid:{"NaN","inf","-1","3.1","1junk","0x1","1,5"})require(!lmuqv::parse_outer_blur(invalid,radius)&&radius==0,"invalid blur parse");
     channels_and_orientation(device,state);
+    blur_pixels(device,state);
     invalid(device,state);
     binding_hazards(device);
     std::cout<<"OuterResample WARP pixel/gamma/state/validation/cache tests passed\n";return 0;

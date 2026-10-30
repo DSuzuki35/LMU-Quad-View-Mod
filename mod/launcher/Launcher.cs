@@ -1,204 +1,373 @@
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
-using System.Globalization;
+using System.Drawing.Drawing2D;
 using System.IO;
-using System.Text;
 using System.Windows.Forms;
-using System.Xml.Linq;
 
 namespace LmuQuadViewLauncher
 {
-    public static class LaunchCommand
+    static class Theme
     {
-        static string Literal(string text) { return "'" + text.Replace("'", "''") + "'"; }
-        public static string Invocation(string script, string game, bool outline)
-        { return Invocation(script, game, outline, "Native", "auto", ""); }
-        public static string Invocation(string script, string game, bool outline, string backend, string foveation, string manifest)
+        public static readonly Color Background = Color.FromArgb(18, 19, 24);
+        public static readonly Color Sidebar = Color.FromArgb(22, 23, 29);
+        public static readonly Color Card = Color.FromArgb(29, 30, 38);
+        public static readonly Color Field = Color.FromArgb(22, 23, 30);
+        public static readonly Color Line = Color.FromArgb(49, 50, 63);
+        public static readonly Color Text = Color.FromArgb(237, 236, 245);
+        public static readonly Color Muted = Color.FromArgb(153, 154, 174);
+        public static readonly Color Accent = Color.FromArgb(137, 111, 246);
+        public static readonly Color AccentDark = Color.FromArgb(49, 40, 79);
+        public static Label Label(string text, float size, Color color)
         {
-            if (String.IsNullOrWhiteSpace(game)) throw new ArgumentException("Select the LMU game folder.");
-            if (backend != "Native" && backend != "QVFR") throw new ArgumentException("Choose Native or QVFR.");
-            if (foveation != "auto" && foveation != "fixed") throw new ArgumentException("Choose auto or fixed foveation.");
-            return "& " + Literal(script) + " -Mode quad -NativeOuterResolution -UseRuntimeSettings -GameDirectory " + Literal(game) +
-                " -Backend " + backend + " -FoveationMode " + foveation +
-                (backend == "QVFR" && !String.IsNullOrWhiteSpace(manifest) ? " -QuadViewsManifest " + Literal(manifest) : "") +
-                (outline ? " -DebugFocus" : "");
+            return new Label { Text = text, ForeColor = color, BackColor = Color.Transparent,
+                Font = new Font("Segoe UI", size), AutoSize = false, Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0) };
         }
-        public static string Script(string invocation, string output)
+        public static Button Button(string text, bool primary)
         {
-            return "$ErrorActionPreference='Stop'; try { " + invocation +
-                " | Out-File -LiteralPath " + Literal(output) + " -Encoding utf8; exit 0 } catch { " +
-                "[IO.File]::WriteAllText(" + Literal(output) + ", $_.Exception.Message); exit 1 }";
+            var b = new Button { Text = text, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
+                BackColor = primary ? Accent : Card, ForeColor = Text, Height = 42,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold), UseVisualStyleBackColor = false };
+            b.FlatAppearance.BorderColor = primary ? Accent : Line;
+            b.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(155, 131, 255) : AccentDark;
+            b.FlatAppearance.MouseDownBackColor = AccentDark;
+            return b;
+        }
+    }
+
+    sealed class Surface : Panel
+    {
+        public Surface() { BackColor = Theme.Card; Padding = new Padding(18); DoubleBuffered = true; }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+            using (var p = new Pen(Theme.Line)) e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
+        }
+    }
+
+    sealed class PurpleSlider : Control
+    {
+        int current;
+        public int Minimum { get; set; }
+        public int Maximum { get; set; }
+        public int Value
+        {
+            get { return current; }
+            set { int next = Math.Max(Minimum, Math.Min(Maximum, value)); if (current == next) return;
+                current = next; Invalidate(); if (ValueChanged != null) ValueChanged(this, EventArgs.Empty); }
+        }
+        public event EventHandler ValueChanged;
+        public PurpleSlider()
+        {
+            Minimum = 1; Maximum = 400; Height = 32; TabStop = true; Cursor = Cursors.Hand;
+            AccessibleRole = AccessibleRole.Slider;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+                ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+        }
+        void SetFromMouse(int x) { Value = Minimum + (int)Math.Round((Maximum - Minimum) * Math.Max(0, Math.Min(1, (x - 9.0) / Math.Max(1, Width - 18)))); }
+        protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); if (e.Button != MouseButtons.Left) return; Focus(); Capture = true; SetFromMouse(e.X); }
+        protected override void OnMouseMove(MouseEventArgs e) { base.OnMouseMove(e); if (Capture && e.Button == MouseButtons.Left) SetFromMouse(e.X); }
+        protected override void OnMouseUp(MouseEventArgs e) { Capture = false; base.OnMouseUp(e); }
+        protected override bool IsInputKey(Keys keyData) { return keyData == Keys.Left || keyData == Keys.Right || keyData == Keys.Home || keyData == Keys.End || base.IsInputKey(keyData); }
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            base.OnKeyDown(e);
+            if (e.KeyCode == Keys.Left) Value--; else if (e.KeyCode == Keys.Right) Value++;
+            else if (e.KeyCode == Keys.Home) Value = Minimum; else if (e.KeyCode == Keys.End) Value = Maximum;
+        }
+        protected override void OnEnabledChanged(EventArgs e) { base.OnEnabledChanged(e); Invalidate(); }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+            int y = Height / 2; float end = 9 + (Width - 18) * (Value - Minimum) / (float)Math.Max(1, Maximum - Minimum);
+            using (var track = new Pen(Theme.Line, 4)) g.DrawLine(track, 9, y, Width - 9, y);
+            using (var active = new Pen(Enabled ? Theme.Accent : Theme.Muted, 4)) g.DrawLine(active, 9, y, end, y);
+            using (var dot = new SolidBrush(Enabled ? Theme.Accent : Theme.Muted)) g.FillEllipse(dot, end - 6, y - 6, 12, 12);
+            if (Focused) using (var ring = new Pen(Theme.Text)) g.DrawEllipse(ring, end - 9, y - 9, 18, 18);
+        }
+    }
+
+    sealed class PercentSetting : UserControl
+    {
+        readonly NumericUpDown number = new NumericUpDown();
+        readonly PurpleSlider slider = new PurpleSlider();
+        public decimal Value { get { return number.Value; } set { number.Value = Math.Max(number.Minimum, Math.Min(number.Maximum, value)); } }
+        public PercentSetting(string title, int min, int max)
+        {
+            Height = 78; Dock = DockStyle.Fill; BackColor = Theme.Card; Margin = new Padding(0, 3, 0, 0);
+            var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 2, Margin = new Padding(0) };
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 22));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 32)); grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            grid.Controls.Add(Theme.Label(title, 10F, Theme.Text), 0, 0);
+            number.Minimum = min; number.Maximum = max; number.Value = min; number.DecimalPlaces = 1;
+            number.Font = new Font("Segoe UI", 10F); number.BackColor = Theme.Field; number.ForeColor = Theme.Text;
+            number.BorderStyle = BorderStyle.FixedSingle; number.Dock = DockStyle.Fill; number.TextAlign = HorizontalAlignment.Right;
+            number.AccessibleName = title + " percent"; number.Margin = new Padding(0, 3, 0, 0);
+            grid.Controls.Add(number, 1, 0); grid.Controls.Add(Theme.Label(" %", 10F, Theme.Muted), 2, 0);
+            slider.Minimum = min; slider.Maximum = max; slider.Value = min; slider.AccessibleName = title;
+            slider.Dock = DockStyle.Fill; grid.Controls.Add(slider, 0, 1); grid.SetColumnSpan(slider, 3);
+            bool synchronizing = false;
+            number.ValueChanged += delegate { if (synchronizing) return; synchronizing = true; slider.Value = (int)Math.Round(number.Value); synchronizing = false; };
+            slider.ValueChanged += delegate { if (synchronizing) return; synchronizing = true; number.Value = slider.Value; synchronizing = false; };
+            Controls.Add(grid);
         }
     }
 
     sealed class Launcher : Form
     {
         readonly string root = AppDomain.CurrentDomain.BaseDirectory;
-        readonly TextBox game = new TextBox();
-        readonly CheckBox outline = new CheckBox();
-        readonly ComboBox backend = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 290 };
-        readonly ComboBox foveation = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Width = 290 };
-        readonly TextBox manifest = new TextBox { Width = 480 };
-        readonly Label status = new Label();
-        readonly Button launch = new Button();
+        readonly ComboBox backend = Choice(new[] { "Native OpenXR", "Quad-Views-Foveated" });
+        readonly ComboBox mode = Choice(new[] { "Auto / eye tracking", "Fixed foveation" });
+        readonly TextBox game = Field();
+        readonly TextBox manifest = Field();
+        readonly CheckBox outline = Toggle("Show green focus outline");
+        readonly CheckBox nativeOuter = Toggle("Use smaller native outer render targets");
+        readonly PercentSetting outer = new PercentSetting("Outer resolution", 10, 400);
+        readonly PercentSetting inner = new PercentSetting("Inner resolution", 25, 400);
+        readonly PercentSetting focusWidth = new PercentSetting("Width", 10, 90);
+        readonly PercentSetting focusHeight = new PercentSetting("Height", 10, 90);
+        readonly NumericUpDown outerBlur = new NumericUpDown { Minimum = 0, Maximum = 3, DecimalPlaces = 2,
+            Increment = 0.25M, BackColor = Theme.Field, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle,
+            Dock = DockStyle.Fill, TextAlign = HorizontalAlignment.Right, AccessibleName = "Outer smoothing in pixels" };
+        readonly Label status = Theme.Label("Ready. Close LMU before starting a new session.", 9F, Theme.Muted);
+        readonly Label header = Theme.Label("Rendering", 25F, Theme.Text);
+        readonly Label subheader = Theme.Label("Four views. One sharper racing experience.", 10F, Theme.Muted);
+        readonly Label providerHint = Theme.Label("", 9F, Theme.Muted);
+        readonly Label resolutionHint = Theme.Label("", 9F, Theme.Muted);
+        readonly Button launch = Theme.Button("Launch LMU", true);
+        readonly Button save = Theme.Button("Save settings", false);
+        readonly Button renderingNav = Theme.Button("  Rendering", false);
+        readonly Button setupNav = Theme.Button("  Setup", false);
+        readonly Button browseManifest = Theme.Button("Browse", false);
+        readonly Panel renderingPage = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Background };
+        readonly Panel setupPage = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Background };
+        bool busy;
         string SettingsPath { get { return Path.Combine(root, "launcher-settings.xml"); } }
 
-        static Label TextLabel(string text)
+        static ComboBox Choice(string[] choices)
         {
-            return new Label { Text = text, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 7, 8, 7) };
+            var c = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat,
+                BackColor = Theme.Field, ForeColor = Theme.Text, Dock = DockStyle.Fill, Font = new Font("Segoe UI", 10F) };
+            c.Items.AddRange(choices); c.SelectedIndex = 0; return c;
+        }
+        static TextBox Field() { return new TextBox { Dock = DockStyle.Fill, BackColor = Theme.Field, ForeColor = Theme.Text,
+            BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10F), Margin = new Padding(0, 5, 10, 0) }; }
+        static CheckBox Toggle(string text) { return new CheckBox { Text = text, AutoSize = false, Dock = DockStyle.Fill,
+            ForeColor = Theme.Text, Font = new Font("Segoe UI", 10F), Cursor = Cursors.Hand, Margin = new Padding(0) }; }
+        static TableLayoutPanel Stack(int rows)
+        {
+            return new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = rows,
+                Margin = new Padding(0), Padding = new Padding(0), BackColor = Color.Transparent };
+        }
+        static Label Caption(string text) { return Theme.Label(text, 9F, Theme.Muted); }
+        static void Link(Control parent, string text, string address, int row)
+        {
+            var link = new LinkLabel { Text = text, Dock = DockStyle.Fill, LinkColor = Theme.Muted,
+                ActiveLinkColor = Theme.Text, VisitedLinkColor = Theme.Muted, Font = new Font("Segoe UI", 9F),
+                TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(0), LinkBehavior = LinkBehavior.HoverUnderline };
+            link.LinkClicked += delegate { try { Process.Start(new ProcessStartInfo(address) { UseShellExecute = true }); }
+                catch (Exception ex) { MessageBox.Show(parent.FindForm(), ex.Message, "Could not open link"); } };
+            ((TableLayoutPanel)parent).Controls.Add(link, 0, row);
         }
         public Launcher()
         {
-            Text = "LMU QuadView - Portable backend test";
-            Font = new Font("Segoe UI", 10F);
-            AutoScaleMode = AutoScaleMode.Dpi;
-            ClientSize = new Size(700, 640);
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            MaximizeBox = false;
-            StartPosition = FormStartPosition.CenterScreen;
-            var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new Padding(20), ColumnCount = 2, RowCount = 10 };
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 66));
-            layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
-            Controls.Add(layout);
-            var heading = TextLabel("QuadView - native runtime or portable QVFR backend");
-            heading.Font = new Font(Font, FontStyle.Bold);
-            layout.Controls.Add(heading, 0, 0); layout.SetColumnSpan(heading, 2);
-            layout.Controls.Add(TextLabel("LMU game folder"), 0, 1);
-            var pathRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, Height = 34, Margin = new Padding(0) };
-            pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            pathRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 94));
-            game.Dock = DockStyle.Fill;
-            game.Text = @"D:\SteamLibrary\steamapps\common\Le Mans Ultimate";
-            var browse = new Button { Text = "Browse...", Dock = DockStyle.Fill };
-            browse.Click += delegate { Browse(); };
-            pathRow.Controls.Add(game, 0, 0); pathRow.Controls.Add(browse, 1, 0);
-            layout.Controls.Add(pathRow, 0, 2); layout.SetColumnSpan(pathRow, 2);
-            outline.Text = "Show green focus outline (eye-tracking check)";
-            outline.AutoSize = true; outline.Margin = new Padding(0, 12, 0, 10);
-            layout.Controls.Add(outline, 0, 3); layout.SetColumnSpan(outline, 2);
-            backend.Items.AddRange(new object[] { "Native runtime (Pimax / Varjo etc.)", "Quad-Views-Foveated (installed separately)" }); backend.SelectedIndex = 0;
-            foveation.Items.AddRange(new object[] { "Auto: eye tracking or provider fallback", "Fixed: no eye tracking" }); foveation.SelectedIndex = 0;
-            var choices = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
-            choices.Controls.Add(backend); choices.Controls.Add(foveation);
-            layout.Controls.Add(choices, 0, 4); layout.SetColumnSpan(choices, 2);
-            layout.Controls.Add(TextLabel("QVFR manifest JSON (blank = auto-detect)"), 0, 5); layout.SetColumnSpan(layout.GetControlFromPosition(0, 5), 2);
-            var manifestRow = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
-            var selectManifest = new Button { Text = "Browse...", AutoSize = true };
-            selectManifest.Click += delegate { using (var dialog = new OpenFileDialog { Filter = "OpenXR manifest (*.json)|*.json", CheckFileExists = true }) { if (dialog.ShowDialog(this) == DialogResult.OK) manifest.Text = dialog.FileName; } };
-            manifestRow.Controls.Add(manifest); manifestRow.Controls.Add(selectManifest);
-            layout.Controls.Add(manifestRow, 0, 6); layout.SetColumnSpan(manifestRow, 2);
-            backend.SelectedIndexChanged += delegate { manifest.Enabled = selectManifest.Enabled = backend.SelectedIndex == 1; };
-            manifest.Enabled = selectManifest.Enabled = false;
-            var help = TextLabel("Native: use your runtime's quad-view settings (e.g. Pimax EVO).\nQVFR: first run ./setup-qvfr-profile.ps1 once from PowerShell 7\nin this package folder. It backs up existing QVFR settings.\nConfigure resolution and focus size in Quad-Views-Foveated.\nSelect your headset's OpenXR runtime before launching.\nAuto needs a supported gaze provider for eye tracking.\nFixed requires no gaze input. Restart LMU after settings changes.");
-            help.ForeColor = Color.DimGray;
-            layout.Controls.Add(help, 0, 7); layout.SetColumnSpan(help, 2);
-            var buttons = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 10, 0, 8) };
-            var save = new Button { Text = "Save settings", AutoSize = true };
-            save.Click += delegate { try { Save(); status.Text = "Saved. These settings apply on your next launch."; } catch (Exception ex) { ShowError(ex.Message); } };
-            launch.Text = "Launch LMU"; launch.AutoSize = true;
-            launch.Click += delegate { Launch(); };
-            buttons.Controls.Add(save); buttons.Controls.Add(launch);
-            layout.Controls.Add(buttons, 0, 8); layout.SetColumnSpan(buttons, 2);
-            status.AutoSize = true; status.MaximumSize = new Size(590, 0); status.Text = "Offline prototype. PowerShell 7 is required.";
-            layout.Controls.Add(status, 0, 9); layout.SetColumnSpan(status, 2);
+            Text = "LMU Quad View"; BackColor = Theme.Background; ForeColor = Theme.Text;
+            Font = new Font("Segoe UI", 10F); AutoScaleMode = AutoScaleMode.Dpi;
+            ClientSize = new Size(1050, 780); MinimumSize = new Size(900, 700); StartPosition = FormStartPosition.CenterScreen;
+            var frame = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0) };
+            frame.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 184)); frame.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            Controls.Add(frame); frame.Controls.Add(BuildSidebar(), 0, 0);
+            var main = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3,
+                Padding = new Padding(28, 14, 28, 14), Margin = new Padding(0) };
+            main.RowStyles.Add(new RowStyle(SizeType.Absolute, 91)); main.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); main.RowStyles.Add(new RowStyle(SizeType.Absolute, 106));
+            frame.Controls.Add(main, 1, 0);
+            var heading = Stack(2); heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            heading.Controls.Add(header, 0, 0); heading.Controls.Add(subheader, 0, 1); main.Controls.Add(heading, 0, 0);
+            var pages = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0) };
+            pages.Controls.Add(setupPage); pages.Controls.Add(renderingPage); main.Controls.Add(pages, 0, 1);
+            BuildRendering(); BuildSetup(); main.Controls.Add(BuildFooter(), 0, 2);
+            backend.SelectedIndexChanged += delegate { UpdateProvider(); };
+            renderingNav.Click += delegate { ShowPage(false); }; setupNav.Click += delegate { ShowPage(true); };
+            save.Click += delegate { SaveSettings(); }; launch.Click += delegate { StartGame(); };
             AcceptButton = launch;
-            LoadSettings();
+            try { Fill(QvfrSettings.Load(SettingsPath)); }
+            catch (Exception ex) { status.Text = "Settings could not be loaded: " + ex.Message; }
+            UpdateProvider(); ShowPage(false);
         }
-        void Browse()
+        Control BuildSidebar()
         {
-            using (var dialog = new FolderBrowserDialog { Description = "Select the folder containing Le Mans Ultimate.exe", ShowNewFolderButton = false })
-            {
-                if (Directory.Exists(game.Text)) dialog.SelectedPath = game.Text;
-                if (dialog.ShowDialog(this) == DialogResult.OK) game.Text = dialog.SelectedPath;
-            }
+            var side = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7,
+                BackColor = Theme.Sidebar, Padding = new Padding(16, 26, 16, 14), Margin = new Padding(0) };
+            side.RowStyles.Add(new RowStyle(SizeType.Absolute, 112)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 49));
+            side.RowStyles.Add(new RowStyle(SizeType.Absolute, 49)); side.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            side.RowStyles.Add(new RowStyle(SizeType.Absolute, 26)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 89)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 43));
+            var brand = Stack(3); brand.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); brand.RowStyles.Add(new RowStyle(SizeType.Absolute, 28)); brand.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
+            var lmu = Theme.Label("LMU", 25F, Theme.Text); lmu.Font = new Font("Segoe UI", 25F, FontStyle.Bold);
+            brand.Controls.Add(lmu, 0, 0); brand.Controls.Add(Theme.Label("QUAD VIEW", 12F, Theme.Accent), 0, 1); brand.Controls.Add(Caption("OPENXR RENDERING"), 0, 2); side.Controls.Add(brand, 0, 0);
+            foreach (var nav in new[] { renderingNav, setupNav }) { nav.Dock = DockStyle.Fill; nav.TextAlign = ContentAlignment.MiddleLeft; nav.Margin = new Padding(0, 3, 0, 5); nav.FlatAppearance.BorderSize = 0; }
+            side.Controls.Add(renderingNav, 0, 1); side.Controls.Add(setupNav, 0, 2);
+            side.Controls.Add(Caption("SUPPORT THE PROJECT"), 0, 4);
+            var support = Stack(2); support.RowStyles.Add(new RowStyle(SizeType.Absolute, 41)); support.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            var coffee = Theme.Button("Buy me a coffee", false); coffee.Dock = DockStyle.Fill; coffee.Font = new Font("Segoe UI", 9F); coffee.Margin = new Padding(0, 0, 0, 4);
+            coffee.Click += delegate { OpenLink("https://buymeacoffee.com/dansuzuki"); }; support.Controls.Add(coffee, 0, 0);
+            Link(support, "Shop via affiliate links", "https://dansuzuki.com/discounts/", 1); side.Controls.Add(support, 0, 5);
+            var tag = Theme.Label("OFFLINE EXPERIMENTAL", 8F, Theme.Muted); side.Controls.Add(tag, 0, 6); return side;
         }
-        string Invocation()
+        void BuildRendering()
         {
-            return LaunchCommand.Invocation(Path.Combine(root, "launch.ps1"), game.Text.Trim(), outline.Checked, backend.SelectedIndex == 1 ? "QVFR" : "Native", foveation.SelectedIndex == 1 ? "fixed" : "auto", manifest.Text.Trim());
+            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 4, Margin = new Padding(0) };
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 142)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 231));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 60)); renderingPage.Controls.Add(grid);
+            var provider = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
+            var p = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 3, Margin = new Padding(0) };
+            p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            p.RowStyles.Add(new RowStyle(SizeType.Absolute, 25)); p.RowStyles.Add(new RowStyle(SizeType.Absolute, 32)); p.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            p.Controls.Add(Caption("RENDERING PROVIDER"), 0, 0); p.Controls.Add(Caption("FOVEATION MODE"), 1, 0);
+            backend.Margin = new Padding(0, 0, 16, 0); mode.Margin = new Padding(0); p.Controls.Add(backend, 0, 1); p.Controls.Add(mode, 1, 1);
+            p.Controls.Add(providerHint, 0, 2); p.SetColumnSpan(providerHint, 2); provider.Controls.Add(p); grid.Controls.Add(provider, 0, 0); grid.SetColumnSpan(provider, 2);
+            grid.Controls.Add(SettingCard("Resolution", outer, inner, "Linear scale per dimension.", new Padding(0, 0, 7, 14)), 0, 1);
+            grid.Controls.Add(SettingCard("Focus region", focusWidth, focusHeight, "Fraction of the full view. QVFR allows 10–90%.", new Padding(7, 0, 0, 14)), 1, 1);
+            var preview = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 12), Padding = new Padding(18, 10, 18, 10) };
+            var info = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Margin = new Padding(0) };
+            info.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); info.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            info.RowStyles.Add(new RowStyle(SizeType.Absolute, 35)); info.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            outline.Margin = new Padding(0, 0, 12, 0); info.Controls.Add(outline, 0, 0);
+            var outlineHint = Caption("Highlights the focus region. Auto follows available eye tracking."); outlineHint.Margin = new Padding(0, 0, 16, 0); info.Controls.Add(outlineHint, 0, 1);
+            var blurRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0) };
+            blurRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); blurRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 69));
+            blurRow.Controls.Add(Theme.Label("Outer smoothing (pixels)", 10F, Theme.Text), 0, 0);
+            outerBlur.Margin = new Padding(2, 4, 0, 0); blurRow.Controls.Add(outerBlur, 1, 0); info.Controls.Add(blurRow, 1, 0);
+            info.Controls.Add(Caption("Softens peripheral shimmer; adds a small GPU pass. Focus stays sharp. 0 = off."), 1, 1);
+            preview.Controls.Add(info); grid.Controls.Add(preview, 0, 2); grid.SetColumnSpan(preview, 2);
+            grid.Controls.Add(resolutionHint, 0, 3); grid.SetColumnSpan(resolutionHint, 2);
         }
-        void Save()
+        Control SettingCard(string title, PercentSetting first, PercentSetting second, string hint, Padding margin)
         {
-            Invocation(); // Validate before writing preferences.
-            new XElement("QuadView", new XElement("GameDirectory", game.Text.Trim()),
-                new XElement("UseRuntimeSettings", true),
-                new XElement("Backend", backend.SelectedIndex == 1 ? "QVFR" : "Native"),
-                new XElement("FoveationMode", foveation.SelectedIndex == 1 ? "fixed" : "auto"),
-                new XElement("QuadViewsManifest", manifest.Text.Trim()),
-                new XElement("DebugFocus", outline.Checked)).Save(SettingsPath);
+            var card = new Surface { Dock = DockStyle.Fill, Margin = margin, Padding = new Padding(17, 12, 17, 10) };
+            var content = Stack(4); content.RowStyles.Add(new RowStyle(SizeType.Absolute, 29)); content.RowStyles.Add(new RowStyle(SizeType.Absolute, 65));
+            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 65)); content.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            var caption = Theme.Label(title, 13F, Theme.Text); caption.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
+            content.Controls.Add(caption, 0, 0); content.Controls.Add(first, 0, 1); content.Controls.Add(second, 0, 2); content.Controls.Add(Caption(hint), 0, 3);
+            card.Controls.Add(content); return card;
         }
-        void LoadSettings()
+        void BuildSetup()
         {
-            if (!File.Exists(SettingsPath)) return;
-            try
-            {
-                var x = XElement.Load(SettingsPath);
-                var g = (string)x.Element("GameDirectory");
-                var d = bool.Parse((string)x.Element("DebugFocus"));
-                LaunchCommand.Invocation("launch.ps1", g, d);
-                game.Text = g; outline.Checked = d;
-                backend.SelectedIndex = (string)x.Element("Backend") == "QVFR" ? 1 : 0;
-                foveation.SelectedIndex = (string)x.Element("FoveationMode") == "fixed" ? 1 : 0;
-                manifest.Text = (string)x.Element("QuadViewsManifest") ?? "";
-                status.Text = "Saved settings loaded. Changes apply on launch.";
-            }
-            catch { status.Text = "Could not read saved settings; defaults loaded."; }
+            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 4, Margin = new Padding(0) };
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 153)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 125)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.Controls.Add(grid);
+            var browseGame = Theme.Button("Browse", false); browseGame.Click += delegate {
+                using (var d = new FolderBrowserDialog { Description = "Select the folder containing Le Mans Ultimate.exe", ShowNewFolderButton = false }) {
+                    if (Directory.Exists(game.Text)) d.SelectedPath = game.Text;
+                    if (d.ShowDialog(this) == DialogResult.OK) game.Text = d.SelectedPath;
+                } };
+            grid.Controls.Add(PathCard("Game installation", game, browseGame, "Choose your LMU folder. The launcher checks the supported game build before starting.", false), 0, 0);
+            browseManifest.Click += delegate { using (var d = new OpenFileDialog { Filter = "OpenXR layer manifest (*.json)|*.json", CheckFileExists = true }) { if (d.ShowDialog(this) == DialogResult.OK) manifest.Text = d.FileName; } };
+            grid.Controls.Add(PathCard("Quad-Views-Foveated", manifest, browseManifest, "Manifest JSON: leave blank to auto-detect an installed copy.", true), 0, 1);
+            var options = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
+            var stack = Stack(3); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 23)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 30)); stack.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            stack.Controls.Add(Caption("ADVANCED"), 0, 0); stack.Controls.Add(nativeOuter, 0, 1);
+            stack.Controls.Add(Caption("Experimental GPU savings. Disable to test full-size outer rendering with resampling."), 0, 2); options.Controls.Add(stack); grid.Controls.Add(options, 0, 2);
+            grid.Controls.Add(Caption("Select your headset's OpenXR runtime before launch. SteamVR + Sboys3 uses the QVFR provider."), 0, 3);
         }
-        static string FindPowerShell()
+        Control PathCard(string title, TextBox field, Button browse, string hint, bool link)
         {
-            var standard = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"PowerShell\7\pwsh.exe");
-            if (File.Exists(standard)) return standard;
-            foreach (var entry in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator))
-            {
-                try { var candidate = Path.Combine(entry.Trim().Trim('"'), "pwsh.exe"); if (File.Exists(candidate)) return candidate; }
-                catch (ArgumentException) { }
-            }
-            throw new FileNotFoundException("PowerShell 7 (pwsh.exe) was not found. Install it before launching LMU.");
+            var card = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14), Padding = new Padding(17, 12, 17, 12) };
+            var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = link ? 4 : 3, Margin = new Padding(0) };
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 87));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 29)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
+            grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); if (link) grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 25));
+            grid.Controls.Add(Theme.Label(title, 13F, Theme.Text), 0, 0); grid.SetColumnSpan(grid.GetControlFromPosition(0, 0), 2);
+            browse.Dock = DockStyle.Fill; browse.Margin = new Padding(0); browse.Font = new Font("Segoe UI", 9F);
+            grid.Controls.Add(field, 0, 1); grid.Controls.Add(browse, 1, 1); grid.Controls.Add(Caption(hint), 0, 2); grid.SetColumnSpan(grid.GetControlFromPosition(0, 2), 2);
+            if (link) { Link(grid, "Installation guide and download", "https://github.com/mbucchia/Quad-Views-Foveated/wiki", 3); grid.SetColumnSpan(grid.GetControlFromPosition(0, 3), 2); }
+            card.Controls.Add(grid); return card;
         }
-        void Launch()
+        Control BuildFooter()
         {
-            try
-            {
-                var invocation = Invocation();
-                if (!File.Exists(Path.Combine(game.Text.Trim(), "Le Mans Ultimate.exe"))) throw new FileNotFoundException("Choose the folder containing Le Mans Ultimate.exe.");
-                foreach (var file in new[] { "launch.ps1", "portable-launch.ps1", "XR_APILAYER_LMU_quadview.json", @"build\lmu_quadview.dll" })
-                    if (!File.Exists(Path.Combine(root, file))) throw new FileNotFoundException("The package is incomplete: " + file);
-                var pwsh = FindPowerShell();
-                Save();
-                var logs = Path.Combine(root, "logs"); Directory.CreateDirectory(logs);
-                var output = Path.Combine(logs, "launcher-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N").Substring(0, 6) + ".txt");
-                var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(LaunchCommand.Script(invocation, output)));
-                var process = new Process { StartInfo = new ProcessStartInfo { FileName = pwsh,
-                    Arguments = "-NoProfile -NonInteractive -EncodedCommand " + encoded,
-                    WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden }, EnableRaisingEvents = true };
-                process.Exited += delegate
-                {
-                    int exitCode = process.ExitCode; process.Dispose();
-                    if (IsDisposed || !IsHandleCreated) return;
-                    try { BeginInvoke((Action)delegate
-                    {
-                        launch.Enabled = true;
-                        if (exitCode == 0) status.Text = "LMU started. Changes apply to the next launch.";
-                        else { string error = File.Exists(output) ? File.ReadAllText(output) : "Launcher exited with code " + exitCode;
-                            ShowError(error.Length > 3000 ? error.Substring(0, 3000) : error); }
-                    }); } catch (InvalidOperationException) { }
-                };
-                launch.Enabled = false; status.Text = "Checking the game build and starting LMU...";
-                try { if (!process.Start()) throw new InvalidOperationException("Could not start PowerShell."); }
-                catch { process.Dispose(); launch.Enabled = true; throw; }
-            }
+            var footer = Stack(2); footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 49)); footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            footer.Controls.Add(status, 0, 0);
+            var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, WrapContents = false, Margin = new Padding(0) };
+            launch.Width = 180; save.Width = 146; launch.Margin = new Padding(10, 0, 0, 0); save.Margin = new Padding(0);
+            buttons.Controls.Add(launch); buttons.Controls.Add(save); footer.Controls.Add(buttons, 0, 1); return footer;
+        }
+        void ShowPage(bool setup)
+        {
+            setupPage.Visible = setup; renderingPage.Visible = !setup;
+            header.Text = setup ? "Setup" : "Rendering";
+            subheader.Text = setup ? "Connect the game, the provider, and your headset." : "Fine-tune image quality where it matters.";
+            renderingNav.BackColor = setup ? Theme.Sidebar : Theme.AccentDark; setupNav.BackColor = setup ? Theme.AccentDark : Theme.Sidebar;
+            renderingNav.ForeColor = setup ? Theme.Muted : Theme.Text; setupNav.ForeColor = setup ? Theme.Text : Theme.Muted;
+        }
+        void UpdateProvider()
+        {
+            bool qvfr = backend.SelectedIndex == 1;
+            outer.Enabled = inner.Enabled = focusWidth.Enabled = focusHeight.Enabled = qvfr;
+            manifest.Enabled = browseManifest.Enabled = qvfr;
+            providerHint.Text = qvfr ? "Uses Quad-Views-Foveated with your active OpenXR runtime." : "Use your runtime's quad-view settings, for example Pimax EVO.";
+            resolutionHint.Text = qvfr ? "200% resolution means 2x width and 2x height (4x pixels). Save updates only LMU's QVFR profile and backs up existing settings. Restart LMU after changes."
+                : "Resolution and focus size are controlled by your native runtime. Switch to Quad-Views-Foveated to adjust them here. Restart LMU after changes.";
+        }
+        void Fill(LauncherSettings s)
+        {
+            game.Text = s.GameDirectory ?? ""; manifest.Text = s.QuadViewsManifest ?? "";
+            backend.SelectedIndex = s.Backend == "QVFR" ? 1 : 0; mode.SelectedIndex = s.FoveationMode == "fixed" ? 1 : 0;
+            outline.Checked = s.DebugFocus; nativeOuter.Checked = s.NativeOuterResolution;
+            outer.Value = s.OuterPercent; inner.Value = s.InnerPercent; focusWidth.Value = s.FocusWidthPercent; focusHeight.Value = s.FocusHeightPercent;
+            outerBlur.Value = Math.Max(outerBlur.Minimum, Math.Min(outerBlur.Maximum, s.OuterBlur));
+        }
+        LauncherSettings Values()
+        {
+            var s = new LauncherSettings { GameDirectory = game.Text.Trim(), QuadViewsManifest = manifest.Text.Trim(),
+                Backend = backend.SelectedIndex == 1 ? "QVFR" : "Native", FoveationMode = mode.SelectedIndex == 1 ? "fixed" : "auto",
+                DebugFocus = outline.Checked, NativeOuterResolution = nativeOuter.Checked,
+                OuterPercent = outer.Value, InnerPercent = inner.Value, FocusWidthPercent = focusWidth.Value, FocusHeightPercent = focusHeight.Value, OuterBlur = outerBlur.Value };
+            QvfrSettings.Validate(s); return s;
+        }
+        void SaveSettings()
+        {
+            if (busy) return;
+            try { var s = Values(); if (s.Backend == "QVFR") QvfrSettings.SaveProfile(s); QvfrSettings.Save(SettingsPath, s);
+                status.Text = s.Backend == "QVFR" ? "Saved. LMU's QVFR profile is applied; existing settings are backed up when changed." : "Saved. Native resolution and focus settings stay in your runtime.";
+                status.ForeColor = Theme.Muted; }
             catch (Exception ex) { ShowError(ex.Message); }
         }
+        void SetBusy(bool value)
+        {
+            busy = value; save.Enabled = launch.Enabled = !value; renderingPage.Enabled = setupPage.Enabled = !value;
+            launch.Text = value ? "Starting..." : "Launch LMU"; UseWaitCursor = value;
+        }
+        void StartGame()
+        {
+            if (busy) return;
+            LauncherSettings settings;
+            try { settings = Values(); QvfrSettings.Save(SettingsPath, settings); }
+            catch (Exception ex) { ShowError(ex.Message); return; }
+            SetBusy(true); status.ForeColor = Theme.Muted; status.Text = "Checking the game build and preparing OpenXR...";
+            var worker = new BackgroundWorker();
+            worker.DoWork += delegate(object sender, DoWorkEventArgs e) { e.Result = LaunchService.Launch(root, settings); };
+            worker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs e) {
+                worker.Dispose(); if (IsDisposed || Disposing) return; SetBusy(false);
+                if (e.Error != null) { ShowError(e.Error.Message); return; }
+                status.ForeColor = Color.FromArgb(149, 207, 169); status.Text = "LMU started (PID " + e.Result + "). Changes apply on your next launch.";
+            };
+            worker.RunWorkerAsync();
+        }
+        void OpenLink(string url) { try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch (Exception ex) { ShowError(ex.Message); } }
         void ShowError(string message)
         {
-            status.Text = "Could not complete: " + (message.Length > 160 ? message.Substring(0, 160) + "..." : message);
-            MessageBox.Show(this, message, "LMU QuadView", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            status.ForeColor = Color.FromArgb(241, 174, 159);
+            status.Text = message.Length > 190 ? message.Substring(0, 190) + "..." : message;
+            MessageBox.Show(this, message, "LMU Quad View", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         [STAThread]
         static void Main()
         {
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
+            Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new Launcher());
         }
     }

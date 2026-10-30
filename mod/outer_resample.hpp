@@ -3,8 +3,18 @@
 #include <d3dcompiler.h>
 #include <array>
 #include <cstring>
+#include <cmath>
+#include <charconv>
 
 namespace lmuqv {
+inline bool parse_outer_blur(const char* text,float& radius){
+    radius=0;
+    if(!text||!*text)return true;
+    const auto end=text+std::strlen(text);float value=0;
+    const auto parsed=std::from_chars(text,end,value,std::chars_format::general);
+    if(parsed.ec!=std::errc{}||parsed.ptr!=end||!std::isfinite(value)||value<0||value>3)return false;
+    radius=value;return true;
+}
 namespace outer_resample_detail {
 template<class T> class Com {
     T* pointer_{};
@@ -52,6 +62,8 @@ class OuterResample {
     Com<ID3DDeviceContextState> state_;
     Com<ID3D11VertexShader> vs_;
     Com<ID3D11PixelShader> ps_;
+    Com<ID3D11PixelShader> blurPs_;
+    Com<ID3D11Buffer> blurConstants_;
     Com<ID3D11SamplerState> sampler_;
     Com<ID3D11RasterizerState> raster_;
     Com<ID3D11BlendState> blend_;
@@ -86,6 +98,15 @@ V VS(uint id:SV_VertexID){V v;v.uv=float2((id<<1)&2,id&2);
 v.position=float4(v.uv*float2(2,-2)+float2(-1,1),0,1);return v;}
 Texture2D image:register(t0);SamplerState linearClamp:register(s0);
 float4 PS(V v):SV_Target{return image.SampleLevel(linearClamp,v.uv,0);}
+cbuffer BlurParameters:register(b0){float2 blurStep;float2 unused;};
+float4 PSBlur(V v):SV_Target{
+    float4 color=image.SampleLevel(linearClamp,v.uv,0)*0.5;
+    color+=image.SampleLevel(linearClamp,v.uv+float2(blurStep.x,0),0)*0.125;
+    color+=image.SampleLevel(linearClamp,v.uv-float2(blurStep.x,0),0)*0.125;
+    color+=image.SampleLevel(linearClamp,v.uv+float2(0,blurStep.y),0)*0.125;
+    color+=image.SampleLevel(linearClamp,v.uv-float2(0,blurStep.y),0)*0.125;
+    return color;
+}
 )";
         Com<ID3DBlob> vertex,pixel,errors;
         const UINT compileFlags=D3DCOMPILE_ENABLE_STRICTNESS|D3DCOMPILE_OPTIMIZATION_LEVEL3;
@@ -96,6 +117,13 @@ float4 PS(V v):SV_Target{return image.SampleLevel(linearClamp,v.uv,0);}
             "PS","ps_4_0",compileFlags,0,pixel.put(),errors.put())))return false;
         if(FAILED(device->CreateVertexShader(vertex->GetBufferPointer(),vertex->GetBufferSize(),nullptr,vs_.put()))||
            FAILED(device->CreatePixelShader(pixel->GetBufferPointer(),pixel->GetBufferSize(),nullptr,ps_.put())))return false;
+        pixel.reset();errors.reset();
+        if(FAILED(D3DCompile(source,std::strlen(source),"outer-blur",nullptr,nullptr,
+            "PSBlur","ps_4_0",compileFlags,0,pixel.put(),errors.put()))||
+           FAILED(device->CreatePixelShader(pixel->GetBufferPointer(),pixel->GetBufferSize(),nullptr,blurPs_.put())))return false;
+        D3D11_BUFFER_DESC constants{};constants.ByteWidth=16;constants.Usage=D3D11_USAGE_DEFAULT;
+        constants.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+        if(FAILED(device->CreateBuffer(&constants,nullptr,blurConstants_.put())))return false;
         D3D11_SAMPLER_DESC sampler{};
         sampler.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;
         sampler.AddressU=sampler.AddressV=sampler.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;
@@ -128,9 +156,9 @@ public:
     OuterResample(const OuterResample&)=delete;
     OuterResample& operator=(const OuterResample&)=delete;
     bool draw(ID3D11DeviceContext* context,ID3D11Texture2D* source,
-              ID3D11RenderTargetView* destination,unsigned width,unsigned height){
+              ID3D11RenderTargetView* destination,unsigned width,unsigned height,float blurRadius=0.f){
         using namespace outer_resample_detail;
-        if(!context||!source||!destination||!width||!height||
+        if(!std::isfinite(blurRadius)||blurRadius<0||blurRadius>3||!context||!source||!destination||!width||!height||
            width>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION||height>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION||
            context->GetType()!=D3D11_DEVICE_CONTEXT_IMMEDIATE)return false;
         D3D11_TEXTURE2D_DESC input{};source->GetDesc(&input);
@@ -159,7 +187,12 @@ public:
         context1_->SwapDeviceContextState(state_.get(),previous.put());
         context->ClearState();
         context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        context->VSSetShader(vs_.get(),nullptr,0);context->PSSetShader(ps_.get(),nullptr,0);
+        context->VSSetShader(vs_.get(),nullptr,0);context->PSSetShader(blurRadius>0?blurPs_.get():ps_.get(),nullptr,0);
+        if(blurRadius>0){
+            const float parameters[4]{blurRadius/float(width),blurRadius/float(height),0,0};
+            context->UpdateSubresource(blurConstants_.get(),0,nullptr,parameters,0,0);
+            auto* buffer=blurConstants_.get();context->PSSetConstantBuffers(0,1,&buffer);
+        }
         ID3D11SamplerState* sampler=sampler_.get();context->PSSetSamplers(0,1,&sampler);
         context->PSSetShaderResources(0,1,&srv);
         context->OMSetRenderTargets(1,&destination,nullptr);
@@ -175,7 +208,7 @@ public:
     }
     void reset(){
         for(auto& entry:cache_){entry.view.reset();entry.source.reset();entry.format=DXGI_FORMAT_UNKNOWN;}
-        cacheCount_=0;state_.reset();vs_.reset();ps_.reset();sampler_.reset();raster_.reset();
+        cacheCount_=0;state_.reset();vs_.reset();ps_.reset();blurPs_.reset();blurConstants_.reset();sampler_.reset();raster_.reset();
         blend_.reset();depth_.reset();context1_.reset();device_.reset();failed_=false;
     }
 };

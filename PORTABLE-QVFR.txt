@@ -1,86 +1,50 @@
-LMU QUAD VIEW MOD - PORTABLE BACKEND TEST CANDIDATE
-30 October 2026
+PORTABLE QVFR BACKEND - EXPERIMENTAL
 
-This is a separate experimental build. Automated tests are not headset validation.
-The existing native-Pimax ZIP remains available separately. In-game crop support
-is still paused; this build keeps the crop-bypass workaround.
+Architecture: LMU -> our renderer adapter -> mbucchia Quad-Views-Foveated ->
+the selected OpenXR runtime. Our mod renders four views. QVFR supplies their
+FOVs/tracking and combines the four images for a stereo runtime.
 
-WHAT IT DOES
-LMU -> our renderer adapter -> mbucchia Quad-Views-Foveated -> OpenXR runtime.
-Our adapter renders the four views. QVFR supplies tracking/fixed focus views and
-composes the result into stereo for runtimes without native quad-view support.
-QVFR itself is a separate upstream dependency, not bundled or authored by us.
+Install QVFR separately using https://github.com/mbucchia/Quad-Views-Foveated/wiki
+or the link on the launcher's Setup page. Follow the headset-specific tracking
+instructions. For Dream Air with sboys3, select SteamVR as the OpenXR runtime.
+Upstream lists that combination as eye-tracking compatible; this mod's full
+LMU/headset integration still requires live verification. No all-headset claim.
 
-SETUP
-1. Extract this entire ZIP to a NEW writable folder outside LMU.
-2. Install Quad-Views-Foveated using its upstream instructions:
-   https://github.com/mbucchia/Quad-Views-Foveated/wiki
-   Complete the headset-specific eye-tracking setup on that page if applicable.
-3. Set the intended OpenXR runtime in your headset software. For Dream Air with
-   sboys3, use SteamVR as OpenXR runtime. The launcher does not switch runtimes.
-4. In PowerShell 7, in this extracted folder, run once:
-   ./setup-qvfr-profile.ps1
-   This adds a conservative LMU-only profile to the QVFR user settings. Existing
-   contents are backed up alongside settings.cfg before a change. Other app
-   sections are preserved. Re-running an unchanged profile is a no-op.
-5. Open LMU-QuadView-Launcher.exe. Choose QVFR backend, Auto or Fixed, and the
-   correct LMU folder. QVFR's installed JSON manifest is normally autodetected;
-   select it manually if discovery fails. Launch an offline LMU session.
-6. Use the green outline to check focus placement. Close LMU before relaunching.
+Select QVFR in our launcher. It autodetects a standard 64-bit installation; use
+Setup's JSON selector if needed. Choose Auto (tracking when the provider reports
+it available; fixed otherwise) or Fixed (explicit stationary view requests).
+The physical presence of an eye tracker is not enough if the runtime hides it.
 
-MODES
-Auto: request eye-tracked foveation when the provider reports it supported;
-otherwise request fixed views. An unavailable/invalid gaze sample is handled by
-the provider. Check actual gaze motion; hardware ownership alone is not enough.
-Fixed: explicitly request stationary focus views. Keep the supplied profile's
-prefer_foveated_rendering=0 so QVFR's dimension query agrees with mode selection.
-Native: use a runtime's own quad views (such as native Pimax OpenXR). Settings
-come from that runtime. Native requires native quad-view/foveation extensions.
+All normal tuning is inside the launcher. Save or Launch writes a managed
+LMU-only block in %LocalAppData%/Quad-Views-Foveated/settings.cfg. Backups are stored
+alongside that file. No changes are made for Native mode. The profile sets
+prefer_foveated_rendering=0 so our explicit Auto/Fixed requests control the
+provider consistently. It applies the box width/height to both fixed and tracked
+settings. Existing other-application settings and unowned LMU keys are preserved.
+Changing settings outside the launcher is possible, but our managed values are
+reapplied on Save/Launch. Restart LMU after changes.
 
-RESOLUTION AND FOCUS SIZE
-In QVFR mode, edit the LMU profile in:
-%LocalAppData%/Quad-Views-Foveated/settings.cfg
-Pimax EVO's native quad-view sliders are not the controls for this backend.
-The supplied peripheral_multiplier=0.25 and focus_multiplier=1.0 are QVFR LINEAR
-dimension multipliers, not percentages of total pixels. Focus section width and
-height start at 0.5 for both dynamic and fixed foveation. Restart after changes.
-The renderer currently requires each outer dimension to fit within the common
-focus buffer. QVFR's stock defaults can violate this. Keep the supplied profile
-for the first test; invalid combinations are rejected with size diagnostics.
-Running setup-qvfr-profile.ps1 again restores the managed block to these defaults.
+Defaults: outer linear resolution 25%, inner 100%, box width 50%, height 50%.
+Outer is limited to 10-400%, inner 25-400%, box dimensions 10-90% to avoid upstream
+clamps. The outer dimension must fit the common focus buffer on BOTH axes. The
+launcher checks the nominal ratio; final runtime dimensions are checked by the
+layer. Reduce outer resolution or increase inner resolution/box size if rejected.
+Native mode uses the runtime's own quad-view settings, e.g. Pimax EVO sliders.
 
-COMPATIBILITY LIMITS
-Upstream lists Dream Air + sboys3 + SteamVR OpenXR as eye-tracking compatible.
-It also lists Quest Pro, Beyond 2e and other tracking setups, plus fixed rendering
-on headsets without eye tracking. These are QVFR capabilities, NOT confirmation
-that this new LMU adapter works on every listed combination.
-Tracking must reach the active OpenXR runtime through a supported interface.
-The physical presence of an eye tracker is insufficient if the runtime hides it.
-This remains Windows x64 / D3D11 / the pinned LMU executable only. Unsupported
-view poses, dimensions or resource layouts still fail validation. Some layouts
-use the slower full-resolution outer compatibility fallback.
+The launcher directly starts LMU, with no PowerShell runtime or scripts. It creates
+a per-run explicit QVFR manifest pointing at the installed DLL, disables original
+implicit QVFR only in the child process, and requests LMU before QVFR. Registry
+registration and the global runtime are unchanged. Other implicit layers can
+still affect rendering. Duplicate/custom QVFR installations and handle-wrapping
+upscalers may be incompatible. Use the 64-bit QVFR manifest.
 
-LAYER ORDER AND SETTINGS
-The launcher makes a per-run explicit QVFR manifest referencing its installed
-DLL. It disables the original implicit QVFR only in LMU's child environment and
-requests LMU adapter before QVFR. It does not edit global layer registration.
-Other implicit layers still exist: if an upscaler or overlay wraps eye handles
-or changes sizes, disable that tool for diagnosis.
-Standard single-install QVFR discovery is supported. Duplicate/custom QVFR
-registrations may interfere; select the 64-bit manifest when choosing manually.
-Keep startup logs from both the mod's logs folder and
-%LocalAppData%/Quad-Views-Foveated. Review personal paths
-before sharing. Do not distribute your settings, logs or per-run manifests.
+First live test: menu -> track -> cockpit -> return to menu in Auto; then relaunch
+Fixed and verify eye motion does not move the focus box. Test green outline and
+outer smoothing separately. Repeat with small outer-target optimization disabled
+in Setup if a scene freezes. Keep the actual quad .log and the QVFR log from
+%LocalAppData%/Quad-Views-Foveated; review personal information before sharing.
 
-FIRST HEADSET TEST
-- Auto: menu -> track -> cockpit -> return to menu, checking both eyes and focus.
-- Fixed: relaunch; move eyes and verify outline stays fixed relative to the view.
-- Repeat with another runtime/headset, then change resolution and relaunch.
-- To isolate small outer-target optimization, use launch.ps1 without the
-  -NativeOuterResolution switch, with -Mode quad -UseRuntimeSettings
-  -Backend QVFR -FoveationMode fixed -GameDirectory '<your LMU folder>'.
-- A nonzero quadProjections log counter is necessary but not visual proof.
-
-Original adapter: PolyForm Noncommercial 1.0.0. Upstream QVFR: its own MIT license.
-No anti-cheat approval is claimed. Use offline. No universal performance gain
-or all-headset compatibility is claimed before testing.
+Validated locally: automated native/fake-runtime/WARP graphics tests, C# launcher
+and profile tests, package integrity/privacy checks. These are not live headset
+validation or a performance benchmark. Windows x64/D3D11/pinned LMU build only.
+Source-available noncommercial adapter; QVFR retains its own MIT license.

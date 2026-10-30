@@ -40,3 +40,12 @@ Verification (30 October 2026): full native/WARP/fake-runtime suite passed;
 launcher and profile tests passed; independent source review found no blocker.
 ZIP manifest/privacy checks passed. Live headset testing remains pending.
 DLL SHA256: 602F7248B0A903052EC58DE7369611A3D55EB7FC1D3B36A87C4433336458FBCE.
+
+Launcher revision (30 October 2026): direct C# process launch replaces runtime
+PowerShell. In-app QVFR tuning preserves other app sections and backs up profile
+changes; ranges match upstream clamps. Dark UI verified at normal/minimum size.
+Optional outer-only spatial smoothing defaults off; same-size typed encoding
+mismatches retain the original copy with a diagnostic. Native/WARP/XR and C#
+regressions passed, including both encoding mismatch directions. No headset or
+GPU performance measurements were made. Temporal filtering is not implemented.
+Delivered ZIP SHA256: 1662337704CB0A2F4A2BCB9FB8846B57BA4F612ABF5F4051A7D996585228181C.

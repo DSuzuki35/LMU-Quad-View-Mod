@@ -1,39 +1,41 @@
-This branch is the portable QVFR test candidate. Read PORTABLE-QVFR.txt first; the native-Pimax instructions below describe the original backend.
+LMU QUAD VIEW MOD - DIRECT LAUNCHER TEST BUILD
 
-LMU Quad View Mod - experimental offline build
+Extract the WHOLE ZIP into a new writable folder outside LMU.
+Open LMU-QuadView-Launcher.exe. PowerShell 7 and script unblocking are not needed.
+Windows x64 / .NET Framework 4.x and D3D11 are required. The EXE is unsigned;
+Windows reputation or download warnings may still appear.
 
-Extract the whole ZIP into a writable folder outside LMU.
-Run LMU-QuadView-Launcher.exe, choose the LMU installation, then launch.
-PowerShell 7 and Windows x64/.NET Framework 4.x are required.
-Do not copy the DLL into LMU; the launcher enables it for the game process.
+Setup: select the LMU folder and the headset's active OpenXR runtime.
+Rendering: choose Native OpenXR or Quad-Views-Foveated, then Auto or Fixed.
+Native uses the runtime's resolution/FOV settings (such as Pimax EVO).
+QVFR requires mbucchia's separately installed Quad-Views-Foveated. The Setup page
+has its official download/instructions link and optional manifest file selector.
+OpenXR Toolkit is not required.
 
-Enable QuadView Foveated Rendering and eye tracking in Pimax EVO, using native
-Pimax OpenXR. Set center/edge resolution and horizontal/vertical FOV in EVO.
-Restart LMU after changing these settings. The launcher adds no extra scaling.
-The optional green outline shows the focus region. Close LMU before relaunching.
+In QVFR mode adjust outer/inner resolution and independent focus width/height
+inside this app. Save settings and Launch apply an LMU-only profile and back up
+existing QVFR settings before changes. Other application sections are preserved.
+No manual configuration file or setup script is required.
+Resolution percentages scale each dimension: 200% means 2x width and height,
+therefore 4x pixels. Focus dimensions use QVFR's supported 10-90% range.
+Use the green outline to see focus placement. Auto needs a working gaze provider;
+Fixed keeps focus stationary. Close and restart LMU after changing settings.
 
-CROP / EYE IDENTITY TEST CANDIDATE
-This package is a new candidate awaiting confirmation on the affected PCs.
-See TEST-CROP-IDENTITY.txt for the test sequence and diagnostic launch script.
-LMU's saved FOV crop is bypassed during runtime-settings quad rendering; the
-saved preference is unchanged. Proper in-game crop support remains a TODO.
-Pimax/runtime focus FOV and resolution settings continue to apply.
-Native eye handles now identify game buffers independently of creation order
-and size. Logs trace the final view sizes reaching the game and eye resources.
-Upper layers that rewrite swapchain sizes or wrap handles still need testing.
+Outer smoothing is optional (0 = off). It softens only the peripheral scene,
+leaving the high-resolution focus image sharp. Start with 0.5-1 pixel. It adds
+texture sampling and may add a GPU pass; its performance cost has NOT yet been
+benchmarked in a headset. It is not a replacement for temporal anti-aliasing.
 
-EARLIER MENU-TO-TRACK FREEZE UPDATE
-Unsupported small render-target layouts now fall back to a full-resolution
-outer render, resampled to the runtime's outer output. Quad scene submission
-continues. This fallback loses the small outer render's performance savings.
-Logs identify fallback and the rejected resource role/stage. This update has
-regression-test coverage and was confirmed working on the affected PC on
-29 October 2026. This confirms freeze recovery, not a performance gain.
-If testing this issue, share the new quad log after reaching the track, after
-reviewing it for personal paths. Do not assume MSAA is the proven cause.
+The smaller outer-target optimization can be disabled in Setup for diagnosis.
+In-game crop support is still deferred; the crop-bypass workaround remains.
+The pinned game-build guard, resource checks and gamma handling remain enabled.
+Launch LMU offline. No game executable is modified and no global layer or runtime
+registration is changed. No anti-cheat approval is claimed.
 
-Keep the game-build guard enabled. No game executable is replaced. Launching
-normally omits the mod. Offline use only: no anti-cheat approval is claimed.
-See README.md for implementation, limitations and build instructions.
+For support include the actual quad-*.log from logs/, not only the *-run.json
+launch summary. Logs/settings/per-run manifests may contain personal paths;
+review before sharing. A started process is not proof of valid VR rendering.
+
+See PORTABLE-QVFR.txt for backend compatibility and troubleshooting.
 Original code: PolyForm Noncommercial 1.0.0 (LICENSE.md).
-Dependencies retain their own licenses (licenses/ and THIRD_PARTY_NOTICES.md).
+Third-party notices and licenses are included. QVFR is a separate MIT project.
