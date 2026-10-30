@@ -1,3 +1,5 @@
+This branch is the portable QVFR test candidate. Read PORTABLE-QVFR.txt first; the native-Pimax instructions below describe the original backend.
+
 LMU Quad View Mod - experimental offline build
 
 Extract the whole ZIP into a writable folder outside LMU.

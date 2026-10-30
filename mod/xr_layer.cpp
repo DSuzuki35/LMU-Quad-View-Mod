@@ -46,7 +46,7 @@ bool gameProcess() {
 struct Dispatch {
     PFN_xrGetInstanceProcAddr get{};
 #define XR_NEXT_MEMBERS(X) \
-    X(DestroyInstance) X(EnumerateViewConfigurations) X(GetViewConfigurationProperties) \
+    X(DestroyInstance) X(GetSystemProperties) X(EnumerateViewConfigurations) X(GetViewConfigurationProperties) \
     X(EnumerateViewConfigurationViews) X(EnumerateEnvironmentBlendModes) X(CreateSession) \
     X(DestroySession) X(BeginSession) X(EndSession) X(WaitFrame) X(BeginFrame) X(EndFrame) \
     X(LocateViews) X(CreateSwapchain) X(DestroySwapchain) X(EnumerateSwapchainImages) \
@@ -102,6 +102,9 @@ struct State {
     std::unordered_map<XrSwapchain,AppChain> appChains;
     unsigned nextAppEye=0;
     bool runtimeSettings=false,runtimeSizesReady=false,rawFovLogged=false;
+    bool requestEyeTracking=true;
+    bool eyeTrackingActive=false,foveationResolved=false;
+    XrSystemId foveationSystem=XR_NULL_SYSTEM_ID;
     uint32_t runtimeFocusWidth=0,runtimeFocusHeight=0;
     uint32_t runtimeOuterWidth[2]{},runtimeOuterHeight[2]{};
     lmuqv::XrOutputSizes outputSizes;
@@ -228,12 +231,30 @@ void clearSession() {
     s.context=nullptr;s.device=nullptr;s.session=XR_NULL_HANDLE;s.running=false;
     s.appChains.clear();s.nextAppEye=0;s.waitPending=false;clearFrame();
 }
+XrResult selectFoveation(XrInstance instance,XrSystemId system){
+    if(s.foveationResolved&&s.foveationSystem==system)return XR_SUCCESS;
+    bool supported=false;
+    if(s.requestEyeTracking){
+        auto properties=structure<XrSystemProperties>(XR_TYPE_SYSTEM_PROPERTIES);
+        auto foveated=structure<XrSystemFoveatedRenderingPropertiesVARJO>(XR_TYPE_SYSTEM_FOVEATED_RENDERING_PROPERTIES_VARJO);
+        properties.next=&foveated;
+        const XrResult result=next.GetSystemProperties(instance,system,&properties);
+        if(XR_FAILED(result)){logf("Foveation capability query failed result=%d",result);return result;}
+        supported=foveated.supportsFoveatedRendering==XR_TRUE;
+    }
+    s.eyeTrackingActive=s.requestEyeTracking&&supported;s.foveationSystem=system;s.foveationResolved=true;
+    logf("Foveation selected=%s requested=%s (provider capability; not proof of live gaze)",
+        s.eyeTrackingActive?"eye-tracked":"fixed",s.requestEyeTracking?"auto":"fixed");
+    return XR_SUCCESS;
+}
 XrResult queryQuad(XrInstance instance,XrSystemId system,std::array<XrViewConfigurationView,4>& out) {
+    const XrResult selection=selectFoveation(instance,system);if(XR_FAILED(selection))return selection;
     std::array<XrFoveatedViewConfigurationViewVARJO,4> foveated{};
     for(unsigned i=0;i<4;++i) {
         out[i]=structure<XrViewConfigurationView>(XR_TYPE_VIEW_CONFIGURATION_VIEW);
         foveated[i]=structure<XrFoveatedViewConfigurationViewVARJO>(XR_TYPE_FOVEATED_VIEW_CONFIGURATION_VIEW_VARJO);
-        foveated[i].foveatedRenderingActive=XR_TRUE;out[i].next=&foveated[i];
+        foveated[i].foveatedRenderingActive=s.eyeTrackingActive?XR_TRUE:XR_FALSE;
+        out[i].next=&foveated[i];
     }
     uint32_t count=0;
     XrResult r=next.EnumerateViewConfigurationViews(instance,system,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO,4,&count,out.data());
@@ -398,6 +419,7 @@ XrResult XRAPI_CALL layerCreateSession(XrInstance instance,const XrSessionCreate
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     logf("xrCreateSession quad=%d",s.quad);
     if(s.session)return XR_ERROR_LIMIT_REACHED;
+    if(s.quad){const XrResult selection=selectFoveation(instance,info->systemId);if(XR_FAILED(selection))return selection;}
     if(s.quad&&s.runtimeSettings){
         std::array<XrViewConfigurationView,4> runtime{};
         XrResult sizing=queryQuad(instance,info->systemId,runtime);if(XR_FAILED(sizing))return sizing;
@@ -478,7 +500,8 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
     s.located=false;
     XrViewLocateInfo modified=*info;modified.viewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO;
     auto foveated=structure<XrViewLocateFoveatedRenderingVARJO>(XR_TYPE_VIEW_LOCATE_FOVEATED_RENDERING_VARJO);
-    foveated.next=info->next;foveated.foveatedRenderingActive=XR_TRUE;modified.next=&foveated;
+    foveated.next=info->next;foveated.foveatedRenderingActive=s.eyeTrackingActive?XR_TRUE:XR_FALSE;
+    modified.next=&foveated;
     XrView runtime[4]{};for(auto& v:runtime)v.type=XR_TYPE_VIEW;
     uint32_t runtimeCount=0;XrResult r=next.LocateViews(session,&modified,state,4,&runtimeCount,runtime);
     if(XR_FAILED(r))return r;
@@ -701,6 +724,13 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
        !chain->nextGetInstanceProcAddr||!chain->nextCreateApiLayerInstance)return XR_ERROR_INITIALIZATION_FAILED;
     if(s.instance)return XR_ERROR_LIMIT_REACHED;
     bool quad=quadMode();auto modified=*info;std::vector<const char*> extensions;
+    char foveationMode[16]{};
+    const DWORD modeLength=GetEnvironmentVariableA("LMU_QV_FOVEATION_MODE",foveationMode,sizeof(foveationMode));
+    if(quad&&(modeLength>=sizeof(foveationMode)||
+       (modeLength&&std::strcmp(foveationMode,"auto")&&std::strcmp(foveationMode,"fixed")))){
+        logf("Invalid LMU_QV_FOVEATION_MODE; use auto or fixed");return XR_ERROR_VALIDATION_FAILURE;
+    }
+    const bool requestEyeTracking=std::strcmp(foveationMode,"fixed")!=0;
     for(uint32_t i=0;i<info->enabledExtensionCount;++i)extensions.push_back(info->enabledExtensionNames[i]);
     if(quad)for(const char* extension:{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME,XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME}){
         if(std::none_of(extensions.begin(),extensions.end(),[&](const char* e){return !std::strcmp(e,extension);}))extensions.push_back(extension);
@@ -712,7 +742,8 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
     if(XR_FAILED(r))return r;
     next.get=chain->nextGetInstanceProcAddr;
     if(!next.load(*instance)){if(next.DestroyInstance)next.DestroyInstance(*instance);*instance=XR_NULL_HANDLE;return XR_ERROR_INITIALIZATION_FAILED;}
-    s.instance=*instance;s.quad=quad;
+    s.instance=*instance;s.quad=quad;s.requestEyeTracking=requestEyeTracking;
+    if(quad)logf("Foveation request mode=%s; actual eye-tracking availability is determined by the downstream provider",requestEyeTracking?"auto":"fixed");
     char runtimeSetting[8]{};GetEnvironmentVariableA("LMU_QV_USE_RUNTIME_SETTINGS",runtimeSetting,sizeof(runtimeSetting));
     s.runtimeSettings=quad&&!std::strcmp(runtimeSetting,"1");
     if(s.runtimeSettings)logf("Runtime settings enabled: runtime FOV unchanged; exact runtime outer and common focus dimensions; legacy percentage controls ignored");

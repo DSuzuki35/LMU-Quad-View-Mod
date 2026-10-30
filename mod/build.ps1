@@ -72,6 +72,10 @@ try {
         & .\build\xr_layer_tests.exe @testArgs
         if ($LASTEXITCODE -ne 0) { throw "XR tests failed: $testArgs" }
     }
+    foreach ($testArgs in @(@('--runtime-settings','--fixed-foveation'),@('--runtime-settings','--srgb','--fixed-foveation'),@('--runtime-overlay','--fixed-foveation'),@('--runtime-overlay','--srgb','--fixed-foveation'),@('--runtime-settings','--no-eye-tracking'),@('--runtime-overlay','--srgb','--no-eye-tracking'))) {
+        & .\build\xr_layer_tests.exe @testArgs
+        if ($LASTEXITCODE -ne 0) { throw "Fixed foveation tests failed: $testArgs" }
+    }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -shared -I ../prototype/third_party xr_layer.cpp engine_bridge.cpp nv_vrs.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ladvapi32 -o $LayerOutput
     if ($LASTEXITCODE -ne 0) { throw 'Layer compilation failed' }
     Get-FileHash -LiteralPath $LayerOutput -Algorithm SHA256 | Select-Object Hash

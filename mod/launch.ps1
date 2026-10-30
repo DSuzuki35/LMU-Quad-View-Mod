@@ -9,6 +9,9 @@ param(
     [switch]$EnableOuterVrs,
     [switch]$NativeOuterResolution,
     [switch]$UseRuntimeSettings,
+    [ValidateSet('Native','QVFR')][string]$Backend='Native',
+    [ValidateSet('auto','fixed')][string]$FoveationMode='auto',
+    [string]$QuadViewsManifest,
     [ValidateSet(1,2,4)][int]$OuterShadingRate=2,
     [ValidateRange(1,400)][double]$OuterPixelsPercent=100,
     [ValidateRange(25,400)][double]$FocusPixelsPercent=100,
@@ -18,6 +21,8 @@ param(
     [string]$GameDirectory = 'D:\SteamLibrary\steamapps\common\Le Mans Ultimate'
 )
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'portable-launch.ps1')
+if ($Backend -eq 'QVFR' -and ($Mode -ne 'quad' -or !$UseRuntimeSettings)) { throw 'QVFR requires quad mode with runtime-controlled settings.' }
 if ($UseRuntimeSettings) {
     if ($Mode -ne 'quad') { throw 'Runtime-controlled settings require quad mode' }
     foreach ($name in @('OuterPixelsPercent','FocusPixelsPercent','FocusBoxPercent','FocusWidthPercent','FocusHeightPercent')) {
@@ -46,7 +51,8 @@ if (Get-Process -Name 'Le Mans Ultimate' -ErrorAction SilentlyContinue) {
 $manifestRoot = $PSScriptRoot
 $logDirectory = Join-Path $PSScriptRoot 'logs'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
-$stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$stamp = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,6)
+$layerPlan=New-LmuLayerPlan -Backend $Backend -ManifestRoot $manifestRoot -QuadViewsManifest $QuadViewsManifest -RunDirectory (Join-Path $logDirectory "layers-$stamp")
 $logPath = Join-Path $logDirectory "$Mode-$stamp.log"
 $captureDirectory = $null
 $captureTrigger = $null
@@ -70,8 +76,10 @@ $info.Arguments = '+XR'
 $info.WorkingDirectory = $GameDirectory
 $info.UseShellExecute = $false
 $info.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Normal
-$info.Environment['XR_API_LAYER_PATH'] = $manifestRoot
-$info.Environment['XR_ENABLE_API_LAYERS'] = 'XR_APILAYER_LMU_quadview'
+$info.Environment['XR_API_LAYER_PATH'] = $layerPlan.Paths
+$info.Environment['XR_ENABLE_API_LAYERS'] = $layerPlan.Layers
+if ($layerPlan.DisableVariable) { $info.Environment[$layerPlan.DisableVariable]='1' }
+$info.Environment['LMU_QV_FOVEATION_MODE'] = $FoveationMode
 $info.Environment['LMU_QV_MODE'] = $Mode
 $info.Environment['LMU_QV_USE_RUNTIME_SETTINGS'] = $(if ($UseRuntimeSettings) { '1' } else { '0' })
 $info.Environment['LMU_QV_LOG'] = $logPath
@@ -101,6 +109,8 @@ $run = [pscustomobject]@{
     Benchmark=[bool]$Benchmark;BenchmarkControl=$benchmarkControl;EnableOuterVrs=[bool]$EnableOuterVrs
     NativeOuterResolution=[bool]$NativeOuterResolution
     UseRuntimeSettings=[bool]$UseRuntimeSettings
+    Backend=$Backend;FoveationMode=$FoveationMode;ProviderManifest=$layerPlan.ProviderManifest;ExplicitManifest=$layerPlan.ExplicitManifest
+    EnabledLayers=$layerPlan.Layers
     OuterShadingRate=$OuterShadingRate
     OuterPixelsPercent=$OuterPixelsPercent;FocusPixelsPercent=$FocusPixelsPercent
     FocusBoxPercent=$FocusBoxPercent

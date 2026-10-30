@@ -1,3 +1,5 @@
+This branch is the portable QVFR test candidate. Read PORTABLE-QVFR.txt first; the native-Pimax instructions below describe the original backend.
+
 # LMU Quad View Mod
 
 Experimental Windows x64 OpenXR layer and renderer integration for Le Mans Ultimate. It adds two peripheral views and two gaze-directed focus views. This is an independent project, with no Studio 397 endorsement or anti-cheat approval.

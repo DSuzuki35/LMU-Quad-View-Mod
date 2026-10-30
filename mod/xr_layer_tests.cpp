@@ -23,6 +23,12 @@ ID3D11RenderTargetView* xr_outer_rtv(unsigned eye);
 }
 namespace {
 bool chained = false, extensions = false;
+bool fixedFoveation=false;
+bool noEyeTracking=false;
+bool failCapabilities=false;
+bool failInstanceCreation=false;
+unsigned instanceCreateCalls=0;
+const void* expectedLocateNext=nullptr;
 bool runtimeShouldRender=true;
 bool traceRuntime=false, failRelease=false;
 bool srgbRuntime=false;
@@ -302,6 +308,11 @@ XrResult XRAPI_CALL views(XrInstance, XrSystemId, XrViewConfigurationType type, 
     if (!cap) return XR_SUCCESS;
     if(cap<*count)return XR_ERROR_SIZE_INSUFFICIENT;
     for (unsigned i = 0; i != *count; ++i) {
+        if(!traceRuntime){
+            auto* f=static_cast<const XrFoveatedViewConfigurationViewVARJO*>(out[i].next);
+            assert(f&&f->type==XR_TYPE_FOVEATED_VIEW_CONFIGURATION_VIEW_VARJO);
+            assert(f->foveatedRenderingActive==((fixedFoveation||noEyeTracking)?XR_FALSE:XR_TRUE));
+        }
         out[i].recommendedImageRectWidth = i == 3 ? 1400 : 1200;
         out[i].recommendedImageRectHeight = i == 2 ? 1600 : 1300;
         if(runtimeSettings&&!traceRuntime){
@@ -320,8 +331,8 @@ XrResult XRAPI_CALL locate(XrSession, const XrViewLocateInfo* in, XrViewState* s
     assert(in->viewConfigurationType == (traceRuntime?XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO:XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO));
     assert(cap == (traceRuntime?2u:4u));
     auto f = static_cast<const XrViewLocateFoveatedRenderingVARJO*>(in->next);
-    if(!traceRuntime)assert(f && f->type == XR_TYPE_VIEW_LOCATE_FOVEATED_RENDERING_VARJO && f->foveatedRenderingActive);
-    else assert(!f);
+    if(!traceRuntime){assert(f && f->type == XR_TYPE_VIEW_LOCATE_FOVEATED_RENDERING_VARJO);assert(f->foveatedRenderingActive==((fixedFoveation||noEyeTracking)?XR_FALSE:XR_TRUE));assert(f->next==expectedLocateNext);}
+    else assert(in->next==expectedLocateNext);
     *count = cap;
     state->viewStateFlags = XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_ORIENTATION_VALID_BIT;
     for (unsigned i=0; i!=cap; ++i) {out[i].pose.position.x = float(i+10);out[i].pose.orientation.w=1;out[i].fov={-.4f,.4f,.4f,-.4f};}
@@ -343,8 +354,16 @@ XrResult XRAPI_CALL locate(XrSession, const XrViewLocateInfo* in, XrViewState* s
     if(invalidFocusFov)out[3].fov.angleLeft=out[3].fov.angleRight;
     return XR_SUCCESS;
 }
+XrResult XRAPI_CALL systemProperties(XrInstance,XrSystemId,XrSystemProperties* props){
+    if(failCapabilities)return XR_ERROR_RUNTIME_FAILURE;
+    assert(props&&props->type==XR_TYPE_SYSTEM_PROPERTIES);
+    auto* f=static_cast<XrSystemFoveatedRenderingPropertiesVARJO*>(props->next);
+    assert(f&&f->type==XR_TYPE_SYSTEM_FOVEATED_RENDERING_PROPERTIES_VARJO);
+    f->supportsFoveatedRendering=noEyeTracking?XR_FALSE:XR_TRUE;return XR_SUCCESS;
+}
 XrResult XRAPI_CALL get(XrInstance, const char* name, PFN_xrVoidFunction* out) {
     *out = reinterpret_cast<PFN_xrVoidFunction>(generic);
+    if (!std::strcmp(name,"xrGetSystemProperties")) *out = reinterpret_cast<PFN_xrVoidFunction>(systemProperties);
     if (!std::strcmp(name,"xrEnumerateViewConfigurationViews")) *out = reinterpret_cast<PFN_xrVoidFunction>(views);
     if (!std::strcmp(name,"xrLocateViews")) *out = reinterpret_cast<PFN_xrVoidFunction>(locate);
     if(!std::strcmp(name,"xrCreateSession"))*out=reinterpret_cast<PFN_xrVoidFunction>(createSession);
@@ -360,6 +379,7 @@ XrResult XRAPI_CALL get(XrInstance, const char* name, PFN_xrVoidFunction* out) {
     return XR_SUCCESS;
 }
 XrResult XRAPI_CALL create(const XrInstanceCreateInfo* info, const XrApiLayerCreateInfo* layer, XrInstance* out) {
+    ++instanceCreateCalls;
     chained = layer->nextInfo == expectedNext;
     bool quad=false, foveated=false;
     for (uint32_t i=0;i<info->enabledExtensionCount;++i) {
@@ -367,6 +387,7 @@ XrResult XRAPI_CALL create(const XrInstanceCreateInfo* info, const XrApiLayerCre
         foveated |= !std::strcmp(info->enabledExtensionNames[i], XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
     }
     extensions=quad && foveated;
+    if(failInstanceCreation)return XR_ERROR_INITIALIZATION_FAILED;
     *out=fakeInstance;
     return XR_SUCCESS;
 }
@@ -377,6 +398,8 @@ int main(int argc,char** argv) {
     const auto logPath=testBuildRoot()/L"xr-layer-test-trace.log";
     DeleteFileW(logPath.c_str());SetEnvironmentVariableW(L"LMU_QV_LOG",logPath.c_str());
     for(int arg=1;arg<argc;++arg){
+        fixedFoveation|=!std::strcmp(argv[arg],"--fixed-foveation");
+        noEyeTracking|=!std::strcmp(argv[arg],"--no-eye-tracking");
         srgbRuntime|=!std::strcmp(argv[arg],"--srgb");statsRequested|=!std::strcmp(argv[arg],"--stats");sceneStatsRequested|=!std::strcmp(argv[arg],"--scene-stats");
         captureRequested|=!std::strcmp(argv[arg],"--capture");captureMissing|=!std::strcmp(argv[arg],"--capture-no-trigger");captureInvalid|=!std::strcmp(argv[arg],"--capture-invalid");
         debugPhaseRequested|=!std::strcmp(argv[arg],"--debug-focus");
@@ -405,6 +428,7 @@ int main(int argc,char** argv) {
     SetEnvironmentVariableA("LMU_QV_PIXEL_STATS",sceneStatsRequested?"scene":statsRequested?"1":nullptr);
     SetEnvironmentVariableA("LMU_QV_DEBUG_FOCUS",nullptr);
     SetEnvironmentVariableA("LMU_QV_MODE", "quad");
+    SetEnvironmentVariableA("LMU_QV_FOVEATION_MODE",fixedFoveation?"fixed":nullptr);
     if(invalidSizesRequested)scaledRequested=false;
     SetEnvironmentVariableA("LMU_QV_OUTER_PIXELS_PERCENT",invalidSizesRequested?"NaN":scaledRequested?"10":nullptr);
     SetEnvironmentVariableA("LMU_QV_FOCUS_PIXELS_PERCENT",invalidSizesRequested||scaledRequested?"200":nullptr);
@@ -438,6 +462,14 @@ int main(int argc,char** argv) {
     XrApiLayerCreateInfo chain{XR_LOADER_INTERFACE_STRUCT_API_LAYER_CREATE_INFO,1,sizeof(XrApiLayerCreateInfo),nullptr,{},&next};
     XrInstanceCreateInfo info{}; info.type=XR_TYPE_INSTANCE_CREATE_INFO;
     XrInstance instance{};
+    SetEnvironmentVariableA("LMU_QV_FOVEATION_MODE","invalid");
+    assert(req.createApiLayerInstance(&info,&chain,&instance)==XR_ERROR_VALIDATION_FAILURE&&instanceCreateCalls==0);
+    SetEnvironmentVariableA("LMU_QV_FOVEATION_MODE","xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+    assert(req.createApiLayerInstance(&info,&chain,&instance)==XR_ERROR_VALIDATION_FAILURE&&instanceCreateCalls==0);
+    SetEnvironmentVariableA("LMU_QV_FOVEATION_MODE",fixedFoveation?"fixed":nullptr);
+    failInstanceCreation=true;
+    assert(req.createApiLayerInstance(&info,&chain,&instance)==XR_ERROR_INITIALIZATION_FAILED);
+    failInstanceCreation=false;
     assert(req.createApiLayerInstance(&info,&chain,&instance)==XR_SUCCESS && chained && extensions);
     PFN_xrVoidFunction fn{};
     assert(req.getInstanceProcAddr(instance,"xrEnumerateViewConfigurationViews",&fn)==XR_SUCCESS);
@@ -448,6 +480,11 @@ int main(int argc,char** argv) {
     uint32_t count=0;
     assert(enumerate(instance,1,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,0,&count,nullptr)==XR_SUCCESS && count==2);
     assert(enumerate(instance,1,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,1,&count,bounded.views)==XR_ERROR_SIZE_INSUFFICIENT && count==2);
+    if(!fixedFoveation){
+        failCapabilities=true;
+        assert(enumerate(instance,1,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,2,&count,bounded.views)==XR_ERROR_RUNTIME_FAILURE);
+        failCapabilities=false;
+    }
     if(runtimeTooWide||runtimeTooTall){
         assert(enumerate(instance,1,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,2,&count,bounded.views)==XR_ERROR_LIMIT_REACHED);
         PFN_xrVoidFunction createFn{};req.getInstanceProcAddr(instance,"xrCreateSession",&createFn);
@@ -467,6 +504,8 @@ int main(int argc,char** argv) {
     located.views[0].type=located.views[1].type=XR_TYPE_VIEW;
     located.guard=0x1122334455667788ull;
     XrViewLocateInfo li{};li.type=XR_TYPE_VIEW_LOCATE_INFO;li.viewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+    XrBaseInStructure appLocateNext{};appLocateNext.type=XR_TYPE_UNKNOWN;
+    li.next=expectedLocateNext=&appLocateNext; // Opaque application chain must remain linked, not rewritten.
     XrViewState state{};state.type=XR_TYPE_VIEW_STATE;
     assert(locateViews(reinterpret_cast<XrSession>(2),&li,&state,2,&count,located.views)==XR_SUCCESS && count==2);
     assert(located.guard==0x1122334455667788ull && located.views[0].pose.position.x==10 && located.views[1].pose.position.x==11);
@@ -889,5 +928,14 @@ int main(int argc,char** argv) {
     assert(logText.find("xrLocateViews mode=trace frame=1")!=std::string::npos);
     assert(logText.find("xrEndFrame mode=trace frame=1")!=std::string::npos);
     assert(reinterpret_cast<PFN_xrDestroyInstance>(load("xrDestroyInstance"))(instance)==XR_SUCCESS);
+    // Switching modes after destruction must not retain a previous instance's request.
+    traceRuntime=false;SetEnvironmentVariableA("LMU_QV_MODE","quad");
+    for(bool fixed:{true,false}){
+        fixedFoveation=fixed;SetEnvironmentVariableA("LMU_QV_FOVEATION_MODE",fixed?"fixed":"auto");
+        assert(req.createApiLayerInstance(&info,&chain,&instance)==XR_SUCCESS&&extensions);
+        assert(enumerate(instance,1,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,2,&count,bounded.views)==XR_SUCCESS);
+        assert(locateViews(session,&li,&state,2,&count,located.views)==XR_SUCCESS);
+        assert(reinterpret_cast<PFN_xrDestroyInstance>(load("xrDestroyInstance"))(instance)==XR_SUCCESS);
+    }
     std::cout << "xr-layer tests passed (" << (srgbRuntime?"SRGB chain / typeless images / UNORM source":"UNORM chain and source") << "): negotiation, chain advance, dimensions, count isolation, WARP copy/linear RTV, size rejection, quad composition, skipped/incomplete frames, release/wait retry, pipelined WaitFrame, moving asymmetric focus FOVs, stale-time rejection, trace pass-through\n";
 }
