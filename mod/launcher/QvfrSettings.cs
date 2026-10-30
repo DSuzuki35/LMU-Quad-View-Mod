@@ -18,6 +18,7 @@ namespace LmuQuadViewLauncher
         public bool DebugFocus { get; set; }
         public bool RenderProfiling { get; set; }
         public bool DiagnosticsEnabled { get; set; }
+        public bool StereoDrawAudit { get; set; }
         public int RenderProfileSeconds { get; set; }
         public bool NativeOuterResolution { get; set; }
         public decimal OuterBlur { get; set; }
@@ -72,6 +73,7 @@ namespace LmuQuadViewLauncher
             s.DebugFocus = Boolean.Parse(Value(x, "DebugFocus", "false"));
             s.RenderProfiling = Boolean.Parse(Value(x, "RenderProfiling", "false"));
             s.DiagnosticsEnabled=Boolean.Parse(Value(x,"DiagnosticsEnabled","true"));
+            s.StereoDrawAudit=Boolean.Parse(Value(x,"StereoDrawAudit","false"));
             s.RenderProfileSeconds=Int32.Parse(Value(x,"RenderProfileSeconds","120"),CultureInfo.InvariantCulture);
             s.NativeOuterResolution = Boolean.Parse(Value(x, "NativeOuterResolution", "true"));
             s.OuterBlur = Decimal.Parse(Value(x, "OuterBlur", "0"), CultureInfo.InvariantCulture);
@@ -90,6 +92,7 @@ namespace LmuQuadViewLauncher
                 new XElement("QuadViewsManifest", s.QuadViewsManifest ?? ""), new XElement("VectorXrManifest", s.VectorXrManifest ?? ""), new XElement("DebugFocus", s.DebugFocus),
                 new XElement("RenderProfiling", s.RenderProfiling),
                 new XElement("DiagnosticsEnabled",s.DiagnosticsEnabled),
+                new XElement("StereoDrawAudit",s.StereoDrawAudit),
                 new XElement("RenderProfileSeconds",s.RenderProfileSeconds),
                 new XElement("NativeOuterResolution", s.NativeOuterResolution), new XElement("UseRuntimeSettings", true),
                 new XElement("OuterBlur", s.OuterBlur),

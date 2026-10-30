@@ -21,7 +21,9 @@ unsigned engine_game_eye(XrSwapchain chain){
     for(unsigned eye=0;eye<2;++eye)if(chain&&chain==nativeEyeChains[eye])return eye;
     return 2;
 }
-bool engine_start() { assert(false && "Test executable must never hook engine"); return false; }
+bool engine_start(ID3D11DeviceContext*) { assert(false && "Test executable must never hook engine"); return false; }
+unsigned stereoAuditFrameEnds=0;
+void stereo_audit_frame_end() {++stereoAuditFrameEnds;} // Verify wiring without installing hooks.
 void engine_stop() {renderProfile.shutdown();}
 ID3D11RenderTargetView* xr_outer_rtv(unsigned eye);
 }
@@ -606,7 +608,9 @@ int main(int argc,char** argv) {
         if(runtimeShouldRender)assert(engineViews[0].pose.position.x==10&&engineViews[3].pose.position.x==13);
     };
     auto finish=[&](){
+        const auto auditEnds=lmuqv::stereoAuditFrameEnds;
         assert(reinterpret_cast<PFN_xrEndFrame>(load("xrEndFrame"))(session,&end)==XR_SUCCESS);
+        assert(lmuqv::stereoAuditFrameEnds==auditEnds+1);
         XrView engineViews[4]{};assert(!lmuqv::xr_frame_views(engineViews));
     };
     begin();finish();assert(submittedLayers==0&&submittedViews==0);

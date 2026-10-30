@@ -6,6 +6,7 @@
 #include "ui_d3d_state.hpp"
 #include "gpu_timing.hpp"
 #include "render_profile.hpp"
+#include "stereo_audit.hpp"
 #include "pipeline_stats.hpp"
 #include "benchmark_control.hpp"
 #include "code_anchors.hpp"
@@ -482,6 +483,7 @@ void mainPassHook(void* renderer,void* scene,void* view,std::uint32_t flags,bool
 }
 void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
                    std::uint32_t flags,bool lastMainPass,void* optionalMaterial) {
+    StereoAuditGroup auditGroup(group);
     const bool profileSort=renderProfile.collecting()&&view&&(view==nativeOuterExpected||view==focusView);
     const auto sortEye=profileSort?unsigned(static_cast<ViewSnapshot*>(view)->eye_index):0;
     ProfileScope sortProfile(profile_eye(focusView?ProfileSlot::sort_focus0:ProfileSlot::sort_outer0,sortEye),profileSort&&sortEye<2);
@@ -639,7 +641,7 @@ void renderHook(void* unknown, bool laterPass) {
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     ID3D11DeviceContext* profileContext=nullptr;
     unsigned profileEye=0;
-    if(renderProfile.enabled()&&!insideHook&&installed.load()&&caller==base+0xcd1763&&xr_quad_active()){
+    if((renderProfile.enabled()||stereo_audit_enabled())&&!insideHook&&installed.load()&&caller==base+0xcd1763&&xr_quad_active()){
         auto* before=*address<ViewSnapshot*>(0x1a51370);
         const auto renderer=*address<std::uintptr_t>(0x1b12be8);
         if(readable(before,sizeof(*before))&&before->eye_index>=0&&before->eye_index<=1&&
@@ -650,6 +652,8 @@ void renderHook(void* unknown, bool laterPass) {
                 if(profileEye==0){
                     const bool key=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F9)&0x8000);
                     renderProfile.frame(context,key);
+                    const bool auditKey=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F8)&0x8000);
+                    stereo_audit_frame(auditKey);
                 }
             }
         }
@@ -702,7 +706,9 @@ void renderHook(void* unknown, bool laterPass) {
         nativeOuterExpected=*address<ViewSnapshot*>(0x1a51370);
     const bool profileOuterGpu=profileContext&&renderProfile.gpu_start(profileContext,profileEye);
     ProfileScope outerProfile(profile_eye(ProfileSlot::outer0,profileEye),profileContext!=nullptr);
+    StereoAuditScope outerAudit(profileContext?stereo_audit_eye(false,profileEye):StereoAuditPass::none);
     renderOriginal(unknown,laterPass);
+    outerAudit.end();
     outerProfile.end();
     if(profileOuterGpu)renderProfile.gpu_stop(profileContext);
     auto* smallOuterSource=nativeOuterSource;
@@ -778,7 +784,9 @@ void renderHook(void* unknown, bool laterPass) {
     const bool focusCounted=measureFocus&&benchmark&&pipelineStats.start(timingContext,eye+2);
     const bool profileFocusGpu=profileContext&&renderProfile.gpu_start(profileContext,eye+2);
     ProfileScope focusSceneProfile(profile_eye(ProfileSlot::focus_scene0,eye));
+    StereoAuditScope focusAudit(stereo_audit_eye(true,eye));
     reinterpret_cast<SceneFn>(base+0x5de200)(scene,false,true);
+    focusAudit.end();
     focusSceneProfile.end();
     if(profileFocusGpu)renderProfile.gpu_stop(profileContext);
     if(focusCounted) pipelineStats.stop(timingContext);
@@ -911,7 +919,7 @@ unsigned engine_game_eye(XrSwapchain chain){
     return left!=right?(left?0u:1u):2u;
 }
 
-bool engine_start() {
+bool engine_start(ID3D11DeviceContext* context) {
     if(installed.load()) return true;
     char mode[32]{};GetEnvironmentVariableA("LMU_QV_MODE",mode,sizeof(mode));
     const bool stereoTiming=!std::strcmp(mode,"stereo-timing");
@@ -1014,6 +1022,10 @@ bool engine_start() {
     }
     innerHistory[0]={};innerHistory[1]={};
     installedHookCount=hookCount;
+    char auditSetting[8]{};const auto auditLength=GetEnvironmentVariableA("LMU_QV_STEREO_AUDIT",auditSetting,sizeof(auditSetting));
+    wchar_t auditDirectory[32768]{};const auto auditDirectoryLength=GetEnvironmentVariableW(L"LMU_QV_STEREO_AUDIT_DIR",auditDirectory,32768);
+    const bool auditRequested=diagnostics_enabled()&&!stereoTiming&&auditLength==1&&auditSetting[0]=='1'&&auditDirectoryLength&&auditDirectoryLength<32768;
+    stereo_audit_configure(context,auditRequested,auditDirectory,log_line);
     char profileSetting[8]{};GetEnvironmentVariableA("LMU_QV_PROFILE",profileSetting,sizeof(profileSetting));
     const bool profiling=diagnostics_enabled()&&!stereoTiming&&!std::strcmp(profileSetting,"1")&&benchmarkPath.empty()&&timingTrigger.empty();
     char durationSetting[16]{};char* durationEnd=nullptr;
@@ -1030,6 +1042,7 @@ bool engine_start() {
     return true;
 }
 void engine_stop() {
+    stereo_audit_stop();
     nativeOuterOptIn=false;
     for(auto& bank:nativeOuterBanks)if(!bank.reset())log_line("native_outer teardown on different thread; native bank retained until process exit");
     if(!installed.exchange(false)) {

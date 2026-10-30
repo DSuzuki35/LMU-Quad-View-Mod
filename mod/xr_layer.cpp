@@ -8,6 +8,7 @@
 #include "outer_resample.hpp"
 #include "render_profile.hpp"
 #include "swapchain_sampling.hpp"
+#include "stereo_audit.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdarg>
@@ -451,7 +452,7 @@ XrResult XRAPI_CALL layerCreateSession(XrInstance instance,const XrSessionCreate
     }
     logf("xrCreateSession result=%d D3D11=%d game=%d",r,s.device!=nullptr,gameProcess());
     if(s.device&&gameProcess()){
-        const bool started=lmuqv::engine_start();logf("engine_start result=%d",started);
+        const bool started=lmuqv::engine_start(s.context);logf("engine_start result=%d",started);
         if(s.runtimeSettings&&!started){
             logf("Runtime settings mode requires successful engine hooks; refusing session");
             lmuqv::engine_stop();next.DestroySession(*session);clearSession();*session=XR_NULL_HANDLE;
@@ -713,6 +714,7 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
     XrResult r;
     {lmuqv::ProfileScope submitProfile(lmuqv::ProfileSlot::provider_submit);r=next.EndFrame(session,&modified);}
     lmuqv::renderProfile.xr_frame_end(s.context);
+    lmuqv::stereo_audit_frame_end();
     if(s.pixelEnabled&&!s.pixelDone&&s.pixelFrame==s.frames&&s.pixelFrame){
         logf("pixel_stats_complete mask=%u successMask=%u frame=%llu quadProjections=%u releaseOkay=%d result=%d captureRequested=%d captureSuccessMask=%u",s.pixelMask,s.pixelSuccessMask,static_cast<unsigned long long>(s.pixelFrame),submitted,released,r,s.capture.requested,s.captureMask);s.pixelDone=true;
     }

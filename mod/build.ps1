@@ -25,11 +25,11 @@ try {
     }
     & gcc -O2 -c vendor/minhook-1.3.4/src/hde/hde64.c -o build/mh_hde64.o
     if ($LASTEXITCODE -ne 0) { throw 'MinHook decoder compilation failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/engine_hooks_test.cpp nv_vrs.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ladvapi32 -luser32 -o build/engine_hooks_test.exe
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/engine_hooks_test.cpp nv_vrs.cpp stereo_audit.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ladvapi32 -luser32 -o build/engine_hooks_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Engine hook tests compilation failed' }
     & .\build\engine_hooks_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Engine hook tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/native_outer_fallback_test.cpp nv_vrs.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ladvapi32 -luser32 -o build/native_outer_fallback_test.exe
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/native_outer_fallback_test.cpp nv_vrs.cpp stereo_audit.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ladvapi32 -luser32 -o build/native_outer_fallback_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native fallback tests compilation failed' }
     & .\build\native_outer_fallback_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native fallback tests failed' }
@@ -37,13 +37,19 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'GPU timing tests compilation failed' }
     & .\build\gpu_timing_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'GPU timing tests failed' }
-    foreach ($test in @('pipeline_stats','benchmark_control','render_profile','swapchain_sampling')) {
+    foreach ($test in @('pipeline_stats','benchmark_control','render_profile','swapchain_sampling','stereo_audit_abi')) {
         & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" -ld3d11 -o "build/${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests compilation failed" }
         & ".\build\${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests failed" }
     }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/benchmark_engine_test.cpp nv_vrs.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ladvapi32 -luser32 -o build/benchmark_engine_test.exe
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/stereo_audit_test.cpp stereo_audit.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ladvapi32 -luser32 -o build/stereo_audit_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Stereo audit tests compilation failed' }
+    & .\build\stereo_audit_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Stereo audit tests failed' }
+    & .\build\stereo_audit_test.exe --diagnostics-off
+    if ($LASTEXITCODE -ne 0) { throw 'Stereo audit master-off tests failed' }
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/benchmark_engine_test.cpp nv_vrs.cpp stereo_audit.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ladvapi32 -luser32 -o build/benchmark_engine_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Benchmark engine tests compilation failed' }
     & .\build\benchmark_engine_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Benchmark engine tests failed' }
@@ -60,7 +66,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'D3D11 state tests compilation failed' }
     & .\build\ui_d3d_state_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'D3D11 state tests failed' }
-    foreach ($test in @('focus_overlay','outer_resample','native_outer_texture','native_outer_bindings')) {
+    foreach ($test in @('focus_overlay','outer_resample','native_outer_texture','native_outer_bindings','stereo_instancing')) {
         & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static "tests/${test}_test.cpp" -ld3d11 -ld3dcompiler -o "build/${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests compilation failed" }
         & ".\build\${test}_test.exe"
@@ -94,7 +100,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Diagnostics-off XR tests failed' }
     & .\build\render_profile_test.exe --diagnostics-off
     if ($LASTEXITCODE -ne 0) { throw 'Diagnostics-off profiler tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -shared -I ../prototype/third_party xr_layer.cpp engine_bridge.cpp nv_vrs.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ladvapi32 -luser32 -o $LayerOutput
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -shared -I ../prototype/third_party xr_layer.cpp engine_bridge.cpp nv_vrs.cpp stereo_audit.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ladvapi32 -luser32 -o $LayerOutput
     if ($LASTEXITCODE -ne 0) { throw 'Layer compilation failed' }
     Get-FileHash -LiteralPath $LayerOutput -Algorithm SHA256 | Select-Object Hash
 } finally { Pop-Location }

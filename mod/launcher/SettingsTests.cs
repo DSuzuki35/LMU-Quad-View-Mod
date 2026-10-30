@@ -33,10 +33,11 @@ class SettingsTests
         s.FocusWidthPercent=100; Rejected(delegate{QvfrSettings.Validate(s);}); s.FocusWidthPercent=33;
         s.FocusHeightPercent=9; Rejected(delegate{QvfrSettings.Validate(s);}); s.FocusHeightPercent=25;
         s.OuterBlur=4; Rejected(delegate{QvfrSettings.Validate(s);}); s.OuterBlur=1.25m;
-        s.FocusAspectRatio=2.19283709218806m;s.RenderProfiling=true;s.RenderProfileSeconds=300;s.DiagnosticsEnabled=false;
+        s.FocusAspectRatio=2.19283709218806m;s.RenderProfiling=true;s.RenderProfileSeconds=300;s.DiagnosticsEnabled=false;s.StereoDrawAudit=true;
         string xml=Path.Combine(folder,"launcher-settings.xml"); QvfrSettings.Save(xml,s); var loaded=QvfrSettings.Load(xml);
         Require(loaded.RenderProfiling,"Profiling setting did not roundtrip");
         Require(!loaded.DiagnosticsEnabled&&new LauncherSettings().DiagnosticsEnabled,"Diagnostics off setting/default lost");
+        Require(loaded.StereoDrawAudit&&!new LauncherSettings().StereoDrawAudit,"Stereo audit preference/default lost");
         Require(loaded.RenderProfileSeconds==300&&new LauncherSettings().RenderProfileSeconds==120,"Capture length roundtrip/default");
         s.RenderProfileSeconds=29;Rejected(delegate{QvfrSettings.Validate(s);});s.RenderProfileSeconds=301;Rejected(delegate{QvfrSettings.Validate(s);});s.RenderProfileSeconds=300;
         Require(!new LauncherSettings().RenderProfiling,"Profiling enabled by default");
@@ -45,6 +46,7 @@ class SettingsTests
         File.WriteAllText(xml,"<QuadView><GameDirectory>D:\\Game</GameDirectory><DebugFocus>true</DebugFocus></QuadView>");
         loaded=QvfrSettings.Load(xml); Require(loaded.Backend=="Native" && loaded.DebugFocus && loaded.OuterPercent==25,"Old settings migration");
         Require(loaded.DiagnosticsEnabled,"Existing settings must retain diagnostic logging");
+        Require(!loaded.StereoDrawAudit,"Existing settings must not enable draw auditing");
         Require(loaded.FocusAspectRatio==0,"Old settings invent headset geometry");
         s.Backend="VectorXR";s.VectorXrManifest=@"E:\VectorXR\layer.json";s.QuadViewsManifest=@"E:\QVFR\layer.json";
         QvfrSettings.Save(xml,s);loaded=QvfrSettings.Load(xml);

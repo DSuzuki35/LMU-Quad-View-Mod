@@ -135,10 +135,13 @@ class GuiLayoutTests {
                 typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{vector});
                 var vectorValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
                 Check(vectorValues.RenderProfiling,"Profiling GUI setting lost");
+                ((CheckBox)Named(form,"StereoDrawAudit")).Checked=true;
+                Check(((LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null)).StereoDrawAudit,"Stereo audit GUI preference lost");
                 Check(vectorValues.RenderProfileSeconds==180&&Named(form,"RenderProfileSeconds").Enabled,"Capture length GUI setting lost/disabled");
                 ((CheckBox)Named(form,"DiagnosticsEnabled")).Checked=false;
                 var quietValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
                 Check(!quietValues.DiagnosticsEnabled&&!Named(form,"RenderProfileSeconds").Enabled,"Diagnostics-off did not disable captures");
+                Check(!Named(form,"StereoDrawAudit").Enabled,"Diagnostics-off did not disable audit control");
                 ((CheckBox)Named(form,"DiagnosticsEnabled")).Checked=true;
                 Check(Named(form,"RenderProfileSeconds").Enabled,"Re-enabling diagnostics lost saved capture preference");
                 Check(vectorValues.Backend=="VectorXR"&&vectorValues.VectorXrManifest==vector.VectorXrManifest&&vectorValues.QuadViewsManifest==vector.QuadViewsManifest,"VectorXR GUI settings roundtrip");

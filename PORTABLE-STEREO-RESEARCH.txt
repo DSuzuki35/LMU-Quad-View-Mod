@@ -1,0 +1,83 @@
+PORTABLE STEREO RESEARCH 1
+
+STATUS
+
+The portable D3D11 two-eye submission proof is implemented. A single instanced
+draw produces two independent eye images with correct parallax and depth. It
+uses standard D3D11 capability checks, vertex-stage array routing where supported,
+and a geometry-shader routing fallback. No NVIDIA API is required by this path.
+
+This build DOES NOT yet replace LMU's focused-eye renderer or reduce its draw
+calls. It adds the bounded game draw audit needed to select and convert the first
+LMU shader/pass family. Ordinary LMU rendering remains the current legacy path.
+No in-game CPU or FPS improvement is claimed for this research package.
+
+GAME DRAW AUDIT
+
+1. Extract the whole research ZIP into a separate writable folder. Keep the
+   working candidate 5 package as rollback. Use the same provider/runtime setup.
+2. In Setup, enable diagnostics and logging, and tick:
+       Record stereo draw audit (Ctrl+Alt+F8)
+   Leave ordinary render profiling unticked for this diagnostic run.
+3. Launch LMU, load a track and wait until the scene/shaders have warmed up.
+4. Keep LMU focused on the desktop. Press and release Ctrl+Alt+F8 once while
+   driving or viewing a stable replay segment. Two scene frames are recorded.
+   This capture reads substantial D3D state and can cause a noticeable hitch.
+5. Close LMU normally. Look in this package's logs/ for stereo-audit-*.json,
+   quad-*.log and its matching *-run.json. The log should contain:
+       portable_stereo capabilities ...
+       stereo_audit armed ...
+       stereo_audit complete reason=frames frames=2 ...
+   Normal close saves a partial capture too, including other-thread teardown.
+6. Untick the draw audit and relaunch before ordinary play or FPS comparisons.
+   Audit hooks add overhead while armed. These are compatibility diagnostics,
+   not timings suitable for measuring an optimization's performance.
+
+The shortcut can record another segment in the same session after releasing the
+key. Pressing it again during a capture saves early. A ten-second timeout ends
+a capture that cannot collect two scene frames, provided XR frames continue.
+At most 4,096 draws per view per sampled frame are retained; overflow is reported.
+The master diagnostics checkbox overrides the saved audit-on preference.
+
+CAPTURE CONTENTS AND LIMITATIONS
+
+The JSON includes draw types/arguments, native render-group IDs, shader IDs and
+SHA256 hashes, available shader reflection metadata, input layouts, vertex/index
+signatures, VS/PS constant-buffer bindings with observed write generations,
+render-target dimensions, and first-16-slot PS texture/sampler signatures.
+It records snapshot overhead separately from original draw-API wall intervals.
+
+There is no raw game shader bytecode, mapped-buffer content, image dump or system
+identity in this audit format. Shader definitions created before audit hooks may
+be unavailable. Mapped WRITE memory is never read. Resource IDs/write generations
+are not content hashes, and matching signatures do not prove common object
+identity or stereo replay safety. Other shader-stage resources, GPU RT/UAV writes,
+worker contexts and Context1 update variants need further dependency analysis.
+Command-list execution advances a conservative resource epoch. Indirect draw
+arguments are not read back. Partial scopes and truncated records are explicit.
+
+Optional local summary with Python 3:
+    python tools/analyze_stereo_audit.py logs/stereo-audit-<capture>.json
+
+The original focus draw calls are all forwarded. The native build/ABI guards,
+provider configuration and existing image acquisition/release behavior remain.
+Diagnostic JSON and run files stay out of source commits.
+
+HARDWARE PROOF TOOL
+
+Run tools/check-hardware-stereo.cmd to exercise the standalone proof on the
+default hardware adapter. It creates its own offscreen D3D11 device, does not
+attach to LMU, and saves tools/hardware-stereo-check.log. No headset is needed.
+The equivalent console command is:
+    tools/PortableStereoCheck.exe --hardware
+
+Tests compare one paired draw with two reference eye draws, including asymmetric
+views, parallax, near/far depth occlusion, array-slice copy-out, existing instances,
+nonzero IA base-instance offsets and adapted instance-data step rates. Both direct
+array routing and the geometry fallback run when supported. The default tool
+without --hardware tests Microsoft's WARP software device instead.
+
+WARP and an NVIDIA RTX 4080 passed locally. The design is vendor-neutral; actual
+AMD/Intel driver compatibility/performance still needs real-device testing.
+Any first LMU pass conversion follows this audit and must preserve per-eye
+constants, history, visibility and resource lifetimes before enabling paired draws.

@@ -24,7 +24,7 @@ void flush_log();
 
 // Engine side, called after successful xrCreateSession and before xrDestroySession.
 // No hook in trace mode. Never patch on unrecognized executable/build.
-bool engine_start();
+bool engine_start(ID3D11DeviceContext* context=nullptr);
 void engine_stop();
 // Identity from the pinned game's native XR eye-handle vector, not dimensions
 // or creation order. Returns 2 for unproven/auxiliary handles.

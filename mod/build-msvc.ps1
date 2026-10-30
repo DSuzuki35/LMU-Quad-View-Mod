@@ -17,16 +17,17 @@ try {
     }
     Compile @('/nologo','/TC','/O2','/MT','/c','vendor/minhook-1.3.4/src/hde/hde64.c',('/Fo'+(Join-Path $build 'mh_hde64.obj')))
     $hooks=@('buffer','hook','trampoline','hde64')|ForEach-Object{Join-Path $build ('mh_'+$_+'.obj')}
-    $basic=@('math','focus_box','native_xr_views','gpu_timing','render_profile','swapchain_sampling','pipeline_stats','benchmark_control','vrs_scope_policy','nv_vrs','ui_d3d_state','focus_overlay','outer_resample','native_outer_texture','native_outer_bindings')
+    $basic=@('math','focus_box','native_xr_views','gpu_timing','render_profile','swapchain_sampling','pipeline_stats','benchmark_control','vrs_scope_policy','nv_vrs','ui_d3d_state','focus_overlay','outer_resample','native_outer_texture','native_outer_bindings','stereo_instancing','stereo_audit_abi','stereo_audit')
     foreach($test in $basic){
         $sources=@("tests/${test}_test.cpp")
         if($test -eq 'nv_vrs'){$sources+='nv_vrs.cpp'}
+        if($test -eq 'stereo_audit'){$sources+='stereo_audit.cpp';$sources+=$hooks}
         Compile ($common+$sources+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+(Join-Path $build ($test+'_test.exe')))))
         if($test -eq 'vrs_scope_policy'){Run-Test ($test+'_test') @('--policy-only')}
         else{Run-Test ($test+'_test')}
     }
     foreach($test in @('engine_hooks','native_outer_fallback','benchmark_engine')){
-        Compile ($common+@("tests/${test}_test.cpp",'nv_vrs.cpp')+$hooks+@('d3d11.lib','advapi32.lib',('/Fe'+(Join-Path $build ($test+'_test.exe')))))
+        Compile ($common+@("tests/${test}_test.cpp",'nv_vrs.cpp','stereo_audit.cpp')+$hooks+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+(Join-Path $build ($test+'_test.exe')))))
         Run-Test ($test+'_test')
     }
     Compile ($common+@('xr_layer.cpp','xr_layer_tests.cpp','d3d11.lib','d3dcompiler.lib',('/Fe'+(Join-Path $build 'xr_layer_tests.exe'))))
@@ -37,6 +38,7 @@ try {
     Run-Test 'xr_layer_tests' @('--runtime-settings','--profile-menu-frames')
     Run-Test 'xr_layer_tests' @('--runtime-settings','--diagnostics-off')
     Run-Test 'render_profile_test' @('--diagnostics-off')
-    Compile ($common+@('/LD','xr_layer.cpp','engine_bridge.cpp','nv_vrs.cpp')+$hooks+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+$LayerOutput)))
+    Run-Test 'stereo_audit_test' @('--diagnostics-off')
+    Compile ($common+@('/LD','xr_layer.cpp','engine_bridge.cpp','nv_vrs.cpp','stereo_audit.cpp')+$hooks+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+$LayerOutput)))
     Get-FileHash -LiteralPath $LayerOutput -Algorithm SHA256
 } finally {Pop-Location}
