@@ -242,12 +242,18 @@ namespace LmuQuadViewLauncher
     sealed class Launcher : Form
     {
         readonly string root = AppDomain.CurrentDomain.BaseDirectory;
-        readonly ComboBox backend = Choice(new[] { "Pimax OpenXR (Pimax Headsets only)", "Quad Views Foveated by mbucchia (all supported Headsets)" });
+        readonly ComboBox backend = Choice(new[] { "Native OpenXR (Pimax, etc.)", "Quad-Views-Foveated (mbucchia)", "VectorXR (experimental)" });
         readonly ComboBox mode = Choice(new[] { "Auto / eye tracking", "Fixed foveation" });
         readonly TextBox game = Field();
         readonly TextBox manifest = Field();
+        readonly TextBox vectorManifest = Field();
         readonly CheckBox outline = Toggle("Show green focus outline");
         readonly CheckBox nativeOuter = Toggle("Use smaller native outer render targets");
+        readonly CheckBox renderProfiling = Toggle("Enable render profiling (Ctrl+Alt+F9)");
+        readonly CheckBox diagnosticsEnabled=Toggle("Enable diagnostics and logging");
+        readonly NumericUpDown profileDuration=new NumericUpDown {Minimum=30,Maximum=300,Increment=30,Value=120,
+            BackColor=Theme.Field,ForeColor=Theme.Text,BorderStyle=BorderStyle.FixedSingle,Dock=DockStyle.Fill,
+            TextAlign=HorizontalAlignment.Right,Name="RenderProfileSeconds",AccessibleName="RenderProfileSeconds",Enabled=false};
         readonly PercentSetting outer = new PercentSetting("Outer resolution", 10, 400);
         readonly PercentSetting inner = new PercentSetting("Inner resolution", 25, 400);
         readonly PercentSetting focusWidth = new PercentSetting("Width", 10, 90);
@@ -268,6 +274,7 @@ namespace LmuQuadViewLauncher
         readonly Button renderingNav = Theme.Button("  Rendering", false);
         readonly Button setupNav = Theme.Button("  Setup", false);
         readonly Button browseManifest = Theme.Button("Browse", false);
+        readonly Button browseVectorManifest = Theme.Button("Browse", false);
         readonly DarkScrollPage renderingPage = new DarkScrollPage { Name = "RenderingPage" };
         readonly DarkScrollPage setupPage = new DarkScrollPage { Name = "SetupPage" };
         bool busy;
@@ -302,7 +309,7 @@ namespace LmuQuadViewLauncher
         public Launcher()
         {
             SuspendLayout();
-            Text = "LMU Quad View — 2026.10.30.1"; BackColor = Theme.Background; ForeColor = Theme.Text;
+            Text = "LMU Quad View"; BackColor = Theme.Background; ForeColor = Theme.Text;
             Font = new Font("Segoe UI", 10F); AutoScaleDimensions = new SizeF(96F, 96F); AutoScaleMode = AutoScaleMode.Dpi;
             try {
                 using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("LmuQuadView.Icon")) {
@@ -313,6 +320,8 @@ namespace LmuQuadViewLauncher
             renderingNav.Name = "RenderingNav"; setupNav.Name = "SetupNav";
             save.Name = "SaveButton"; launch.Name = "LaunchButton";
             backend.Name = "ProviderSelector";
+            manifest.Name="QvfrManifest";vectorManifest.Name="VectorXrManifest";
+            outer.Name="OuterResolution";inner.Name="InnerResolution";
             ClientSize = new Size(1050, 780); MinimumSize = new Size(900, 700); StartPosition = FormStartPosition.CenterScreen;
             var frame = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0) };
             frame.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -329,6 +338,9 @@ namespace LmuQuadViewLauncher
             pages.Controls.Add(setupPage); pages.Controls.Add(renderingPage); main.Controls.Add(pages, 0, 1);
             BuildRendering(); BuildSetup(); main.Controls.Add(BuildFooter(), 0, 2);
             backend.SelectedIndexChanged += delegate { UpdateProvider(); };
+            diagnosticsEnabled.Name="DiagnosticsEnabled";
+            diagnosticsEnabled.CheckedChanged+=delegate {renderProfiling.Enabled=diagnosticsEnabled.Checked;profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;};
+            renderProfiling.CheckedChanged+=delegate {profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;};
             renderingNav.Click += delegate { ShowPage(false); }; setupNav.Click += delegate { ShowPage(true); };
             save.Click += delegate { SaveSettings(); }; launch.Click += delegate { StartGame(); };
             AcceptButton = launch;
@@ -411,10 +423,11 @@ namespace LmuQuadViewLauncher
         }
         void BuildSetup()
         {
-            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 4, Margin = new Padding(0) };
+            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 5, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 153)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 125)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 322)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
             var browseGame = Theme.Button("Browse", false); browseGame.Click += delegate {
                 using (var d = new FolderBrowserDialog { Description = "Select the folder containing Le Mans Ultimate.exe", ShowNewFolderButton = false }) {
                     if (Directory.Exists(game.Text)) d.SelectedPath = game.Text;
@@ -423,13 +436,27 @@ namespace LmuQuadViewLauncher
             grid.Controls.Add(PathCard("Game installation", game, browseGame, "Choose your LMU folder. The launcher checks the supported game build before starting.", false), 0, 0);
             browseManifest.Click += delegate { using (var d = new OpenFileDialog { Filter = "OpenXR layer manifest (*.json)|*.json", CheckFileExists = true }) { if (d.ShowDialog(this) == DialogResult.OK) manifest.Text = d.FileName; } };
             grid.Controls.Add(PathCard("Quad-Views-Foveated", manifest, browseManifest, "Manifest JSON: leave blank to auto-detect an installed copy.", true), 0, 1);
+            browseVectorManifest.Click += delegate { using(var d=new OpenFileDialog {Filter="OpenXR layer manifest (*.json)|*.json",CheckFileExists=true}) {if(d.ShowDialog(this)==DialogResult.OK)vectorManifest.Text=d.FileName;} };
+            grid.Controls.Add(PathCard("VectorXR",vectorManifest,browseVectorManifest,
+                "Manifest JSON: leave blank to detect VectorXR. Enable an LMU Quadviews profile in its app.",true,
+                "https://github.com/DienerTech/vectorxr#installation"),0,2);
             var options = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
-            var stack = Stack(3); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 23)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 30)); stack.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            var stack = Stack(8); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 23)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 30)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute,30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute,40));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
             stack.Controls.Add(Caption("ADVANCED"), 0, 0); stack.Controls.Add(nativeOuter, 0, 1);
-            stack.Controls.Add(Caption("Experimental GPU savings. Disable to test full-size outer rendering with resampling."), 0, 2); options.Controls.Add(stack); grid.Controls.Add(options, 0, 2);
-            grid.Controls.Add(Caption("Select your headset's OpenXR runtime before launch. SteamVR + Sboys3 uses the QVFR provider."), 0, 3);
+            stack.Controls.Add(Caption("Experimental GPU savings. Disable to test full-size outer rendering with resampling."), 0, 2);
+            stack.Controls.Add(diagnosticsEnabled,0,3);
+            stack.Controls.Add(Caption("Untick for normal play. Stops mod logs and profiling. Applies next launch; VectorXR logging is separate."),0,4);
+            stack.Controls.Add(renderProfiling,0,5);
+            var durationRow=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=new Padding(0)};
+            durationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));durationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,80));
+            durationRow.Controls.Add(Theme.Label("Capture length (seconds)",10F,Theme.Text),0,0);profileDuration.Margin=new Padding(2,4,0,0);durationRow.Controls.Add(profileDuration,1,0);stack.Controls.Add(durationRow,0,6);
+            stack.Controls.Add(Caption("Press Ctrl+Alt+F9 on track. 30-300 seconds; closing LMU saves a partial capture."),0,7);
+            options.Controls.Add(stack); grid.Controls.Add(options, 0, 3);
+            grid.Controls.Add(Caption("Keep your headset's OpenXR runtime active. Configure VectorXR's LMU Quadviews profile when using it; select one quad-view provider."), 0, 4);
         }
-        Control PathCard(string title, TextBox field, Button browse, string hint, bool link)
+        Control PathCard(string title, TextBox field, Button browse, string hint, bool link,string address="https://github.com/mbucchia/Quad-Views-Foveated/wiki")
         {
             var card = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14), Padding = new Padding(17, 12, 17, 12) };
             var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = link ? 4 : 3, Margin = new Padding(0) };
@@ -439,7 +466,7 @@ namespace LmuQuadViewLauncher
             grid.Controls.Add(Theme.Label(title, 13F, Theme.Text), 0, 0); grid.SetColumnSpan(grid.GetControlFromPosition(0, 0), 2);
             browse.Dock = DockStyle.Fill; browse.Margin = new Padding(0); browse.Font = new Font("Segoe UI", 9F);
             grid.Controls.Add(field, 0, 1); grid.Controls.Add(browse, 1, 1); grid.Controls.Add(Caption(hint), 0, 2); grid.SetColumnSpan(grid.GetControlFromPosition(0, 2), 2);
-            if (link) { Link(grid, "Installation guide and download", "https://github.com/mbucchia/Quad-Views-Foveated/wiki", 3); grid.SetColumnSpan(grid.GetControlFromPosition(0, 3), 2); }
+            if (link) { Link(grid, "Installation guide and download", address, 3); grid.SetColumnSpan(grid.GetControlFromPosition(0, 3), 2); }
             card.Controls.Add(grid); return card;
         }
         Control BuildFooter()
@@ -461,11 +488,18 @@ namespace LmuQuadViewLauncher
         void UpdateProvider()
         {
             bool qvfr = backend.SelectedIndex == 1;
+            bool vector = backend.SelectedIndex == 2;
             outer.Enabled = inner.Enabled = focusWidth.Enabled = focusHeight.Enabled = qvfr;
             manifest.Enabled = browseManifest.Enabled = qvfr;
+            vectorManifest.Enabled = browseVectorManifest.Enabled = vector;
             refreshFov.Enabled=qvfr;
-            providerHint.Text = qvfr ? "Uses Quad-Views-Foveated with your active OpenXR runtime." : "Use your runtime's quad-view settings, for example Pimax EVO.";
+            providerHint.Text = vector ? "Uses VectorXR instead of QVFR. Set resolution and focus in VectorXR's LMU Quadviews profile."
+                : qvfr ? "Uses Quad-Views-Foveated with your active OpenXR runtime." : "Use your runtime's quad-view settings, for example Pimax EVO.";
+            focusHint.Text=vector?"Set focus size in VectorXR's LMU Quadviews profile."
+                :focusGeometry==null?"Per-axis % until measured: run LMU once, then read FOV below."
+                :"Equal-axis sizes: 50 / 50 is square near the center. Re-read FOV after headset/FOV changes.";
             resolutionHint.Text = qvfr ? "200% resolution means 2x width and 2x height (4x pixels). Save updates only LMU's QVFR profile and backs up existing settings. Restart LMU after changes."
+                : vector ? "Resolution, focus size and tracking are configured in VectorXR's LMU profile. Controls above are inactive. QVFR and OpenXR Toolkit are bypassed for this launch. Restart LMU after changes."
                 : "Resolution and focus size are controlled by your native runtime. Switch to Quad-Views-Foveated to adjust them here. Restart LMU after changes.";
         }
         void Fill(LauncherSettings s)
@@ -476,18 +510,23 @@ namespace LmuQuadViewLauncher
             focusHint.Text=focusGeometry==null?"Per-axis % until measured: run LMU once, then read FOV below."
                 :"Equal-axis sizes: 50 / 50 is square near the center. Re-read FOV after headset/FOV changes.";
             game.Text = s.GameDirectory ?? ""; manifest.Text = s.QuadViewsManifest ?? "";
-            backend.SelectedIndex = s.Backend == "QVFR" ? 1 : 0; mode.SelectedIndex = s.FoveationMode == "fixed" ? 1 : 0;
+            vectorManifest.Text=s.VectorXrManifest ?? "";
+            backend.SelectedIndex = s.Backend == "VectorXR" ? 2 : s.Backend == "QVFR" ? 1 : 0; mode.SelectedIndex = s.FoveationMode == "fixed" ? 1 : 0;
             outline.Checked = s.DebugFocus; nativeOuter.Checked = s.NativeOuterResolution;
+            renderProfiling.Checked=s.RenderProfiling;
+            diagnosticsEnabled.Checked=s.DiagnosticsEnabled;
+            profileDuration.Value=s.RenderProfileSeconds;
             outer.Value = s.OuterPercent; inner.Value = s.InnerPercent;
             focusWidth.Value = focusGeometry==null?s.FocusWidthPercent:focusGeometry.DisplayWidth(s.FocusWidthPercent);
             focusHeight.Value = focusGeometry==null?s.FocusHeightPercent:focusGeometry.DisplayHeight(s.FocusHeightPercent);
             outerBlur.Value = Math.Max(outerBlur.Minimum, Math.Min(outerBlur.Maximum, s.OuterBlur));
+            UpdateProvider();
         }
         LauncherSettings Values()
         {
-            var s = new LauncherSettings { GameDirectory = game.Text.Trim(), QuadViewsManifest = manifest.Text.Trim(),
-                Backend = backend.SelectedIndex == 1 ? "QVFR" : "Native", FoveationMode = mode.SelectedIndex == 1 ? "fixed" : "auto",
-                DebugFocus = outline.Checked, NativeOuterResolution = nativeOuter.Checked,
+            var s = new LauncherSettings { GameDirectory = game.Text.Trim(), QuadViewsManifest = manifest.Text.Trim(),VectorXrManifest=vectorManifest.Text.Trim(),
+                Backend = backend.SelectedIndex == 2 ? "VectorXR" : backend.SelectedIndex == 1 ? "QVFR" : "Native", FoveationMode = mode.SelectedIndex == 1 ? "fixed" : "auto",
+                DebugFocus = outline.Checked, RenderProfiling=renderProfiling.Checked, DiagnosticsEnabled=diagnosticsEnabled.Checked, RenderProfileSeconds=Decimal.ToInt32(profileDuration.Value), NativeOuterResolution = nativeOuter.Checked,
                 OuterPercent = outer.Value, InnerPercent = inner.Value,
                 FocusWidthPercent = focusGeometry==null?focusWidth.Value:focusGeometry.ProviderWidth(focusWidth.Value),
                 FocusHeightPercent = focusGeometry==null?focusHeight.Value:focusGeometry.ProviderHeight(focusHeight.Value),
@@ -509,7 +548,8 @@ namespace LmuQuadViewLauncher
         {
             if (busy) return;
             try { var s = Values(); if (s.Backend == "QVFR") QvfrSettings.SaveProfile(s); QvfrSettings.Save(SettingsPath, s);
-                status.Text = s.Backend == "QVFR" ? "Saved. LMU's QVFR profile is applied; existing settings are backed up when changed." : "Saved. Native resolution and focus settings stay in your runtime.";
+                status.Text = s.Backend == "VectorXR" ? "Saved. Enable Quadviews for LMU in VectorXR; its profile controls resolution and focus."
+                    : s.Backend == "QVFR" ? "Saved. LMU's QVFR profile is applied; existing settings are backed up when changed." : "Saved. Native resolution and focus settings stay in your runtime.";
                 status.ForeColor = Theme.Muted; }
             catch (Exception ex) { ShowError(ex.Message); }
         }

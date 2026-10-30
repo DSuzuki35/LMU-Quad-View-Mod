@@ -1,0 +1,42 @@
+param([string]$LayerOutput=(Join-Path $PSScriptRoot 'build/lmu_quadview.dll'))
+$ErrorActionPreference='Stop'
+if(!(Get-Command cl.exe -ErrorAction SilentlyContinue)){throw 'Run build-msvc.cmd to initialize the x64 compiler environment.'}
+$LayerOutput=[IO.Path]::GetFullPath($LayerOutput)
+$build=Join-Path $PSScriptRoot 'build/msvc'
+New-Item -ItemType Directory -Path $build,([IO.Path]::GetDirectoryName($LayerOutput)) -Force|Out-Null
+$common=@('/nologo','/std:c++17','/O2','/EHsc','/MT','/Zc:__cplusplus','/D_CRT_SECURE_NO_WARNINGS','/I../prototype/third_party','/W4','/wd4191','user32.lib',('/Fo'+$build+'\'))
+function Compile([string[]]$Arguments){& cl.exe @Arguments;if($LASTEXITCODE -ne 0){throw 'C++ compilation failed'}}
+function Run-Test([string]$Name,[string[]]$Arguments=@()){
+    & (Join-Path $build ($Name+'.exe')) @Arguments
+    if($LASTEXITCODE -ne 0){throw "$Name failed: $Arguments"}
+}
+Push-Location $PSScriptRoot
+try {
+    foreach($part in @('buffer','hook','trampoline')){
+        Compile @('/nologo','/TC','/O2','/MT','/c',"vendor/minhook-1.3.4/src/$part.c",('/Fo'+(Join-Path $build ('mh_'+$part+'.obj'))))
+    }
+    Compile @('/nologo','/TC','/O2','/MT','/c','vendor/minhook-1.3.4/src/hde/hde64.c',('/Fo'+(Join-Path $build 'mh_hde64.obj')))
+    $hooks=@('buffer','hook','trampoline','hde64')|ForEach-Object{Join-Path $build ('mh_'+$_+'.obj')}
+    $basic=@('math','focus_box','native_xr_views','gpu_timing','render_profile','swapchain_sampling','pipeline_stats','benchmark_control','vrs_scope_policy','nv_vrs','ui_d3d_state','focus_overlay','outer_resample','native_outer_texture','native_outer_bindings')
+    foreach($test in $basic){
+        $sources=@("tests/${test}_test.cpp")
+        if($test -eq 'nv_vrs'){$sources+='nv_vrs.cpp'}
+        Compile ($common+$sources+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+(Join-Path $build ($test+'_test.exe')))))
+        if($test -eq 'vrs_scope_policy'){Run-Test ($test+'_test') @('--policy-only')}
+        else{Run-Test ($test+'_test')}
+    }
+    foreach($test in @('engine_hooks','native_outer_fallback','benchmark_engine')){
+        Compile ($common+@("tests/${test}_test.cpp",'nv_vrs.cpp')+$hooks+@('d3d11.lib','advapi32.lib',('/Fe'+(Join-Path $build ($test+'_test.exe')))))
+        Run-Test ($test+'_test')
+    }
+    Compile ($common+@('xr_layer.cpp','xr_layer_tests.cpp','d3d11.lib','d3dcompiler.lib',('/Fe'+(Join-Path $build 'xr_layer_tests.exe'))))
+    $cases=@(@(),@('--srgb'),@('--stats'),@('--srgb','--stats'),@('--scene-stats'),@('--srgb','--scene-stats'),@('--capture'),@('--srgb','--capture'),@('--capture-no-trigger'),@('--capture-invalid'),@('--debug-focus'),@('--srgb','--debug-focus'),@('--scaled'),@('--srgb','--scaled'),@('--scaled','--debug-focus'),@('--srgb','--scaled','--debug-focus'),@('--scaled','--capture'),@('--invalid-sizes'),@('--focus-box'),@('--focus-box-large'),@('--invalid-focus-box'),@('--focus-box','--debug-focus'),@('--focus-box-large','--debug-focus'),@('--focus-box','--scaled','--srgb','--debug-focus'),@('--focus-asymmetric'),@('--focus-asymmetric','--debug-focus'),@('--focus-asymmetric','--scaled','--srgb','--debug-focus'),@('--runtime-settings'),@('--runtime-settings','--srgb'),@('--runtime-settings','--debug-focus'),@('--runtime-settings','--srgb','--debug-focus'),@('--runtime-equal'),@('--runtime-equal','--debug-focus'),@('--runtime-axis-equal'),@('--runtime-axis-equal','--debug-focus'),@('--runtime-too-wide'),@('--runtime-too-tall'),@('--runtime-overlay'),@('--runtime-overlay','--srgb'),@('--runtime-overlay','--debug-focus'),@('--runtime-overlay','--srgb','--debug-focus'),@('--runtime-settings','--fixed-foveation'),@('--runtime-settings','--srgb','--fixed-foveation'),@('--runtime-overlay','--fixed-foveation'),@('--runtime-overlay','--srgb','--fixed-foveation'),@('--runtime-settings','--no-eye-tracking'),@('--runtime-overlay','--srgb','--no-eye-tracking'),@('--runtime-equal','--outer-blur'),@('--runtime-equal','--outer-blur','--srgb'),@('--runtime-equal','--outer-blur','--typed-srgb-runtime'))
+    foreach($case in $cases){Run-Test 'xr_layer_tests' $case}
+    foreach($case in @(@('--runtime-settings','--sampled-inputs'),@('--runtime-settings','--sampled-inputs','--srgb'),@('--runtime-settings','--sampled-inputs','--debug-focus'),@('--runtime-overlay','--sampled-inputs','--srgb'),@('--runtime-settings','--reject-sampled-inputs'),@('--runtime-settings','--reject-sampled-inputs','--srgb'))){Run-Test 'xr_layer_tests' $case}
+    foreach($case in @(@('--runtime-settings','--profile-on-close'),@('--runtime-settings','--profile-close-other-thread','--sampled-inputs'))){Run-Test 'xr_layer_tests' $case}
+    Run-Test 'xr_layer_tests' @('--runtime-settings','--profile-menu-frames')
+    Run-Test 'xr_layer_tests' @('--runtime-settings','--diagnostics-off')
+    Run-Test 'render_profile_test' @('--diagnostics-off')
+    Compile ($common+@('/LD','xr_layer.cpp','engine_bridge.cpp','nv_vrs.cpp')+$hooks+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+$LayerOutput)))
+    Get-FileHash -LiteralPath $LayerOutput -Algorithm SHA256
+} finally {Pop-Location}

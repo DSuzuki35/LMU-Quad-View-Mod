@@ -15,6 +15,7 @@ bool xr_copy_outer(unsigned,ID3D11Texture2D*) {return false;}
 void xr_scene_focus_complete(unsigned) {}
 ID3D11RenderTargetView* xr_outer_rtv(unsigned) {return nullptr;}
 void log_line(const char*) {}
+void flush_log(){}
 }
 namespace {
 unsigned masks=0,derived=0;

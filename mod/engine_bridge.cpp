@@ -1,9 +1,11 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "bridge.hpp"
+#include "caller_address.hpp"
 #include "quad_math.hpp"
 #include "ui_d3d_state.hpp"
 #include "gpu_timing.hpp"
+#include "render_profile.hpp"
 #include "pipeline_stats.hpp"
 #include "benchmark_control.hpp"
 #include "code_anchors.hpp"
@@ -19,6 +21,7 @@
 #include <wincrypt.h>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -68,7 +71,7 @@ XrOutputSizes nativeOuterSizes;
 bool nativeRuntimeSettings=false,nativeOuterSeparateBanks=false;
 const float* fovScaleHook(void* renderer){
     const auto* original=fovScaleOriginal(renderer);
-    const auto caller=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
+    const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     // Only native eye allocation/crop offsets and raw projection consume unity.
     // Configuration readers keep seeing the user's original crop preference.
     bool renderCaller=false;
@@ -156,7 +159,7 @@ void projectionHook(void* view, const float* value) {
         modified=replace_fov(modified,*nativeOuterProjection);value=modified.data();
     }
     if(view==focusView && focusProjection) {
-        const auto caller=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
+        const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
         if(caller>=base && caller-base<0x4000000 && seenProjectionCount<seenProjectionCallers.size()) {
             bool seen=false;
             for(unsigned i=0;i<seenProjectionCount;++i)seen|=seenProjectionCallers[i]==caller;
@@ -206,6 +209,7 @@ bool readable(const void* pointer, std::size_t bytes) {
 }
 void diagnoseNativeEye(const char* stage,unsigned eye,ID3D11Texture2D* texture,ID3D11RenderTargetView* rtv,
                        ID3D11ShaderResourceView* srv,ID3D11DeviceContext* context){
+    if(!diagnostics_enabled())return;
     diagnose_eye_resource(stage,eye,readable(texture,sizeof(void*))?texture:nullptr,
         readable(rtv,sizeof(void*))?rtv:nullptr,readable(srv,sizeof(void*))?srv:nullptr,
         readable(context,sizeof(void*))?context:nullptr,log_line);
@@ -247,7 +251,7 @@ constexpr std::array<std::uint8_t,16> nativeEnumerateAnchor{
     0x40,0x53,0x56,0x57,0x41,0x54,0x41,0x56,0x41,0x57,0x48,0x81,0xec,0xc8,0x00,0x00};
 XrResult XRAPI_CALL nativeEnumerateHook(XrInstance instance,XrSystemId system,XrViewConfigurationType type,
                                       uint32_t capacity,uint32_t* count,XrViewConfigurationView* views){
-    const auto caller=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
+    const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     const auto result=nativeEnumerateOriginal(instance,system,type,capacity,count,views);
     if(!nativeRuntimeSettings||caller!=base+0x5bd214||XR_FAILED(result))return result;
     uint32_t ow=0,oh=0,w=0,h=0;
@@ -344,6 +348,7 @@ bool prepareWorldVrs(ID3D11DeviceContext* context,ViewSnapshot* view) {
     return true;
 }
 void logVrsCounters() {
+    if(!diagnostics_enabled())return;
     char line[550]{};
     std::snprintf(line,sizeof(line),
         "counters opt_in=%u configured_rate=%u ready=%u faulted=%u appliedScopeCounter0=%llu appliedScopeCounter1=%llu attempted0=%llu attempted1=%llu failures=%llu interrupted=%llu; successful begin+end only; rate1 is a 1x1 baseline",
@@ -465,7 +470,7 @@ void suspendUnexpectedVrs() {
         failWorldVrs("nested_scope_disable_failure; feature disabled");
 }
 void mainPassHook(void* renderer,void* scene,void* view,std::uint32_t flags,bool lastMainPass) {
-    const auto caller=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
+    const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     const auto callerRva=caller>=base?caller-base:0;
     const bool saved=outerMainPassMarker;
     // A rejected nested invocation must not inherit eligibility from its parent.
@@ -477,6 +482,9 @@ void mainPassHook(void* renderer,void* scene,void* view,std::uint32_t flags,bool
 }
 void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
                    std::uint32_t flags,bool lastMainPass,void* optionalMaterial) {
+    const bool profileSort=renderProfile.collecting()&&view&&(view==nativeOuterExpected||view==focusView);
+    const auto sortEye=profileSort?unsigned(static_cast<ViewSnapshot*>(view)->eye_index):0;
+    ProfileScope sortProfile(profile_eye(focusView?ProfileSlot::sort_focus0:ProfileSlot::sort_outer0,sortEye),profileSort&&sortEye<2);
     if(nativeOuterActive && nativeOuterActive==view && nativeOuterActive->eye_index>=0 && nativeOuterActive->eye_index<=1){
         const auto eye=unsigned(nativeOuterActive->eye_index);
         if(nativeBindingProbes[eye]<12){
@@ -502,7 +510,7 @@ void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
             }
         }
     }
-    const auto caller=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
+    const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     const auto callerRva=caller>=base?caller-base:0;
     const bool eligible=worldVrsOptIn && !worldVrsFailed && worldVrs.ready() &&
         worldVrsRate==benchmarkRequestedRate() && outerVrsContext==worldVrsConfiguredContext &&
@@ -544,7 +552,7 @@ void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool late
         return;
     }
     auto* view=static_cast<ViewSnapshot*>(pointer);
-    const auto caller=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
+    const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     if(!nativeOuterOptIn||nativeOuterFailed||insideHook||view!=nativeOuterExpected||
        caller!=base+0x5de951||!readable(view,sizeof(*view))||view->eye_index<0||view->eye_index>1){
         nativeViewOriginal(pointer,objects,lights,main,later);return;
@@ -575,6 +583,7 @@ void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool late
         return;
     }
     auto& nativeOuterBank=nativeOuterBanks[nativeOuterSeparateBanks?unsigned(view->eye_index):0];
+    ProfileScope prepareProfile(profile_eye(ProfileSlot::native_prepare0,unsigned(view->eye_index)));
     bool valid=
         readable(reinterpret_cast<void*>(renderer+0x82cd0),8)&&
         !*reinterpret_cast<bool*>(renderer+0x76f50)&&
@@ -586,7 +595,7 @@ void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool late
     const float clearDepth=*reinterpret_cast<unsigned*>(reinterpret_cast<std::byte*>(view)+0x3e8)==1?0.f:1.f;
     if(!valid||!nativeOuterBank.prepare(base,renderer,width,height,clearDepth,readable,log_line)){
         nativeOuterFailed=true;log_line("native_outer refused unsupported view/resource bank; live quad fallback: full-resolution outer render resampled to runtime output; outer render savings unavailable");
-        nativeViewOriginal(pointer,objects,lights,main,later);return;
+        prepareProfile.end();nativeViewOriginal(pointer,objects,lights,main,later);return;
     }
     NativeOuterBindings bindings;
     void* target=nullptr;void* second=nullptr;
@@ -603,12 +612,14 @@ void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool late
         bindings.add(&view->second_target_unknown,reinterpret_cast<std::uint64_t>(second));
     if(!valid||!bindings.apply()){
         nativeOuterFailed=true;log_line("native_outer refused incomplete binding transaction; live quad fallback: full-resolution outer render resampled to runtime output; outer render savings unavailable");
-        nativeViewOriginal(pointer,objects,lights,main,later);return;
+        prepareProfile.end();nativeViewOriginal(pointer,objects,lights,main,later);return;
     }
     const auto savedProjection=view->projection,savedFar=view->far_projection;
     const auto savedFlags=view->flags;
     nativeOuterActive=view;nativeOuterProjection=&savedProjection;nativeOuterBindings=&bindings;
+    prepareProfile.end();
     nativeViewOriginal(pointer,objects,lights,main,later);
+    ProfileScope restoreProfile(profile_eye(ProfileSlot::native_restore0,unsigned(view->eye_index)));
     nativeOuterBindings=nullptr;nativeOuterActive=nullptr;nativeOuterProjection=nullptr;
     nativeOuterSource=nativeOuterBank.final(unsigned(view->eye_index));
     bindings.restore();
@@ -616,6 +627,7 @@ void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool late
     derivedOriginal(view,6,false);
     view->flags=savedFlags;
     reinterpret_cast<void(*)(void*,void*)>(base+0x5c6c50)(reinterpret_cast<void*>(renderer),view);
+    restoreProfile.end();
     const auto count=++nativeOuterCompleted[view->eye_index];
     if(count<=4||count%600==0){
         char line[240]{};std::snprintf(line,sizeof(line),"native_outer rendered eye=%d count=%llu actual=%ux%u focus=%ux%u restored=1; PPFX pool remains full-size",
@@ -624,7 +636,24 @@ void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool late
 }
 void renderHook(void* unknown, bool laterPass) {
     suspendUnexpectedVrs();
-    const auto caller=reinterpret_cast<std::uintptr_t>(__builtin_return_address(0));
+    const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
+    ID3D11DeviceContext* profileContext=nullptr;
+    unsigned profileEye=0;
+    if(renderProfile.enabled()&&!insideHook&&installed.load()&&caller==base+0xcd1763&&xr_quad_active()){
+        auto* before=*address<ViewSnapshot*>(0x1a51370);
+        const auto renderer=*address<std::uintptr_t>(0x1b12be8);
+        if(readable(before,sizeof(*before))&&before->eye_index>=0&&before->eye_index<=1&&
+           readable(reinterpret_cast<void*>(renderer+0x76f68),sizeof(void*))){
+            auto* context=*reinterpret_cast<ID3D11DeviceContext**>(renderer+0x76f68);
+            if(readable(context,sizeof(void*))){
+                profileContext=context;profileEye=unsigned(before->eye_index);
+                if(profileEye==0){
+                    const bool key=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F9)&0x8000);
+                    renderProfile.frame(context,key);
+                }
+            }
+        }
+    }
     ID3D11DeviceContext* timingContext=nullptr;
     bool outerTimed=false,outerCounted=false;
     const bool benchmark=!benchmarkPath.empty();
@@ -671,7 +700,11 @@ void renderHook(void* unknown, bool laterPass) {
     nativeOuterExpected=nullptr;nativeOuterSource=nullptr;
     if(nativeOuterOptIn&&!nativeOuterFailed&&!insideHook&&installed.load()&&xr_quad_active()&&caller==base+0xcd1763)
         nativeOuterExpected=*address<ViewSnapshot*>(0x1a51370);
+    const bool profileOuterGpu=profileContext&&renderProfile.gpu_start(profileContext,profileEye);
+    ProfileScope outerProfile(profile_eye(ProfileSlot::outer0,profileEye),profileContext!=nullptr);
     renderOriginal(unknown,laterPass);
+    outerProfile.end();
+    if(profileOuterGpu)renderProfile.gpu_stop(profileContext);
     auto* smallOuterSource=nativeOuterSource;
     nativeOuterExpected=savedNativeExpected;nativeOuterSource=savedNativeSource;
     suspendUnexpectedVrs();
@@ -686,6 +719,7 @@ void renderHook(void* unknown, bool laterPass) {
     auto* view=*address<ViewSnapshot*>(0x1a51370);
     if(!readable(view,sizeof(*view)) || view->eye_index<0 || view->eye_index>1) return;
     const unsigned eye=unsigned(view->eye_index);
+    ProfileScope focusHookProfile(profile_eye(ProfileSlot::focus_hook0,eye));
     if(view->flags & 0xc0000000u) {
         log_line("engine: focus refused for alternative/oblique view projection");return;
     }
@@ -695,7 +729,7 @@ void renderHook(void* unknown, bool laterPass) {
     auto* source=smallOuterSource?smallOuterSource:*address<ID3D11Texture2D*>(0x1b1c6b8+eye*8);
     if(!readable(source,sizeof(void*))) return;
     auto calls=++renderCalls;
-    if(calls<=8 || calls%600==0) {
+    if(diagnostics_enabled()&&(calls<=8 || calls%600==0)) {
         D3D11_TEXTURE2D_DESC desc{};source->GetDesc(&desc);
         char msg[400];std::snprintf(msg,sizeof(msg),"engine outer eye=%u call=%llu view=%p texture=%p size=%ux%u samples=%u flags=%x",
             eye,static_cast<unsigned long long>(calls),static_cast<void*>(view),static_cast<void*>(source),
@@ -717,7 +751,10 @@ void renderHook(void* unknown, bool laterPass) {
     }
     inner=replace_fov(view->projection,inner);
     innerFar=replace_fov(view->far_projection,innerFar);
-    if(!xr_copy_outer(eye,source)) return;
+    bool copied=false;
+    {ProfileScope copyProfile(profile_eye(ProfileSlot::outer_copy0,eye));copied=xr_copy_outer(eye,source);}
+    if(!copied)return;
+    ProfileScope focusPrepareProfile(profile_eye(ProfileSlot::focus_prepare0,eye));
     // Preserve the exact state the original DYN loop will store as outer camera history.
     const auto outerProjection=view->projection, outerFar=view->far_projection;
     const auto outerCurrent=view->current_transform, outerPrevious=view->previous_transform;
@@ -735,12 +772,18 @@ void renderHook(void* unknown, bool laterPass) {
     view->previous_transform_valid=history.valid ? 1 : 0;
     // Reuse outer visible objects, but rebuild derived view/frustum and issue fresh draws.
     derived(view,6,false);
+    focusPrepareProfile.end();
     const bool measureFocus=timingContext&&(!benchmark||benchmarkControl.state()==BenchmarkControl::State::measuring);
     const bool focusTimed=measureFocus && gpuTiming.start(timingContext,eye+2);
     const bool focusCounted=measureFocus&&benchmark&&pipelineStats.start(timingContext,eye+2);
+    const bool profileFocusGpu=profileContext&&renderProfile.gpu_start(profileContext,eye+2);
+    ProfileScope focusSceneProfile(profile_eye(ProfileSlot::focus_scene0,eye));
     reinterpret_cast<SceneFn>(base+0x5de200)(scene,false,true);
+    focusSceneProfile.end();
+    if(profileFocusGpu)renderProfile.gpu_stop(profileContext);
     if(focusCounted) pipelineStats.stop(timingContext);
     if(focusTimed) gpuTiming.stop(timingContext);
+    ProfileScope focusRestoreProfile(profile_eye(ProfileSlot::focus_restore0,eye));
     xr_scene_focus_complete(eye);
     history.transform=view->current_transform;history.valid=true;
     focusView=nullptr;focusProjection=nullptr;
@@ -752,13 +795,15 @@ void renderHook(void* unknown, bool laterPass) {
     derived(view,6,false);
     view->flags=outerFlags;
     insideHook=false;
+    focusRestoreProfile.end();
     auto rendered=++focusCalls;
-    if(rendered<=8 || rendered%600==0) {
+    if(diagnostics_enabled()&&(rendered<=8 || rendered%600==0)) {
         char msg[256];std::snprintf(msg,sizeof(msg),"engine focus eye=%u count=%llu proj00=%.5f outer00=%.5f overrides=%u masksSkipped=%u",
             eye,static_cast<unsigned long long>(rendered),inner[0],outerProjection[0],projectionOverrides,skippedMasks);log_line(msg);
     }
 }
 void uiHook(void* object,ID3D11DeviceContext* context,const UiArgs* originalArgs) {
+    ProfileScope uiProfile(ProfileSlot::ui);
     XrView views[4]{};
     if(!xr_quad_active() || !xr_frame_views(views) || !readable(originalArgs,sizeof(UiArgs)) ||
        !readable(object,0xe8) || originalArgs->mode<1 || originalArgs->mode>3) {
@@ -767,7 +812,7 @@ void uiHook(void* object,ID3D11DeviceContext* context,const UiArgs* originalArgs
     const bool menu=originalArgs->mode==3 && !xr_outer_rtv(0) && !xr_outer_rtv(1);
     auto targetSlots=reinterpret_cast<ID3D11RenderTargetView**>(static_cast<std::byte*>(object)+0xd8);
     static uint64_t diagnostics=0;
-    if(++diagnostics<=4||diagnostics%600==0){
+    if(diagnostics_enabled()&&(++diagnostics<=4||diagnostics%600==0)){
         for(unsigned eye=0;eye<2;++eye)diagnoseNativeEye(menu?"menu-final-before-ui":"scene-focus-before-ui",eye,
             *address<ID3D11Texture2D*>(0x1b1c6b8+eye*8),targetSlots[eye],*address<ID3D11ShaderResourceView*>(0x1b1c6d8+eye*8),context);
         char line[200]{};std::snprintf(line,sizeof(line),"native final extent=%ux%u copyOffsets left=%u,%u right=%u,%u",
@@ -820,7 +865,7 @@ void uiHook(void* object,ID3D11DeviceContext* context,const UiArgs* originalArgs
         drawEye(object,context,originalArgs,eye);
     }
     auto calls=++uiCalls;
-    if(calls<=8 || calls%600==0) {
+    if(diagnostics_enabled()&&(calls<=8 || calls%600==0)) {
         char msg[200];std::snprintf(msg,sizeof(msg),"engine UI count=%llu mode=%u menu=%d outerRTV=%d/%d",
             static_cast<unsigned long long>(calls),originalArgs->mode,menu,xr_outer_rtv(0)!=nullptr,xr_outer_rtv(1)!=nullptr);
         log_line(msg);
@@ -938,13 +983,13 @@ bool engine_start() {
     pipelineStats.reset();benchmarkPath.clear();benchmarkControl=BenchmarkControl{};benchmarkSnapshot={};
     wchar_t controlPath[32768]{};
     const DWORD controlLength=GetEnvironmentVariableW(L"LMU_QV_BENCH_CONTROL",controlPath,32768);
-    if(controlLength&&controlLength<32768&&std::filesystem::path(controlPath).is_absolute()&&!stereoTiming) {
+    if(diagnostics_enabled()&&controlLength&&controlLength<32768&&std::filesystem::path(controlPath).is_absolute()&&!stereoTiming) {
         benchmarkPath=controlPath;
         log_line("engine benchmark: waiting for phaseId rate warmupFrames commands; rates are requests until VRS confirms application");
     }
     wchar_t trigger[32768]{};
     const DWORD length=GetEnvironmentVariableW(L"LMU_QV_GPU_TIMING_TRIGGER",trigger,32768);
-    if(benchmarkPath.empty()&&length && length<32768 && std::filesystem::path(trigger).is_absolute()) {
+    if(diagnostics_enabled()&&benchmarkPath.empty()&&length && length<32768 && std::filesystem::path(trigger).is_absolute()) {
         timingTrigger=trigger;
         log_line("engine GPU timing: waiting for explicit trigger file");
     }
@@ -969,6 +1014,16 @@ bool engine_start() {
     }
     innerHistory[0]={};innerHistory[1]={};
     installedHookCount=hookCount;
+    char profileSetting[8]{};GetEnvironmentVariableA("LMU_QV_PROFILE",profileSetting,sizeof(profileSetting));
+    const bool profiling=diagnostics_enabled()&&!stereoTiming&&!std::strcmp(profileSetting,"1")&&benchmarkPath.empty()&&timingTrigger.empty();
+    char durationSetting[16]{};char* durationEnd=nullptr;
+    const auto durationLength=GetEnvironmentVariableA("LMU_QV_PROFILE_SECONDS",durationSetting,sizeof(durationSetting));
+    const auto requestedSeconds=durationLength&&durationLength<sizeof(durationSetting)?std::strtoul(durationSetting,&durationEnd,10):0;
+    const bool validDuration=durationLength&&durationLength<sizeof(durationSetting)&&durationEnd==durationSetting+durationLength&&requestedSeconds>=30&&requestedSeconds<=300;
+    const auto durationSeconds=validDuration?unsigned(requestedSeconds):120u;
+    if(profiling&&durationLength&&!validDuration)log_line("render_profile invalid duration; using 120 seconds (allowed 30..300)");
+    renderProfile.configure(profiling,log_line,durationSeconds,flush_log);
+    if(!std::strcmp(profileSetting,"1")&&!profiling)log_line("render_profile disabled: incompatible legacy timing/benchmark or stereo mode");
     installed.store(true);
     log_line(stereoTiming ? "engine: verified build; stereo timing render hook only; no quad repeats or projection/UI changes" :
                            "engine: verified build; render/UI/projection/mask hooks enabled");
@@ -978,11 +1033,13 @@ void engine_stop() {
     nativeOuterOptIn=false;
     for(auto& bank:nativeOuterBanks)if(!bank.reset())log_line("native_outer teardown on different thread; native bank retained until process exit");
     if(!installed.exchange(false)) {
+        renderProfile.shutdown();
         resetWorldVrs();worldVrsOptIn=false;worldVrsDefaultRate=1;worldVrsCounters={};
         gpuTiming.reset();pipelineStats.reset();benchmarkPath.clear();benchmarkControl=BenchmarkControl{};
         benchmarkSnapshot={};timingTrigger.clear();timingArmed=false;return;
     }
     removeHooks(installedHookCount);installedHookCount=0;
+    renderProfile.shutdown();
     logVrsCounters();resetWorldVrs();worldVrsOptIn=false;worldVrsDefaultRate=1;worldVrsCounters={};
     gpuTiming.reset();pipelineStats.reset();benchmarkPath.clear();benchmarkControl=BenchmarkControl{};
     benchmarkSnapshot={};timingTrigger.clear();timingArmed=false;

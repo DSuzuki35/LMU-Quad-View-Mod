@@ -4,14 +4,17 @@ param(
     [switch]$ScenePixelStats,
     [switch]$CaptureViews,
     [switch]$GpuTiming,
+    [switch]$RenderProfiling,
+    [switch]$DisableDiagnostics,
+    [ValidateRange(30,300)][int]$RenderProfileSeconds=120,
     [switch]$DebugFocus,
     [switch]$Benchmark,
     [switch]$EnableOuterVrs,
     [switch]$NativeOuterResolution,
     [switch]$UseRuntimeSettings,
-    [ValidateSet('Native','QVFR')][string]$Backend='Native',
+    [ValidateSet('Native','QVFR','VectorXR')][string]$Backend='Native',
     [ValidateSet('auto','fixed')][string]$FoveationMode='auto',
-    [string]$QuadViewsManifest,
+    [Alias('VectorXrManifest')][string]$QuadViewsManifest,
     [ValidateSet(1,2,4)][int]$OuterShadingRate=2,
     [ValidateRange(1,400)][double]$OuterPixelsPercent=100,
     [ValidateRange(25,400)][double]$FocusPixelsPercent=100,
@@ -21,16 +24,18 @@ param(
     [string]$GameDirectory = 'D:\SteamLibrary\steamapps\common\Le Mans Ultimate'
 )
 $ErrorActionPreference = 'Stop'
+if($DisableDiagnostics){$RenderProfiling=$false;$GpuTiming=$false;$Benchmark=$false;$CaptureViews=$false;$PixelStats=$false;$ScenePixelStats=$false}
 . (Join-Path $PSScriptRoot 'portable-launch.ps1')
-if ($Backend -eq 'QVFR' -and ($Mode -ne 'quad' -or !$UseRuntimeSettings)) { throw 'QVFR requires quad mode with runtime-controlled settings.' }
+if ($Backend -ne 'Native' -and ($Mode -ne 'quad' -or !$UseRuntimeSettings)) { throw "$Backend requires quad mode with runtime-controlled settings." }
 if ($UseRuntimeSettings) {
     if ($Mode -ne 'quad') { throw 'Runtime-controlled settings require quad mode' }
     foreach ($name in @('OuterPixelsPercent','FocusPixelsPercent','FocusBoxPercent','FocusWidthPercent','FocusHeightPercent')) {
         if ($PSBoundParameters.ContainsKey($name)) { throw "UseRuntimeSettings takes resolution and FOV from OpenXR; remove -$name" }
     }
 }
-if ($Mode -eq 'stereo-timing') { $GpuTiming = $true }
+if ($Mode -eq 'stereo-timing' -and !$DisableDiagnostics) { $GpuTiming = $true }
 if ($GpuTiming -and $Mode -eq 'trace') { throw 'Use stereo-timing for native stereo GPU measurements; trace has no engine hooks' }
+if($RenderProfiling -and ($Mode -ne 'quad' -or $GpuTiming -or $Benchmark)){throw 'RenderProfiling requires quad mode without legacy GPU timing or Benchmark.'}
 if ($DebugFocus -and $Mode -ne 'quad') { throw 'Focus debug border requires quad mode' }
 if (($Benchmark -or $EnableOuterVrs) -and $Mode -ne 'quad') { throw 'Outer VRS experiments and A/B benchmarking require quad mode' }
 if ($NativeOuterResolution -and ($Mode -ne 'quad' -or $EnableOuterVrs)) { throw 'Initial native outer resolution experiment requires quad mode with VRS disabled' }
@@ -49,7 +54,7 @@ if (Get-Process -Name 'Le Mans Ultimate' -ErrorAction SilentlyContinue) {
     throw 'LMU is already running. Close it before starting this diagnostic instance.'
 }
 $manifestRoot = $PSScriptRoot
-$logDirectory = Join-Path $PSScriptRoot 'logs'
+$logDirectory = Join-Path $PSScriptRoot $(if($DisableDiagnostics){'runtime'}else{'logs'})
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 $stamp = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,6)
 $layerPlan=New-LmuLayerPlan -Backend $Backend -ManifestRoot $manifestRoot -QuadViewsManifest $QuadViewsManifest -RunDirectory (Join-Path $logDirectory "layers-$stamp")
@@ -79,10 +84,15 @@ $info.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Normal
 $info.Environment['XR_API_LAYER_PATH'] = $layerPlan.Paths
 $info.Environment['XR_ENABLE_API_LAYERS'] = $layerPlan.Layers
 if ($layerPlan.DisableVariable) { $info.Environment[$layerPlan.DisableVariable]='1' }
+foreach($variable in $layerPlan.DisableVariables){$info.Environment[$variable]='1'}
 $info.Environment['LMU_QV_FOVEATION_MODE'] = $FoveationMode
 $info.Environment['LMU_QV_MODE'] = $Mode
+$info.Environment['LMU_QV_VECTORXR_DIRECT_INPUTS'] = $(if ($Backend -eq 'VectorXR' -and $Mode -eq 'quad') { '1' } else { '0' })
+$info.Environment['LMU_QV_PROFILE'] = $(if ($RenderProfiling) { '1' } else { '0' })
+$info.Environment['LMU_QV_DIAGNOSTICS'] = $(if ($DisableDiagnostics) { '0' } else { '1' })
+$info.Environment['LMU_QV_PROFILE_SECONDS'] = $RenderProfileSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
 $info.Environment['LMU_QV_USE_RUNTIME_SETTINGS'] = $(if ($UseRuntimeSettings) { '1' } else { '0' })
-$info.Environment['LMU_QV_LOG'] = $logPath
+$info.Environment['LMU_QV_LOG'] = $(if($DisableDiagnostics){''}else{$logPath})
 $info.Environment['LMU_QV_PIXEL_STATS'] = $(if ($ScenePixelStats -or $CaptureViews) { 'scene' } elseif ($PixelStats) { '1' } else { '0' })
 $info.Environment['LMU_QV_CAPTURE_DIR'] = $(if ($CaptureViews) { $captureDirectory } else { '' })
 $info.Environment['LMU_QV_CAPTURE_TRIGGER'] = $(if ($CaptureViews) { $captureTrigger } else { '' })
@@ -105,11 +115,13 @@ $run = [pscustomobject]@{
     LayerSHA256=(Get-FileHash -LiteralPath (Join-Path $PSScriptRoot 'build/lmu_quadview.dll') -Algorithm SHA256).Hash
     CaptureDirectory=$captureDirectory;CaptureTrigger=$captureTrigger
     GpuTiming=[bool]$GpuTiming;TimingTrigger=$timingTrigger
+    RenderProfiling=[bool]$RenderProfiling;RenderProfileSeconds=$RenderProfileSeconds
     DebugFocus=[bool]$DebugFocus
     Benchmark=[bool]$Benchmark;BenchmarkControl=$benchmarkControl;EnableOuterVrs=[bool]$EnableOuterVrs
     NativeOuterResolution=[bool]$NativeOuterResolution
     UseRuntimeSettings=[bool]$UseRuntimeSettings
-    Backend=$Backend;FoveationMode=$FoveationMode;ProviderManifest=$layerPlan.ProviderManifest;ExplicitManifest=$layerPlan.ExplicitManifest
+    Backend=$Backend;FoveationMode=$FoveationMode;ProviderManifest=$layerPlan.ProviderManifest;ProviderName=$layerPlan.ProviderName;ExplicitManifest=$layerPlan.ExplicitManifest
+    DisabledImplicitSwitches=$layerPlan.DisableVariables
     EnabledLayers=$layerPlan.Layers
     OuterShadingRate=$OuterShadingRate
     OuterPixelsPercent=$OuterPixelsPercent;FocusPixelsPercent=$FocusPixelsPercent
@@ -117,5 +129,5 @@ $run = [pscustomobject]@{
     FocusWidthPercent=$FocusWidthPercent;FocusHeightPercent=$FocusHeightPercent
     StartedUTC=[DateTime]::UtcNow.ToString('o')
 }
-$run | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $logDirectory "$Mode-$stamp-run.json") -Encoding utf8
+if(!$DisableDiagnostics){$run | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $logDirectory "$Mode-$stamp-run.json") -Encoding utf8}
 $run | ConvertTo-Json

@@ -1,7 +1,11 @@
 // Fake runtime tests: no loader, headset, GPU or game attachment.
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include "xr_layer.hpp"
 #include "xr_capture.hpp"
 #include "xr_sizes.hpp"
+#include "render_profile.hpp"
+#include <thread>
 #include <cmath>
 #include <cassert>
 #include <cstring>
@@ -18,7 +22,7 @@ unsigned engine_game_eye(XrSwapchain chain){
     return 2;
 }
 bool engine_start() { assert(false && "Test executable must never hook engine"); return false; }
-void engine_stop() {}
+void engine_stop() {renderProfile.shutdown();}
 ID3D11RenderTargetView* xr_outer_rtv(unsigned eye);
 }
 namespace {
@@ -38,6 +42,9 @@ bool captureRequested=false,captureMissing=false,captureInvalid=false;
 bool movingFocusTest=false;
 bool outerBlurRequested=false;
 bool typedSrgbRuntime=false;
+bool sampledInputsRequested=false,rejectSampledInputs=false;
+bool profileOnCloseRequested=false,profileCloseOtherThread=false,profileMenuFrames=false;
+unsigned sampledAttempts=0,sampledAccepted=0;
 double focusBoxPercent=100;
 double focusHeightPercent=100;
 bool asymmetricFocusRequested=false;
@@ -170,6 +177,11 @@ XrResult XRAPI_CALL waitFrame(XrSession,const XrFrameWaitInfo*,XrFrameState* out
 }
 XrResult XRAPI_CALL beginFrame(XrSession,const XrFrameBeginInfo*) { frameCalls+='B';return XR_SUCCESS; }
 XrResult XRAPI_CALL createSwapchain(XrSession,const XrSwapchainCreateInfo* in,XrSwapchain* out) {
+    if(in->usageFlags&XR_SWAPCHAIN_USAGE_SAMPLED_BIT){
+        ++sampledAttempts;
+        if(rejectSampledInputs)return XR_ERROR_FEATURE_UNSUPPORTED;
+        ++sampledAccepted;
+    }
     // Both private outer chains must match actual app dimensions, format and sample count.
     bool own=textures.size()==1||textures.size()==2;
     unsigned expected=scaledRequested&&own?(fixtureDimension==32?8:29):fixtureDimension;
@@ -178,6 +190,7 @@ XrResult XRAPI_CALL createSwapchain(XrSession,const XrSwapchainCreateInfo* in,Xr
     assert(overlayTestActive||(in->width==expectedW&&in->height==expectedH&&in->sampleCount==1&&in->format==(srgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_UNORM)));
     D3D11_TEXTURE2D_DESC desc{};desc.Width=in->width;desc.Height=in->height;desc.MipLevels=1;desc.ArraySize=1;
     desc.Format=srgbRuntime?(typedSrgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_TYPELESS):DXGI_FORMAT(in->format);desc.SampleDesc.Count=1;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_RENDER_TARGET|((scaledRequested||runtimeSettings)?D3D11_BIND_SHADER_RESOURCE:0);
+    if(in->usageFlags&XR_SWAPCHAIN_USAGE_SAMPLED_BIT)desc.BindFlags|=D3D11_BIND_SHADER_RESOURCE;
     ID3D11Texture2D* texture=nullptr;assert(SUCCEEDED(device->CreateTexture2D(&desc,nullptr,&texture)));
     *out=reinterpret_cast<XrSwapchain>(textures.size()+10);textures.push_back(texture);swapchains.push_back(*out);ownership.emplace_back();return XR_SUCCESS;
 }
@@ -395,11 +408,19 @@ XrResult XRAPI_CALL create(const XrInstanceCreateInfo* info, const XrApiLayerCre
 }
 }
 int main(int argc,char** argv) {
+    bool diagnosticsOff=false;for(int arg=1;arg<argc;++arg)diagnosticsOff|=!std::strcmp(argv[arg],"--diagnostics-off");
+    if(diagnosticsOff)SetEnvironmentVariableA("LMU_QV_DIAGNOSTICS","0");
     outputSizeTests();
     captureBmpTests();
     const auto logPath=testBuildRoot()/L"xr-layer-test-trace.log";
     DeleteFileW(logPath.c_str());SetEnvironmentVariableW(L"LMU_QV_LOG",logPath.c_str());
+    if(diagnosticsOff){lmuqv::log_line("must not create a log");lmuqv::flush_log();assert(GetFileAttributesW(logPath.c_str())==INVALID_FILE_ATTRIBUTES);}
     for(int arg=1;arg<argc;++arg){
+        profileOnCloseRequested|=!std::strcmp(argv[arg],"--profile-on-close");
+        profileMenuFrames|=!std::strcmp(argv[arg],"--profile-menu-frames");
+        profileCloseOtherThread|=!std::strcmp(argv[arg],"--profile-close-other-thread");
+        sampledInputsRequested|=!std::strcmp(argv[arg],"--sampled-inputs");
+        rejectSampledInputs|=!std::strcmp(argv[arg],"--reject-sampled-inputs");
         outerBlurRequested|=!std::strcmp(argv[arg],"--outer-blur");
         typedSrgbRuntime|=!std::strcmp(argv[arg],"--typed-srgb-runtime");
         fixedFoveation|=!std::strcmp(argv[arg],"--fixed-foveation");
@@ -431,6 +452,7 @@ int main(int argc,char** argv) {
         SetEnvironmentVariableW(L"LMU_QV_CAPTURE_DIR",captureDirectory.c_str());SetEnvironmentVariableW(L"LMU_QV_CAPTURE_TRIGGER",captureTrigger.c_str());
     }else{SetEnvironmentVariableW(L"LMU_QV_CAPTURE_DIR",nullptr);SetEnvironmentVariableW(L"LMU_QV_CAPTURE_TRIGGER",nullptr);}
     SetEnvironmentVariableA("LMU_QV_PIXEL_STATS",sceneStatsRequested?"scene":statsRequested?"1":nullptr);
+    if(diagnosticsOff){SetEnvironmentVariableA("LMU_QV_PIXEL_STATS","scene");SetEnvironmentVariableA("LMU_QV_PROFILE","1");}
     SetEnvironmentVariableA("LMU_QV_DEBUG_FOCUS",nullptr);
     SetEnvironmentVariableA("LMU_QV_MODE", "quad");
     SetEnvironmentVariableA("LMU_QV_FOVEATION_MODE",fixedFoveation?"fixed":nullptr);
@@ -446,6 +468,8 @@ int main(int argc,char** argv) {
     SetEnvironmentVariableA("LMU_QV_FOCUS_HEIGHT_PERCENT",asymmetricFocusRequested?"150":nullptr);
     runtimeSettings|=runtimeEqual||runtimeAxisEqual||runtimeTooWide||runtimeTooTall||overlayTestRequested;
     SetEnvironmentVariableA("LMU_QV_USE_RUNTIME_SETTINGS",runtimeSettings?"1":nullptr);
+    sampledInputsRequested|=rejectSampledInputs;
+    SetEnvironmentVariableA("LMU_QV_VECTORXR_DIRECT_INPUTS",sampledInputsRequested?"1":nullptr);
     if(runtimeSettings){
         // Stale legacy controls must not override the runtime's exact FOV or sizes.
         SetEnvironmentVariableA("LMU_QV_FOCUS_BOX_PERCENT","200");
@@ -544,6 +568,15 @@ int main(int argc,char** argv) {
     // Same-size auxiliary buffers must not consume the native eye identities.
     // Covered independently below by the overlay regression sequence.
     assert(createEye(0,&ci,&left)==XR_SUCCESS);assert(createEye(1,&ci,&right)==XR_SUCCESS);
+    assert(ci.usageFlags==XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT);
+    if(sampledInputsRequested){
+        assert(sampledAttempts==4&&sampledAccepted==(rejectSampledInputs?0u:4u));
+        if(!rejectSampledInputs)for(auto* texture:textures){
+            D3D11_TEXTURE2D_DESC desc{};texture->GetDesc(&desc);assert(desc.BindFlags&D3D11_BIND_SHADER_RESOURCE);
+            D3D11_SHADER_RESOURCE_VIEW_DESC view{};view.Format=DXGI_FORMAT(ci.format);view.ViewDimension=D3D11_SRV_DIMENSION_TEXTURE2D;view.Texture2D.MipLevels=1;
+            ID3D11ShaderResourceView* srv=nullptr;assert(SUCCEEDED(device->CreateShaderResourceView(texture,&view,&srv)));srv->Release();
+        }
+    }else assert(sampledAttempts==0);
     for(auto appChain:{left,right}){
         XrSwapchainImageD3D11KHR image{};image.type=XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR;
         assert(reinterpret_cast<PFN_xrEnumerateSwapchainImages>(load("xrEnumerateSwapchainImages"))(appChain,1,&count,reinterpret_cast<XrSwapchainImageBaseHeader*>(&image))==XR_SUCCESS&&count==1);
@@ -758,11 +791,11 @@ int main(int argc,char** argv) {
     }
     if(runtimeSettings){
         for(unsigned eye=0;eye<2;++eye){
-            D3D11_TEXTURE2D_DESC small{};source->GetDesc(&small);
-            small.Width=runtimeOuterWidth(eye);small.Height=runtimeOuterHeight(eye);small.BindFlags=outerBlurRequested?D3D11_BIND_SHADER_RESOURCE:0;
-            std::vector<uint32_t> pixels(small.Width*small.Height,0x7f0a2040u);
-            D3D11_SUBRESOURCE_DATA initial{pixels.data(),small.Width*4,0};ID3D11Texture2D* native=nullptr;
-            assert(SUCCEEDED(device->CreateTexture2D(&small,&initial,&native)));
+            D3D11_TEXTURE2D_DESC nativeDesc{};source->GetDesc(&nativeDesc);
+            nativeDesc.Width=runtimeOuterWidth(eye);nativeDesc.Height=runtimeOuterHeight(eye);nativeDesc.BindFlags=outerBlurRequested?D3D11_BIND_SHADER_RESOURCE:0;
+            std::vector<uint32_t> pixels(nativeDesc.Width*nativeDesc.Height,0x7f0a2040u);
+            D3D11_SUBRESOURCE_DATA initial{pixels.data(),nativeDesc.Width*4,0};ID3D11Texture2D* native=nullptr;
+            assert(SUCCEEDED(device->CreateTexture2D(&nativeDesc,&initial,&native)));
             begin();assert(lmuqv::xr_copy_outer(eye,native));assertCopiedPixels(textures[eye+1]);finish();native->Release();
         }
         // Arbitrary color chain sizes may belong to an OSD. Projection ownership
@@ -794,18 +827,45 @@ int main(int argc,char** argv) {
         // A genuinely small native scene already matches the private outer
         // swapchain: accept it and copy exactly, without requiring a full-size
         // intermediate or a shader-resource bind flag for resampling.
-        D3D11_TEXTURE2D_DESC small{};source->GetDesc(&small);
-        small.Width=small.Height=8;small.BindFlags=0;
+        D3D11_TEXTURE2D_DESC nativeDesc{};source->GetDesc(&nativeDesc);
+        nativeDesc.Width=nativeDesc.Height=8;nativeDesc.BindFlags=0;
         std::array<uint32_t,64> pixels{};pixels.fill(0x7f0a2040u);
         D3D11_SUBRESOURCE_DATA initial{pixels.data(),8*4,0};
         ID3D11Texture2D* nativeSmall=nullptr;
-        assert(SUCCEEDED(device->CreateTexture2D(&small,&initial,&nativeSmall)));
+        assert(SUCCEEDED(device->CreateTexture2D(&nativeDesc,&initial,&nativeSmall)));
         begin();assert(lmuqv::xr_copy_outer(0,nativeSmall)&&lmuqv::xr_copy_outer(1,nativeSmall));
         assertCopiedPixels(textures[1]);assertCopiedPixels(textures[2]);finish();
         assert(submittedViews==4);nativeSmall->Release();
     }
-    assert(reinterpret_cast<PFN_xrDestroySession>(load("xrDestroySession"))(session)==XR_SUCCESS);
+    profileOnCloseRequested|=profileCloseOtherThread;
+    const auto beforeCloseLog=currentLog().size();
+    if(profileMenuFrames){
+        lmuqv::renderProfile.configure(true,lmuqv::log_line,120,lmuqv::flush_log);
+        for(unsigned i=0;i<4;++i){begin();lmuqv::renderProfile.frame(nullptr,i==0);finish();}
+        for(unsigned i=0;i<64;++i){begin();finish();}
+    }
+    if(profileOnCloseRequested){
+        lmuqv::renderProfile.configure(true,lmuqv::log_line,120,lmuqv::flush_log);
+        lmuqv::renderProfile.frame(nullptr,true);
+        auto completed=lmuqv::renderProfile.begin(lmuqv::ProfileSlot::outer0);lmuqv::renderProfile.end(completed);
+    }
+    auto closeSession=[&]{assert(reinterpret_cast<PFN_xrDestroySession>(load("xrDestroySession"))(session)==XR_SUCCESS);};
+    if(profileCloseOtherThread){std::thread closer(closeSession);closer.join();}else closeSession();
+    if(profileMenuFrames){
+        const auto saved=currentLog().substr(beforeCloseLog);
+        assert(saved.find("frames=4 xr_frames=68 non_scene_frames=64;")!=std::string::npos);
+        assert(saved.find("cpu slot=provider_submit samples=4 calls=4")!=std::string::npos);
+        assert(saved.find("cpu slot=non_scene_provider_submit samples=64 calls=64")!=std::string::npos);
+        std::cout<<"XR frame integration: four scene frames and 64 menu frames remain separate in saved log\n";
+    }
+    if(profileOnCloseRequested){
+        const auto saved=currentLog().substr(beforeCloseLog);
+        assert(saved.find("reason=session_end")!=std::string::npos&&saved.find("cpu slot=outer0 samples=1")!=std::string::npos&&saved.find("render_profile complete")!=std::string::npos);
+        if(profileCloseOtherThread)assert(saved.find("partial saved on teardown thread")!=std::string::npos);
+        std::cout<<"Active capture saved and flushed to real log on "<<(profileCloseOtherThread?"another thread":"render thread")<<" session close\n";
+    }
     assert(!lmuqv::xr_quad_active());
+    if(diagnosticsOff)assert(GetFileAttributesW(logPath.c_str())==INVALID_FILE_ATTRIBUTES);
     for(auto* texture:textures)texture->Release();
     source->Release();wrongSize->Release();black->Release();
     device->Release();
@@ -957,9 +1017,11 @@ int main(int argc,char** argv) {
     assert(frameCalls=="WBLE");
     std::ifstream traceLog(logPath);
     std::string logText{std::istreambuf_iterator<char>(traceLog),std::istreambuf_iterator<char>()};
-    assert(logText.find("xrBeginFrame mode=trace frame=1")!=std::string::npos);
-    assert(logText.find("xrLocateViews mode=trace frame=1")!=std::string::npos);
-    assert(logText.find("xrEndFrame mode=trace frame=1")!=std::string::npos);
+    if(!diagnosticsOff){
+        assert(logText.find("xrBeginFrame mode=trace frame=1")!=std::string::npos);
+        assert(logText.find("xrLocateViews mode=trace frame=1")!=std::string::npos);
+        assert(logText.find("xrEndFrame mode=trace frame=1")!=std::string::npos);
+    }else assert(logText.empty()&&GetFileAttributesW(logPath.c_str())==INVALID_FILE_ATTRIBUTES);
     assert(reinterpret_cast<PFN_xrDestroyInstance>(load("xrDestroyInstance"))(instance)==XR_SUCCESS);
     // Switching modes after destruction must not retain a previous instance's request.
     traceRuntime=false;SetEnvironmentVariableA("LMU_QV_MODE","quad");

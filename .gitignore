@@ -15,3 +15,23 @@ launcher-settings.xml
 .vs/
 .vscode/
 __pycache__/
+
+# Local captures, profiles and private development files
+/analysis/
+**/runtime/
+*.log
+/*-run.json
+/*.csv
+/*.XRFTBinLog
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12
+*.user
+*.suo
+.aws/
+.ssh/
+.codex/
+.agents/

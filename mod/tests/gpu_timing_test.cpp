@@ -154,9 +154,28 @@ void warp_smoke(){
     assert(timer.faulted()&&!timer.enabled());timer.reset();secondContext->Release();secondDevice->Release();
     context->Release();device->Release();
 }
+void timed_partial_finish(){
+    FakeDevice device;FakeContext context{&device};Timer timer(true);
+    sample(timer,context,0,2);sample(timer,context,0,8);
+    device.pending=true;assert(timer.start(&context,0));++context.ticks;assert(timer.stop(&context));
+    const auto reads=device.reads;
+    const auto saved=timer.snapshot(0);
+    assert(saved.samples==2&&saved.mean_ms==5&&saved.p99_ms==8&&saved.pending==1&&device.reads==reads);
+    timer.finish();
+    const auto s=timer.stats(0);
+    assert(timer.done()&&s.done&&s.samples==2&&s.mean_ms==5&&s.p95_ms==8&&s.p99_ms==8&&s.dropped==1);
+    assert(device.reads==reads&&device.live==0&&context.refs==1&&device.refs==1); // no draining/waiting
+    timer.finish();timer.reset();timer.configure(true);timer.finish();
+    assert(timer.done()&&timer.stats(0).samples==0&&device.live==0);
+    lmuqv::BasicGpuTiming<FakeBackend,2> shortTimer(true);
+    device.pending=false;
+    for(unsigned i=0;i<2;++i){assert(shortTimer.start(&context,0));++context.ticks;assert(shortTimer.stop(&context));shortTimer.poll(&context);}
+    assert(shortTimer.stats(0).done&&shortTimer.stats(0).samples==2&&shortTimer.stats(0).mean_ms==1);
+    shortTimer.finish();assert(device.live==0);
+}
 }
 int main(){
     disabled_and_mask();distribution_and_completion();stereo_only();pending_ring_and_partial_reset();
-    overlap_and_invalid_context();device_change();timestamp_readiness_and_errors();failures_and_limits();warp_smoke();
+    overlap_and_invalid_context();device_change();timestamp_readiness_and_errors();failures_and_limits();warp_smoke();timed_partial_finish();
     std::cout<<"gpu_timing tests passed: disabled, masks, distribution, ring, lifetime, overlap, device change, readiness/errors, limits, native WARP\n";
 }

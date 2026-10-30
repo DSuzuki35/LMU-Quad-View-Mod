@@ -14,7 +14,11 @@ namespace LmuQuadViewLauncher
         public string Backend { get; set; }
         public string FoveationMode { get; set; }
         public string QuadViewsManifest { get; set; }
+        public string VectorXrManifest { get; set; }
         public bool DebugFocus { get; set; }
+        public bool RenderProfiling { get; set; }
+        public bool DiagnosticsEnabled { get; set; }
+        public int RenderProfileSeconds { get; set; }
         public bool NativeOuterResolution { get; set; }
         public decimal OuterBlur { get; set; }
         public decimal OuterPercent { get; set; }
@@ -26,8 +30,10 @@ namespace LmuQuadViewLauncher
         public LauncherSettings()
         {
             GameDirectory = @"D:\SteamLibrary\steamapps\common\Le Mans Ultimate";
-            Backend = "Native"; FoveationMode = "auto"; QuadViewsManifest = "";
+            Backend = "Native"; FoveationMode = "auto"; QuadViewsManifest = ""; VectorXrManifest = "";
             NativeOuterResolution = true; OuterPercent = 25; InnerPercent = 100;
+            RenderProfileSeconds=120;
+            DiagnosticsEnabled=true;
             FocusWidthPercent = FocusHeightPercent = 50;
         }
     }
@@ -38,9 +44,10 @@ namespace LmuQuadViewLauncher
         public static void Validate(LauncherSettings s)
         {
             if (s == null) throw new ArgumentNullException("settings");
+            if(s.RenderProfileSeconds<30||s.RenderProfileSeconds>300)throw new ArgumentException("Capture length must be between 30 and 300 seconds.");
             if(s.FocusAspectRatio!=0&&(s.FocusAspectRatio<0.1m||s.FocusAspectRatio>10m)) throw new ArgumentException("Invalid measured focus aspect ratio.");
             if (String.IsNullOrWhiteSpace(s.GameDirectory)) throw new ArgumentException("Select the LMU game folder.");
-            if (s.Backend != "Native" && s.Backend != "QVFR") throw new ArgumentException("Choose Native or QVFR.");
+            if (s.Backend != "Native" && s.Backend != "QVFR" && s.Backend != "VectorXR") throw new ArgumentException("Choose Native, QVFR or VectorXR.");
             if (s.FoveationMode != "auto" && s.FoveationMode != "fixed") throw new ArgumentException("Choose Auto or Fixed foveation.");
             if (s.OuterBlur < 0 || s.OuterBlur > 3) throw new ArgumentException("Outer smoothing must be between 0 and 3 pixels.");
             if (s.OuterPercent < 10 || s.OuterPercent > 400 || s.InnerPercent < 25 || s.InnerPercent > 400 ||
@@ -61,7 +68,11 @@ namespace LmuQuadViewLauncher
             s.GameDirectory = Value(x, "GameDirectory", s.GameDirectory);
             s.Backend = Value(x, "Backend", s.Backend); s.FoveationMode = Value(x, "FoveationMode", s.FoveationMode);
             s.QuadViewsManifest = Value(x, "QuadViewsManifest", "");
+            s.VectorXrManifest = Value(x, "VectorXrManifest", "");
             s.DebugFocus = Boolean.Parse(Value(x, "DebugFocus", "false"));
+            s.RenderProfiling = Boolean.Parse(Value(x, "RenderProfiling", "false"));
+            s.DiagnosticsEnabled=Boolean.Parse(Value(x,"DiagnosticsEnabled","true"));
+            s.RenderProfileSeconds=Int32.Parse(Value(x,"RenderProfileSeconds","120"),CultureInfo.InvariantCulture);
             s.NativeOuterResolution = Boolean.Parse(Value(x, "NativeOuterResolution", "true"));
             s.OuterBlur = Decimal.Parse(Value(x, "OuterBlur", "0"), CultureInfo.InvariantCulture);
             s.OuterPercent = Decimal.Parse(Value(x, "OuterPercent", "25"), CultureInfo.InvariantCulture);
@@ -76,7 +87,10 @@ namespace LmuQuadViewLauncher
             Validate(s);
             var xml = new XElement("QuadView", new XElement("GameDirectory", s.GameDirectory),
                 new XElement("Backend", s.Backend), new XElement("FoveationMode", s.FoveationMode),
-                new XElement("QuadViewsManifest", s.QuadViewsManifest ?? ""), new XElement("DebugFocus", s.DebugFocus),
+                new XElement("QuadViewsManifest", s.QuadViewsManifest ?? ""), new XElement("VectorXrManifest", s.VectorXrManifest ?? ""), new XElement("DebugFocus", s.DebugFocus),
+                new XElement("RenderProfiling", s.RenderProfiling),
+                new XElement("DiagnosticsEnabled",s.DiagnosticsEnabled),
+                new XElement("RenderProfileSeconds",s.RenderProfileSeconds),
                 new XElement("NativeOuterResolution", s.NativeOuterResolution), new XElement("UseRuntimeSettings", true),
                 new XElement("OuterBlur", s.OuterBlur),
                 new XElement("OuterPercent", s.OuterPercent), new XElement("InnerPercent", s.InnerPercent),

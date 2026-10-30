@@ -2,7 +2,7 @@
 
 Experimental Windows x64 / D3D11 renderer integration for Le Mans Ultimate.
 It renders two outer and two focus views, with native OpenXR quad runtimes or
-mbucchia's separately installed Quad-Views-Foveated stereo compositor.
+mbucchia's separately installed Quad-Views-Foveated or VectorXR stereo compositor.
 
 ## Run
 
@@ -30,6 +30,35 @@ Read [README.txt](README.txt) and [portable backend instructions](PORTABLE-QVFR.
 The Setup page links to the upstream QVFR installation instructions. QVFR is not
 bundled. OpenXR Toolkit is not required. Crop work remains paused.
 
+### VectorXR
+
+Install VectorXR separately, enable its Quadviews profile for LMU, and select
+**VectorXR** in Rendering. Setup can locate its manifest automatically or accept
+an explicit JSON path. Configure resolution, focus size and tracking in VectorXR;
+the launcher's QVFR sizing controls are inactive for this backend. Native and QVFR
+remain available, and the default provider is unchanged.
+
+The launcher prepares a process-local explicit provider manifest and disables
+duplicate or conflicting QVFR/Toolkit layers for the launched game. It preserves
+the installed manifests, registry settings and active runtime. Eligible VectorXR
+color swapchains request sampled usage to allow direct compositor inputs, with
+fallback to original usage if unsupported. See [VectorXR setup](PORTABLE-VECTORXR.txt).
+
+### Diagnostics and render profiling
+
+Setup's **Enable diagnostics and logging** switch disables mod logs, per-run
+metadata and diagnostic collection together on the next launch. The preference
+is saved and defaults to enabled to retain existing logging behavior. VectorXR
+and runtime diagnostics remain separately controlled in their own applications.
+
+When diagnostics is enabled, tick **Enable render profiling**, choose 30-300
+seconds (120 default), and press **Ctrl+Alt+F9** while driving. Captures include
+CPU scope statistics and sparse asynchronous GPU pass timings. Samples close at
+XR frame boundaries, with menu work reported separately. Normal session shutdown
+saves a partial capture and flushes the log; checkpoints retain partial means if
+normal teardown does not occur. Forced termination cannot guarantee final results.
+See [profiling instructions and limitations](RENDER-PROFILING.txt).
+
 ## Implementation and limits
 
 The adapter exposes stereo to LMU and submits four rendered views to the provider.
@@ -54,8 +83,10 @@ need measurement. Logs/settings can contain personal paths and are not packaged.
 
 ## Development
 
-Build with the existing Windows MinGW-w64 toolchain and .NET Framework C# compiler:
-`./mod/build.ps1`, `./mod/build-launcher.ps1`, then `./package.ps1`.
+Build native code with the Windows MinGW-w64 toolchain (`./mod/build.ps1`) or
+Visual Studio Build Tools with the C++ workload (`./mod/build-msvc.cmd`). Both
+scripts run native tests before building the DLL. Build the .NET Framework C#
+launcher with `./mod/build-launcher.ps1`, then run `./package.ps1`.
 These are developer build scripts; the distributed app does not invoke them.
 Graphics tests use D3D11 WARP; native/fake-runtime tests do not replace headset QA.
 

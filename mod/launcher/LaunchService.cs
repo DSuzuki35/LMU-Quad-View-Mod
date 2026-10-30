@@ -13,13 +13,18 @@ namespace LmuQuadViewLauncher {
     public static class LaunchService {
         public const string SupportedExecutableHash="66942337813B301B87D12EDFA330F33354A2A4B8CD9B048885CBF77EB6F940CF";
         const string ProviderName="XR_APILAYER_MBUCCHIA_quad_views_foveated";
+        internal const string VectorXrProviderName="XR_APILAYER_DIENERTECH_VECTORXR";
         const string AdapterName="XR_APILAYER_LMU_quadview";
         internal sealed class ProviderManifest {
-            public string Path,Library,DisableVariable;
+            public string Path,Library,DisableVariable,Name;
             public Dictionary<string,object> Document;
         }
         internal sealed class LayerPlan {
-            public string Paths,Layers,DisableVariable,ProviderPath,ExplicitManifest,Library;
+            public string Paths,Layers,DisableVariable,ProviderPath,ExplicitManifest,Library,ProviderName;
+            public readonly List<string> DisableVariables=new List<string> {
+                "DISABLE_XR_APILAYER_MBUCCHIA_quad_views_foveated", "DISABLE_QUAD_VIEWS_FOVEATED",
+                "DISABLE_XR_APILAYER_DIENERTECH_VECTORXR"
+            };
         }
         static string Value(Dictionary<string,object> dictionary,string key) {
             object value;return dictionary.TryGetValue(key,out value)?value as string:null;
@@ -31,40 +36,92 @@ namespace LmuQuadViewLauncher {
         static Dictionary<string,object> Layer(Dictionary<string,object> document) {
             object raw;return document!=null&&document.TryGetValue("api_layer",out raw)?raw as Dictionary<string,object>:null;
         }
-        internal static ProviderManifest ReadProviderManifest(string path,bool requireLibrary=true) {
+        static string NameForBackend(string backend) {
+            if(backend=="QVFR")return ProviderName;
+            if(backend=="VectorXR")return VectorXrProviderName;
+            throw new ArgumentException("A software quad-view provider must be QVFR or VectorXR.");
+        }
+        static bool ValidDisable(string name,string value) {
+            string marker=name==VectorXrProviderName?"vectorxr":name==ProviderName?"quad":"toolkit";
+            return !String.IsNullOrEmpty(value)&&Regex.IsMatch(value,"^[A-Za-z_][A-Za-z0-9_]*$")&&
+                value.IndexOf("disable",StringComparison.OrdinalIgnoreCase)>=0&&value.IndexOf(marker,StringComparison.OrdinalIgnoreCase)>=0;
+        }
+        internal static ProviderManifest ReadProviderManifest(string path,bool requireLibrary=true,string backend="QVFR") {
             path=System.IO.Path.GetFullPath(path);
             var document=ReadJson(path);var layer=Layer(document);
-            if(layer==null||Value(layer,"name")!=ProviderName) throw new InvalidDataException("Select the Quad-Views-Foveated JSON manifest.");
+            var expectedName=NameForBackend(backend);
+            if(layer==null||Value(layer,"name")!=expectedName) throw new InvalidDataException("Select the "+backend+" JSON manifest ("+expectedName+").");
             var disable=Value(layer,"disable_environment");
-            if(String.IsNullOrEmpty(disable)||!Regex.IsMatch(disable,"^[A-Za-z_][A-Za-z0-9_]*$")||disable.IndexOf("quad",StringComparison.OrdinalIgnoreCase)<0)
-                throw new InvalidDataException("QVFR manifest has no recognizable disable_environment switch; safe layer ordering is unavailable.");
+            if(!ValidDisable(expectedName,disable))
+                throw new InvalidDataException(backend+" manifest has no recognizable disable_environment switch; safe layer ordering is unavailable.");
             var library=Value(layer,"library_path");
-            if(String.IsNullOrWhiteSpace(library)) throw new InvalidDataException("QVFR manifest has no library_path.");
+            if(String.IsNullOrWhiteSpace(library)) throw new InvalidDataException(backend+" manifest has no library_path.");
             if(!System.IO.Path.IsPathRooted(library)) library=System.IO.Path.Combine(System.IO.Path.GetDirectoryName(path),library);
             library=System.IO.Path.GetFullPath(library);
-            if(requireLibrary&&!File.Exists(library)) throw new FileNotFoundException("QVFR library was not found. Repair its installation.",library);
-            return new ProviderManifest {Path=path,Library=library,DisableVariable=disable,Document=document};
+            if(requireLibrary&&!File.Exists(library)) throw new FileNotFoundException(backend+" library was not found. Repair its installation.",library);
+            return new ProviderManifest {Path=path,Library=library,DisableVariable=disable,Name=expectedName,Document=document};
         }
-        static string FindProviderManifest() {
+        static List<string> RegisteredManifests(bool onlyEnabled=false) {
             var candidates=new List<string>();
             foreach(var hive in new[]{RegistryHive.LocalMachine,RegistryHive.CurrentUser}) {
                 try {
                     using(var baseKey=RegistryKey.OpenBaseKey(hive,RegistryView.Registry64))
                     using(var key=baseKey.OpenSubKey(@"SOFTWARE\Khronos\OpenXR\1\ApiLayers\Implicit",false)) {
-                        if(key!=null) foreach(var name in key.GetValueNames()) if(name.EndsWith(".json",StringComparison.OrdinalIgnoreCase)) candidates.Add(name);
+                        if(key!=null) foreach(var name in key.GetValueNames()) if(name.EndsWith(".json",StringComparison.OrdinalIgnoreCase)) {
+                            var value=key.GetValue(name);
+                            if(!onlyEnabled||(value is int&&(int)value==0))candidates.Add(name);
+                        }
                     }
                 } catch(System.Security.SecurityException) { } catch(UnauthorizedAccessException) { }
             }
-            foreach(var directory in new[]{"OpenXR-Quad-Views-Foveated","Quad-Views-Foveated"}) {
-                var path=System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),directory);
-                if(Directory.Exists(path)) candidates.AddRange(Directory.GetFiles(path,"*.json"));
-            }
+            return candidates;
+        }
+        static void AddManifestDirectory(List<string> candidates,string path,int depth) {
+            if(!Directory.Exists(path))return;
+            try {
+                candidates.AddRange(Directory.GetFiles(path,"*.json"));
+                if(depth>0)foreach(var child in Directory.GetDirectories(path))AddManifestDirectory(candidates,child,depth-1);
+            } catch(IOException) { } catch(UnauthorizedAccessException) { }
+        }
+        internal static string FindProviderInCandidates(IEnumerable<string> candidates,string backend) {
+            var expectedName=NameForBackend(backend);
             foreach(var path in candidates) {
-                if(!File.Exists(path)) continue;
-                try { var layer=Layer(ReadJson(path));if(layer!=null&&Value(layer,"name")==ProviderName) return path; }
+                if(!File.Exists(path))continue;
+                try { var layer=Layer(ReadJson(path));if(layer!=null&&Value(layer,"name")==expectedName)return path; }
                 catch(InvalidDataException) { } catch(IOException) { } catch(UnauthorizedAccessException) { }
             }
             return null;
+        }
+        static string FindProviderManifest(string backend="QVFR") {
+            var candidates=RegisteredManifests();
+            foreach(var directory in backend=="VectorXR"?new[]{"VectorXR"}:new[]{"OpenXR-Quad-Views-Foveated","Quad-Views-Foveated"}) {
+                var path=System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),directory);
+                AddManifestDirectory(candidates,path,2);
+            }
+            if(backend=="VectorXR") {
+                var local=Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                AddManifestDirectory(candidates,System.IO.Path.Combine(local,@"Programs\VectorXR"),2);
+                AddManifestDirectory(candidates,System.IO.Path.Combine(local,"VectorXR"),1);
+            }
+            return FindProviderInCandidates(candidates,backend);
+        }
+        internal static void AddImplicitDisables(LayerPlan plan,IEnumerable<string> manifests,string backend) {
+            // Explicit copies ignore activation switches; originals remain disabled
+            // only in this child. Never rewrite registry values or installed files.
+            if(backend=="VectorXR")plan.DisableVariables.Add("DISABLE_XR_APILAYER_MBUCCHIA_toolkit");
+            foreach(var path in manifests) {
+                if(!File.Exists(path))continue;
+                Dictionary<string,object> layer;
+                try {
+                    layer=Layer(ReadJson(path));
+                } catch(IOException) { continue; } catch(UnauthorizedAccessException) { continue; }
+                if(layer==null)continue;
+                var name=Value(layer,"name");
+                if(name!=ProviderName&&name!=VectorXrProviderName&&!(backend=="VectorXR"&&name=="XR_APILAYER_MBUCCHIA_toolkit"))continue;
+                var disable=Value(layer,"disable_environment");
+                if(!ValidDisable(name,disable))throw new InvalidDataException("Cannot isolate installed layer "+name+": missing recognizable disable switch.");
+                if(!plan.DisableVariables.Contains(disable))plan.DisableVariables.Add(disable);
+            }
         }
         static void CheckSearchPath(string path) {
             if(path.IndexOf(';')>=0) throw new ArgumentException("Package/run paths cannot contain ';', the OpenXR search-path separator.");
@@ -72,8 +129,10 @@ namespace LmuQuadViewLauncher {
         internal static LayerPlan MakeLayerPlan(string root,string backend,ProviderManifest provider,string runDirectory) {
             root=System.IO.Path.GetFullPath(root);CheckSearchPath(root);
             var plan=new LayerPlan {Paths=root,Layers=AdapterName,DisableVariable=provider==null?null:provider.DisableVariable};
+            if(provider!=null&&!plan.DisableVariables.Contains(provider.DisableVariable))plan.DisableVariables.Add(provider.DisableVariable);
             if(backend=="Native") return plan;
-            if(backend!="QVFR"||provider==null) throw new InvalidOperationException("Install Quad-Views-Foveated or select its JSON manifest.");
+            var expectedName=NameForBackend(backend);
+            if(provider==null||provider.Name!=expectedName) throw new InvalidOperationException("Install "+backend+" or select its matching JSON manifest.");
             if(String.IsNullOrWhiteSpace(runDirectory)) throw new ArgumentException("Unique layer run directory is required.");
             runDirectory=System.IO.Path.GetFullPath(runDirectory);CheckSearchPath(runDirectory);
             if(Directory.Exists(runDirectory)||File.Exists(runDirectory)) throw new IOException("Layer run directory already exists; refusing to overwrite it.");
@@ -81,10 +140,10 @@ namespace LmuQuadViewLauncher {
             var layer=Layer(document);layer["library_path"]=provider.Library;
             layer.Remove("disable_environment");layer.Remove("enable_environment");
             Directory.CreateDirectory(runDirectory);
-            plan.ExplicitManifest=System.IO.Path.Combine(runDirectory,ProviderName+".json");
+            plan.ExplicitManifest=System.IO.Path.Combine(runDirectory,expectedName+".json");
             WriteJson(plan.ExplicitManifest,document);
-            plan.Paths=root+";"+runDirectory;plan.Layers=AdapterName+";"+ProviderName;
-            plan.ProviderPath=provider.Path;plan.Library=provider.Library;
+            plan.Paths=root+";"+runDirectory;plan.Layers=AdapterName+";"+expectedName;
+            plan.ProviderPath=provider.Path;plan.Library=provider.Library;plan.ProviderName=expectedName;
             return plan;
         }
         internal static ProcessStartInfo MakeStartInfo(string root,LauncherSettings settings,LayerPlan plan,string log) {
@@ -96,9 +155,15 @@ namespace LmuQuadViewLauncher {
             var environment=info.EnvironmentVariables;
             environment["XR_API_LAYER_PATH"]=plan.Paths;environment["XR_ENABLE_API_LAYERS"]=plan.Layers;
             if(!String.IsNullOrEmpty(plan.DisableVariable)) environment[plan.DisableVariable]="1";
+            foreach(var variable in plan.DisableVariables)environment[variable]="1";
+            if(settings.Backend=="VectorXR")environment["DISABLE_XR_APILAYER_MBUCCHIA_toolkit"]="1";
             environment["LMU_QV_MODE"]="quad";environment["LMU_QV_USE_RUNTIME_SETTINGS"]="1";
-            environment["LMU_QV_FOVEATION_MODE"]=settings.FoveationMode;environment["LMU_QV_LOG"]=log;
+            environment["LMU_QV_FOVEATION_MODE"]=settings.FoveationMode;environment["LMU_QV_LOG"]=settings.DiagnosticsEnabled?log:"";
+            environment["LMU_QV_DIAGNOSTICS"]=settings.DiagnosticsEnabled?"1":"0";
             environment["LMU_QV_DEBUG_FOCUS"]=settings.DebugFocus?"1":"0";
+            environment["LMU_QV_PROFILE"]=settings.DiagnosticsEnabled&&settings.RenderProfiling?"1":"0";
+            environment["LMU_QV_PROFILE_SECONDS"]=settings.RenderProfileSeconds.ToString(CultureInfo.InvariantCulture);
+            environment["LMU_QV_VECTORXR_DIRECT_INPUTS"]=settings.Backend=="VectorXR"?"1":"0";
             environment["LMU_QV_OUTER_BLUR"]=settings.OuterBlur.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_NATIVE_OUTER"]=settings.NativeOuterResolution?"1":"0";
             environment["LMU_QV_PIXEL_STATS"]="0";environment["LMU_QV_VRS_EXCLUSIVE"]="0";environment["LMU_QV_OUTER_SHADING_RATE"]="2";
@@ -130,20 +195,25 @@ namespace LmuQuadViewLauncher {
             var ownLibrary=Value(ownLayer,"library_path");
             if(String.IsNullOrWhiteSpace(ownLibrary)||!String.Equals(System.IO.Path.GetFullPath(System.IO.Path.Combine(root,ownLibrary)),System.IO.Path.Combine(root,@"build\lmu_quadview.dll"),StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("The LMU manifest must reference this package's build/lmu_quadview.dll.");
-            string providerPath=settings.Backend=="QVFR"&&!String.IsNullOrWhiteSpace(settings.QuadViewsManifest)?settings.QuadViewsManifest:FindProviderManifest();
-            ProviderManifest provider=String.IsNullOrWhiteSpace(providerPath)?null:ReadProviderManifest(providerPath,settings.Backend=="QVFR");
-            if(settings.Backend=="QVFR"&&provider==null) throw new FileNotFoundException("Quad-Views-Foveated is not installed. Install it or select its JSON manifest.");
+            var providerBackend=settings.Backend=="Native"?"QVFR":settings.Backend;
+            var custom=settings.Backend=="VectorXR"?settings.VectorXrManifest:settings.QuadViewsManifest;
+            string providerPath=settings.Backend!="Native"&&!String.IsNullOrWhiteSpace(custom)?custom:FindProviderManifest(providerBackend);
+            ProviderManifest provider=String.IsNullOrWhiteSpace(providerPath)?null:ReadProviderManifest(providerPath,settings.Backend!="Native",providerBackend);
+            if(settings.Backend!="Native"&&provider==null) throw new FileNotFoundException(settings.Backend+" is not installed. Install it from the Setup page or select its JSON manifest.");
             var logDirectory=System.IO.Path.Combine(root,"logs");
             var stamp=DateTime.Now.ToString("yyyyMMdd-HHmmss",CultureInfo.InvariantCulture)+"-"+Guid.NewGuid().ToString("N").Substring(0,8);
-            var plan=MakeLayerPlan(root,settings.Backend,provider,System.IO.Path.Combine(logDirectory,"layers-"+stamp));
-            Directory.CreateDirectory(logDirectory);
+            var runDirectory=System.IO.Path.Combine(root,settings.DiagnosticsEnabled?"logs":"runtime");
+            var plan=MakeLayerPlan(root,settings.Backend,provider,System.IO.Path.Combine(runDirectory,"layers-"+stamp));
+            AddImplicitDisables(plan,RegisteredManifests(true),settings.Backend);
+            if(settings.DiagnosticsEnabled)Directory.CreateDirectory(logDirectory);
             var log=System.IO.Path.Combine(logDirectory,"quad-"+stamp+".log");
             var info=MakeStartInfo(root,settings,plan,log);
-            WriteJson(MetadataPath(info),new {Status="prepared",Pid=(int?)null,Mode="quad",Backend=settings.Backend,FoveationMode=settings.FoveationMode,
+            if(settings.DiagnosticsEnabled)WriteJson(MetadataPath(info),new {Status="prepared",Pid=(int?)null,Mode="quad",Backend=settings.Backend,FoveationMode=settings.FoveationMode,
                 Exe=info.FileName,ExeSHA256=SupportedExecutableHash,LayerSHA256=HashFile(System.IO.Path.Combine(root,@"build\lmu_quadview.dll")),
-                ProviderManifest=plan.ProviderPath,ExplicitManifest=plan.ExplicitManifest,EnabledLayers=plan.Layers,Log=log,
-                DebugFocus=settings.DebugFocus,NativeOuterResolution=settings.NativeOuterResolution,UseRuntimeSettings=true,
-                OuterBlur=settings.OuterBlur,
+                ProviderManifest=plan.ProviderPath,ProviderName=plan.ProviderName,ProviderSHA256=plan.Library==null?null:HashFile(plan.Library),
+                ExplicitManifest=plan.ExplicitManifest,EnabledLayers=plan.Layers,DisabledImplicitSwitches=plan.DisableVariables,Log=log,
+                DebugFocus=settings.DebugFocus,RenderProfiling=settings.RenderProfiling,RenderProfileSeconds=settings.RenderProfileSeconds,NativeOuterResolution=settings.NativeOuterResolution,UseRuntimeSettings=true,
+                VectorXrDirectInputs=settings.Backend=="VectorXR",OuterBlur=settings.OuterBlur,
                 OuterPercent=settings.OuterPercent,InnerPercent=settings.InnerPercent,FocusWidthPercent=settings.FocusWidthPercent,FocusHeightPercent=settings.FocusHeightPercent,
                 PreparedUTC=DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture)});
             return info;
@@ -157,6 +227,7 @@ namespace LmuQuadViewLauncher {
             using(var process=Process.Start(info)) {
                 if(process==null) throw new InvalidOperationException("Windows did not start LMU.");
                 int pid=process.Id;
+                if(!settings.DiagnosticsEnabled)return pid;
                 try {
                     var path=MetadataPath(info);var metadata=ReadJson(path);
                     metadata["Status"]="started";metadata["Pid"]=pid;metadata["StartedUTC"]=DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture);WriteJson(path,metadata);
@@ -164,7 +235,7 @@ namespace LmuQuadViewLauncher {
                 return pid;
             }
             } catch(Exception error) {
-                try {
+                if(settings.DiagnosticsEnabled)try {
                     var path=MetadataPath(info);var metadata=ReadJson(path);
                     metadata["Status"]="failed";metadata["Error"]=error.Message;WriteJson(path,metadata);
                 } catch(IOException) { } catch(UnauthorizedAccessException) { }

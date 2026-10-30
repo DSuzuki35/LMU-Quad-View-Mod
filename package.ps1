@@ -1,6 +1,9 @@
-param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'))
+param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'),[string]$ArchiveName='LMU-Quad-View-Mod.zip')
 $ErrorActionPreference = 'Stop'
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
+if([IO.Path]::GetFileName($ArchiveName) -cne $ArchiveName -or !$ArchiveName.EndsWith('.zip',[StringComparison]::OrdinalIgnoreCase)){throw 'ArchiveName must be a ZIP filename, without directory components.'}
+$archive = Join-Path $OutputDirectory $ArchiveName
+if (Test-Path -LiteralPath $archive) { throw "Archive already exists: $archive" }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $stage = Join-Path $OutputDirectory ('package-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage,(Join-Path $stage 'build'),(Join-Path $stage 'licenses') | Out-Null
@@ -9,6 +12,8 @@ $files = @{
     'mod/build/LMU-QuadView-Launcher.exe' = 'LMU-QuadView-Launcher.exe'
     'mod/build/LMU-QuadView-Launcher.exe.config' = 'LMU-QuadView-Launcher.exe.config'
     'PORTABLE-QVFR.txt' = 'PORTABLE-QVFR.txt'
+    'PORTABLE-VECTORXR.txt' = 'PORTABLE-VECTORXR.txt'
+    'RENDER-PROFILING.txt' = 'RENDER-PROFILING.txt'
     'TODO.md' = 'TODO.md'
     'mod/XR_APILAYER_LMU_quadview.json' = 'XR_APILAYER_LMU_quadview.json'
     'README.md' = 'README.md'
@@ -27,11 +32,11 @@ while ($noticeEnd -lt $nvapi.Count -and $nvapi[$noticeEnd] -notmatch '^\\\*+/') 
 if ($noticeEnd -ge $nvapi.Count) { throw 'NVIDIA license block was not found' }
 $nvapi[0..$noticeEnd] | Set-Content -LiteralPath (Join-Path $stage 'licenses/NVAPI-LICENSE.txt')
 Get-ChildItem -LiteralPath $stage -Recurse -File | Sort-Object FullName | ForEach-Object {
-    $relative = [IO.Path]::GetRelativePath($stage,$_.FullName).Replace('\','/')
+    $prefix=[IO.Path]::GetFullPath($stage).TrimEnd('\')+'\'
+    if(!$_.FullName.StartsWith($prefix,[StringComparison]::OrdinalIgnoreCase)){throw 'Package entry escaped staging directory.'}
+    $relative = $_.FullName.Substring($prefix.Length).Replace('\','/')
     '{0}  {1}' -f (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash,$relative
 } | Set-Content -LiteralPath (Join-Path $stage 'SHA256.txt')
-$archive = Join-Path $OutputDirectory 'LMU-Quad-View-Mod.zip'
-if (Test-Path -LiteralPath $archive) { throw "Archive already exists: $archive" }
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive
 Write-Output "Portable folder: $stage"
 Write-Output "Portable archive: $archive"
