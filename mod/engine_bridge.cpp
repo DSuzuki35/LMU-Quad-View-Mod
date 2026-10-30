@@ -14,6 +14,7 @@
 #include "vrs_scope_policy.hpp"
 #include "native_outer_bank.hpp"
 #include "native_outer_anchors.hpp"
+#include "native_upload_reuse.hpp"
 #include "xr_sizes.hpp"
 #include "native_xr_views.hpp"
 #include "resource_diagnostics.hpp"
@@ -26,6 +27,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <vector>
 
 namespace lmuqv {
@@ -41,6 +43,18 @@ using MainPassFn = void (*)(void*, void*, void*, std::uint32_t, bool);
 using WorldSortFn = void (*)(void*, void*, void*, std::int32_t, std::uint32_t, bool, void*);
 using NativeViewFn = void (*)(void*,void*,void*,bool,bool);
 using FovScaleFn = const float* (*)(void*);
+using NativePrepareFn=int(*)(void*,void*,void*,std::uint32_t,bool);
+NativePrepareFn nativePrepareOriginal{};bool nativePrepareHooked=false;
+constexpr std::uintptr_t nativePrepareRva=0x5629e0;
+constexpr std::array<std::uint8_t,20> nativePrepareAnchor{0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x30};
+using NativeUploadFn=void(*)(void*,void*,ID3D11DeviceContext*,void*);
+NativeUploadFn nativeUploadOriginal{};std::atomic<bool> nativeUploadHooked{false},nativeUploadOptIn{false};
+constexpr std::uintptr_t nativeUploadRva=0x5cac50;
+constexpr std::array<std::uint8_t,20> nativeUploadAnchor{0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x40};
+NativeUploadReuse nativeUploadReuse;
+std::recursive_mutex nativeUploadMutex;
+thread_local void* selectedUploadCache=nullptr;
+thread_local ID3D11DeviceContext* selectedUploadContext=nullptr;
 
 #pragma pack(push,1)
 struct UiArgs { std::uint32_t mode; TransformRecord transform[2]; };
@@ -484,6 +498,17 @@ void mainPassHook(void* renderer,void* scene,void* view,std::uint32_t flags,bool
 void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
                    std::uint32_t flags,bool lastMainPass,void* optionalMaterial) {
     StereoAuditGroup auditGroup(group);
+    const auto savedUploadCache=selectedUploadCache;const auto savedUploadContext=selectedUploadContext;
+    std::unique_lock<std::recursive_mutex> uploadLock(nativeUploadMutex,std::defer_lock);
+    bool uploadScope=false;
+    if(selectedUploadCache)nativeUploadReuse.end(); // Nested groups invalidate exclusive scope assumptions.
+    if(nativeUploadOptIn&&nativeUploadHooked&&view==focusView&&focusView&&group==31&&!selectedUploadCache){
+        const auto object=reinterpret_cast<std::uintptr_t>(renderer);
+        if(readable(reinterpret_cast<void*>(object+0x77fc8),0x2660)&&readable(reinterpret_cast<void*>(object+0x76f68),sizeof(void*))){
+            auto* context=*reinterpret_cast<ID3D11DeviceContext**>(object+0x76f68);
+            if(readable(context,sizeof(void*))){uploadLock.lock();selectedUploadCache=reinterpret_cast<void*>(object+0x77fc8);selectedUploadContext=context;nativeUploadReuse.begin(selectedUploadCache,context,diagnostics_enabled());uploadScope=true;}
+        }
+    }
     const bool profileSort=renderProfile.collecting()&&view&&(view==nativeOuterExpected||view==focusView);
     const auto sortEye=profileSort?unsigned(static_cast<ViewSnapshot*>(view)->eye_index):0;
     ProfileScope sortProfile(profile_eye(focusView?ProfileSlot::sort_focus0:ProfileSlot::sort_outer0,sortEye),profileSort&&sortEye<2);
@@ -531,11 +556,29 @@ void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
     const auto generation=vrsInterruptionGeneration;
     ++outerSortDepth;
     worldSortOriginal(renderer,scene,view,group,flags,lastMainPass,optionalMaterial);
+    if(uploadScope)nativeUploadReuse.end();selectedUploadCache=savedUploadCache;selectedUploadContext=savedUploadContext;
     --outerSortDepth;
     if(began && generation==vrsInterruptionGeneration) {
         if(worldVrs.end_outer(outerVrsContext))++worldVrsCounters.applied[eye];
         else failWorldVrs("end_failure; feature disabled; scope not applied; restoration not confirmed");
     }
+}
+int nativePrepareHook(void* shader,void* view,void* mesh,std::uint32_t flags,bool reset){
+    const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
+    // Two verified world-sort submission sites. This hook observes the complete
+    // original preparation and forwards its exact result; no setup is skipped.
+    const bool known=caller==base+0x51f67e||caller==base+0x51f5c4;
+    const auto token=known?stereo_audit_native_prepare_begin(mesh):StereoNativePrepareToken{};
+    const int result=nativePrepareOriginal(shader,view,mesh,flags,reset);
+    stereo_audit_native_prepare_end(token);return result;
+}
+void nativeUploadHook(void* cache,void* device,ID3D11DeviceContext* context,void* bindings){
+    const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
+    if(!selectedUploadCache){nativeUploadOriginal(cache,device,context,bindings);return;}
+    // Keep bindings/bookkeeping and every changed upload in the native routine.
+    // Unexpected native writers end reuse for the rest of this group.
+    if(caller!=base+0x5b6034||cache!=selectedUploadCache||context!=selectedUploadContext){nativeUploadReuse.end();nativeUploadOriginal(cache,device,context,bindings);return;}
+    const auto token=nativeUploadReuse.before(cache,context);nativeUploadOriginal(cache,device,context,bindings);nativeUploadReuse.after(cache,context,token);
 }
 void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool later){
     // A nested view must see the unmodified native bank. Resume the outer bank
@@ -923,6 +966,10 @@ bool engine_start(ID3D11DeviceContext* context) {
     if(installed.load()) return true;
     char mode[32]{};GetEnvironmentVariableA("LMU_QV_MODE",mode,sizeof(mode));
     const bool stereoTiming=!std::strcmp(mode,"stereo-timing");
+    char auditSetting[8]{};const auto auditLength=GetEnvironmentVariableA("LMU_QV_STEREO_AUDIT",auditSetting,sizeof(auditSetting));
+    wchar_t auditDirectory[32768]{};const auto auditDirectoryLength=GetEnvironmentVariableW(L"LMU_QV_STEREO_AUDIT_DIR",auditDirectory,32768);
+    const bool auditRequested=diagnostics_enabled()&&!stereoTiming&&auditLength==1&&auditSetting[0]=='1'&&auditDirectoryLength&&auditDirectoryLength<32768;
+    char uploadSetting[8]{};nativeUploadOptIn=!stereoTiming&&GetEnvironmentVariableA("LMU_QV_CPU_UPLOAD_REUSE",uploadSetting,sizeof(uploadSetting))==1&&uploadSetting[0]=='1';nativeUploadReuse.reset();
     if(std::strcmp(mode,"quad") && !stereoTiming) {log_line("engine: trace mode; no native hooks");return true;}
     base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     if(!correctDiskBuild() || !matches(0xd58a70,render_anchor) ||
@@ -976,7 +1023,7 @@ bool engine_start(ID3D11DeviceContext* context) {
     if(!parseVrsDefaultRate(worldVrsOptIn,defaultRate,defaultRateLength,worldVrsDefaultRate)) {
         log_line("engine: LMU_QV_OUTER_SHADING_RATE must be exactly 1, 2 or 4; hooks refused");return false;
     }
-    if((worldVrsOptIn||nativeOuterOptIn) && (!matches(0x51d8a0,vrs_scope::kMainPassAnchor) ||
+    if((worldVrsOptIn||nativeOuterOptIn||auditRequested||nativeUploadOptIn) && (!matches(0x51d8a0,vrs_scope::kMainPassAnchor) ||
        !matches(0x51f040,vrs_scope::kWorldSortAnchor))) {
         log_line("engine: VRS code anchor mismatch; hooks refused");return false;
     }
@@ -1001,7 +1048,7 @@ bool engine_start(ID3D11DeviceContext* context) {
         timingTrigger=trigger;
         log_line("engine GPU timing: waiting for explicit trigger file");
     }
-    const std::size_t hookCount=stereoTiming?1:(nativeOuterOptIn?std::size(hooks):(worldVrsOptIn?9:(nativeRuntimeSettings?7:5)));
+    const std::size_t hookCount=stereoTiming?1:(nativeOuterOptIn?std::size(hooks):((worldVrsOptIn||auditRequested||nativeUploadOptIn)?9:(nativeRuntimeSettings?7:5)));
     if(hookCount>6&&!matches(0x8c2d30,nativeEnumerateAnchor)){
         log_line("engine: native XR enumeration anchor mismatch; hooks refused");return false;
     }
@@ -1022,10 +1069,24 @@ bool engine_start(ID3D11DeviceContext* context) {
     }
     innerHistory[0]={};innerHistory[1]={};
     installedHookCount=hookCount;
-    char auditSetting[8]{};const auto auditLength=GetEnvironmentVariableA("LMU_QV_STEREO_AUDIT",auditSetting,sizeof(auditSetting));
-    wchar_t auditDirectory[32768]{};const auto auditDirectoryLength=GetEnvironmentVariableW(L"LMU_QV_STEREO_AUDIT_DIR",auditDirectory,32768);
-    const bool auditRequested=diagnostics_enabled()&&!stereoTiming&&auditLength==1&&auditSetting[0]=='1'&&auditDirectoryLength&&auditDirectoryLength<32768;
     stereo_audit_configure(context,auditRequested,auditDirectory,log_line);
+    const std::array<std::uint8_t,5> prepareCall0{0xe8,0x1c,0x34,0x04,0x00},prepareCall1{0xe8,0x62,0x33,0x04,0x00};
+    if(stereo_audit_enabled()&&matches(nativePrepareRva,nativePrepareAnchor)&&matches(0x51f5bf,prepareCall0)&&matches(0x51f679,prepareCall1)){
+        if(MH_CreateHook(address<void>(nativePrepareRva),reinterpret_cast<void*>(&nativePrepareHook),reinterpret_cast<void**>(&nativePrepareOriginal))==MH_OK){
+            if(MH_EnableHook(address<void>(nativePrepareRva))==MH_OK){nativePrepareHooked=true;log_line("stereo_audit native per-mesh preparation hook enabled; pointer identities anonymized; original preparation retained");}
+            else MH_RemoveHook(address<void>(nativePrepareRva));
+        }
+    }
+    if(auditRequested&&!nativePrepareHooked)log_line("stereo_audit native preparation hook unavailable; paired private proof requires this identity source");
+    const std::array<std::uint8_t,5> uploadCall{0xe8,0x1c,0x4c,0x01,0x00};
+    const std::array<std::uint8_t,15> uploadBindAnchor{0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x20,0x57,0x48,0x83,0xec,0x20};
+    if(nativeUploadOptIn&&matches(nativeUploadRva,nativeUploadAnchor)&&matches(0x5b602f,uploadCall)&&matches(0x5c3f20,uploadBindAnchor)){
+        if(MH_CreateHook(address<void>(nativeUploadRva),reinterpret_cast<void*>(&nativeUploadHook),reinterpret_cast<void**>(&nativeUploadOriginal))==MH_OK){
+            if(MH_EnableHook(address<void>(nativeUploadRva))==MH_OK){nativeUploadHooked=true;log_line("cpu_upload_reuse enabled: focus opaque group 31; byte-identical native VS constants only; all draws/bindings retained; experimental");}
+            else MH_RemoveHook(address<void>(nativeUploadRva));
+        }
+    }
+    if(nativeUploadOptIn&&!nativeUploadHooked){nativeUploadOptIn=false;log_line("cpu_upload_reuse unavailable: native code anchor/hook mismatch; ordinary rendering retained");}
     char profileSetting[8]{};GetEnvironmentVariableA("LMU_QV_PROFILE",profileSetting,sizeof(profileSetting));
     const bool profiling=diagnostics_enabled()&&!stereoTiming&&!std::strcmp(profileSetting,"1")&&benchmarkPath.empty()&&timingTrigger.empty();
     char durationSetting[16]{};char* durationEnd=nullptr;
@@ -1043,6 +1104,12 @@ bool engine_start(ID3D11DeviceContext* context) {
 }
 void engine_stop() {
     stereo_audit_stop();
+    if(nativePrepareHooked){MH_DisableHook(address<void>(nativePrepareRva));MH_RemoveHook(address<void>(nativePrepareRva));nativePrepareHooked=false;}
+    const bool uploadWasEnabled=nativeUploadOptIn.exchange(false);
+    if(nativeUploadHooked){MH_DisableHook(address<void>(nativeUploadRva));MH_RemoveHook(address<void>(nativeUploadRva));nativeUploadHooked=false;}
+    {std::lock_guard<std::recursive_mutex> uploadLock(nativeUploadMutex);
+    if(uploadWasEnabled&&diagnostics_enabled()){const auto& c=nativeUploadReuse.counters();char line[384]{};std::snprintf(line,sizeof(line),"cpu_upload_reuse summary examined=%llu skipped=%llu bytes_skipped=%llu learned=%llu aliases=%llu invalidated=%llu; counters are not a frametime benchmark",static_cast<unsigned long long>(c.examined),static_cast<unsigned long long>(c.skipped),static_cast<unsigned long long>(c.bytesSkipped),static_cast<unsigned long long>(c.learned),static_cast<unsigned long long>(c.aliased),static_cast<unsigned long long>(c.invalidated));log_line(line);}
+    selectedUploadCache=nullptr;selectedUploadContext=nullptr;nativeUploadReuse.reset();}
     nativeOuterOptIn=false;
     for(auto& bank:nativeOuterBanks)if(!bank.reset())log_line("native_outer teardown on different thread; native bank retained until process exit");
     if(!installed.exchange(false)) {

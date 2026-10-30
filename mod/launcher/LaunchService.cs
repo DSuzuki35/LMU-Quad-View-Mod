@@ -163,6 +163,8 @@ namespace LmuQuadViewLauncher {
             environment["LMU_QV_STEREO_AUDIT"]=settings.DiagnosticsEnabled&&settings.StereoDrawAudit?"1":"0";
             environment["LMU_QV_STEREO_AUDIT_DIR"]=settings.DiagnosticsEnabled&&settings.StereoDrawAudit?System.IO.Path.GetDirectoryName(log):"";
             environment["LMU_QV_STEREO_SHADER_CAPTURE"]=settings.DiagnosticsEnabled&&settings.StereoDrawAudit&&settings.StereoShaderCapture?"1":"0";
+            environment["LMU_QV_STEREO_DRAW_PROOF"]=settings.DiagnosticsEnabled&&settings.StereoDrawAudit&&settings.StereoPairProof?"1":"0";
+            environment["LMU_QV_CPU_UPLOAD_REUSE"]=settings.CpuUploadReuse?"1":"0";
             environment["LMU_QV_DEBUG_FOCUS"]=settings.DebugFocus?"1":"0";
             environment["LMU_QV_PROFILE"]=settings.DiagnosticsEnabled&&settings.RenderProfiling?"1":"0";
             environment["LMU_QV_PROFILE_SECONDS"]=settings.RenderProfileSeconds.ToString(CultureInfo.InvariantCulture);
@@ -215,7 +217,7 @@ namespace LmuQuadViewLauncher {
                 Exe=info.FileName,ExeSHA256=SupportedExecutableHash,LayerSHA256=HashFile(System.IO.Path.Combine(root,@"build\lmu_quadview.dll")),
                 ProviderManifest=plan.ProviderPath,ProviderName=plan.ProviderName,ProviderSHA256=plan.Library==null?null:HashFile(plan.Library),
                 ExplicitManifest=plan.ExplicitManifest,EnabledLayers=plan.Layers,DisabledImplicitSwitches=plan.DisableVariables,Log=log,
-                DebugFocus=settings.DebugFocus,RenderProfiling=settings.RenderProfiling,StereoDrawAudit=settings.StereoDrawAudit,StereoShaderCapture=settings.StereoShaderCapture,RenderProfileSeconds=settings.RenderProfileSeconds,NativeOuterResolution=settings.NativeOuterResolution,UseRuntimeSettings=true,
+                DebugFocus=settings.DebugFocus,RenderProfiling=settings.RenderProfiling,StereoDrawAudit=settings.StereoDrawAudit,StereoShaderCapture=settings.StereoShaderCapture,StereoPairProof=settings.StereoPairProof,CpuUploadReuse=settings.CpuUploadReuse,RenderProfileSeconds=settings.RenderProfileSeconds,NativeOuterResolution=settings.NativeOuterResolution,UseRuntimeSettings=true,
                 VectorXrDirectInputs=settings.Backend=="VectorXR",OuterBlur=settings.OuterBlur,
                 OuterPercent=settings.OuterPercent,InnerPercent=settings.InnerPercent,FocusWidthPercent=settings.FocusWidthPercent,FocusHeightPercent=settings.FocusHeightPercent,
                 PreparedUTC=DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture)});

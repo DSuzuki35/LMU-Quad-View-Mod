@@ -2,10 +2,13 @@
 #include <d3d11.h>
 #include <array>
 namespace lmuqv {
-inline constexpr std::array<unsigned,22> stereo_audit_vtable{12,13,20,21,38,39,40,41,42,14,15,48,47,46,12,15,13,16,17,18,11,58};
+inline constexpr std::array<unsigned,24> stereo_audit_vtable{12,13,20,21,38,39,40,41,42,14,15,48,47,46,12,15,13,16,17,18,11,58,27,28};
 enum class StereoAuditPass:unsigned {outer0,outer1,focus0,focus1,none};
 inline StereoAuditPass stereo_audit_eye(bool focus,unsigned eye){return StereoAuditPass((focus?2:0)+eye);}
 struct StereoAuditToken {bool entered=false;unsigned slot=0;long long started=0;};
+struct StereoNativePrepareToken {bool entered=false;unsigned slot=0;long long started=0;};
+StereoNativePrepareToken stereo_audit_native_prepare_begin(const void* mesh);
+void stereo_audit_native_prepare_end(const StereoNativePrepareToken&);
 bool stereo_audit_configure(ID3D11DeviceContext*,bool,const wchar_t* directory,void(*log)(const char*));
 // Arm before the game creates its D3D11 device, to observe input layouts and
 // shaders that already exist by xrCreateSession. Only main-executable factory

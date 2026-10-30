@@ -1,16 +1,47 @@
-PORTABLE STEREO RESEARCH 2
+PORTABLE STEREO PROTOTYPE 3
 
 STATUS
 
-The portable D3D11 two-eye submission proof is implemented. A single instanced
-draw produces two independent eye images with correct parallax and depth. It
-uses standard D3D11 capability checks, vertex-stage array routing where supported,
-and a geometry-shader routing fallback. No NVIDIA API is required by this path.
+This build includes an opt-in CPU upload-reuse prototype and a separate paired
+rendering checker. Full LMU single-pass stereo / shared native CPU preparation is
+not yet enabled. No live-game CPU/FPS improvement is claimed.
 
-This build DOES NOT yet replace LMU's focused-eye renderer or reduce its draw
-calls. It adds the bounded game draw audit needed to select and convert the first
-LMU shader/pass family. Ordinary LMU rendering remains the current legacy path.
-No in-game CPU or FPS improvement is claimed for this research package.
+FIRST TEST: CPU UPLOAD REUSE
+
+Enable Experimental CPU upload reuse in Setup. Enable diagnostics and render
+profiling for the measured trial; leave stereo draw audit and paired tests off.
+Keep the same provider/runtime/rendering settings. Press Ctrl+Alt+F9 on track and
+close normally when finished. The profile and cpu_upload_reuse summary in the
+native log are saved. See CPU-UPLOAD-REUSE.md for its scope, guards and A/B checks.
+
+The optimization retains all native draws, matrices and binding operations. It
+filters only byte-identical dirty uploads within a single focused opaque group.
+It remains active with diagnostics disabled; optional counters/logs then stop.
+All new options default off. Disable CPU upload reuse and relaunch for rollback.
+
+PAIRED RENDERING CHECKER
+
+This runs one matching opaque LMU object pair into private color/depth arrays,
+using converted vertex/pixel shaders, GPU snapshots of per-eye constant buffers
+and a standard D3D11 routing path. It compares one paired draw with two original
+reference draws. Native game draws remain enabled; the checker does not change
+submitted eye images or provide a performance gain. It can cause a visible hitch.
+
+To use it, enable diagnostics, stereo draw audit, and Test paired rendering.
+Leave render profiling OFF so query scopes do not prevent the replay. Load a
+track and press/release Ctrl+Alt+F8 once. The JSON and log include stereo_pair_proof
+status, coverage and differing-pixel/depth counts. No images or buffer contents
+are saved. Shader-program export is optional and remains a separate checkbox.
+The selected initial opaque family is deliberately narrow. Nonmatching material,
+geometry, pipeline or ANY of the 128 VS/PS texture slots refuses the pair. Active
+queries, incomplete device interception and unsupported states prevent replay.
+Reference targets use private D32 depth; source textures are retained rather than
+deep-copied. Texture-content changes can fail the sampled comparison. A passing
+sample is not permission to share CPU data or resources in later frames.
+
+Native preparation IDs/timing are now recorded through an independently verified
+per-mesh hook. Pointer identities are anonymized; no game object names are read.
+The timings include diagnostic overhead and are not performance benchmarks.
 
 CHANGES AFTER THE FIRST LIVE CAPTURE
 
@@ -42,6 +73,7 @@ GAME DRAW AUDIT
 2. In Setup, enable diagnostics and logging, and tick:
        Record stereo draw audit (Ctrl+Alt+F8)
    Leave ordinary render profiling unticked for this diagnostic run.
+   Optionally enable Test paired rendering to exercise the paired checker above.
    For the first LMU pass conversion, also tick:
        Include shader programs for stereo conversion
    This saves local game program files as described below.

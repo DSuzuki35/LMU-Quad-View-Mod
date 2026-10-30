@@ -8,6 +8,8 @@ param(
     [switch]$DisableDiagnostics,
     [switch]$StereoDrawAudit,
     [switch]$StereoShaderCapture,
+    [switch]$StereoPairProof,
+    [switch]$CpuUploadReuse,
     [ValidateRange(30,300)][int]$RenderProfileSeconds=120,
     [switch]$DebugFocus,
     [switch]$Benchmark,
@@ -26,7 +28,7 @@ param(
     [string]$GameDirectory = 'D:\SteamLibrary\steamapps\common\Le Mans Ultimate'
 )
 $ErrorActionPreference = 'Stop'
-if($DisableDiagnostics){$RenderProfiling=$false;$GpuTiming=$false;$Benchmark=$false;$CaptureViews=$false;$PixelStats=$false;$ScenePixelStats=$false;$StereoDrawAudit=$false;$StereoShaderCapture=$false}
+if($DisableDiagnostics){$RenderProfiling=$false;$GpuTiming=$false;$Benchmark=$false;$CaptureViews=$false;$PixelStats=$false;$ScenePixelStats=$false;$StereoDrawAudit=$false;$StereoShaderCapture=$false;$StereoPairProof=$false}
 . (Join-Path $PSScriptRoot 'portable-launch.ps1')
 if ($Backend -ne 'Native' -and ($Mode -ne 'quad' -or !$UseRuntimeSettings)) { throw "$Backend requires quad mode with runtime-controlled settings." }
 if ($UseRuntimeSettings) {
@@ -95,6 +97,8 @@ $info.Environment['LMU_QV_DIAGNOSTICS'] = $(if ($DisableDiagnostics) { '0' } els
 $info.Environment['LMU_QV_STEREO_AUDIT'] = $(if ($StereoDrawAudit) { '1' } else { '0' })
 $info.Environment['LMU_QV_STEREO_AUDIT_DIR'] = $(if ($StereoDrawAudit) { $logDirectory } else { '' })
 $info.Environment['LMU_QV_STEREO_SHADER_CAPTURE'] = $(if ($StereoDrawAudit -and $StereoShaderCapture) { '1' } else { '0' })
+$info.Environment['LMU_QV_STEREO_DRAW_PROOF'] = $(if ($StereoDrawAudit -and $StereoPairProof) { '1' } else { '0' })
+$info.Environment['LMU_QV_CPU_UPLOAD_REUSE'] = $(if ($CpuUploadReuse) { '1' } else { '0' })
 $info.Environment['LMU_QV_PROFILE_SECONDS'] = $RenderProfileSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
 $info.Environment['LMU_QV_USE_RUNTIME_SETTINGS'] = $(if ($UseRuntimeSettings) { '1' } else { '0' })
 $info.Environment['LMU_QV_LOG'] = $(if($DisableDiagnostics){''}else{$logPath})
@@ -123,6 +127,8 @@ $run = [pscustomobject]@{
     RenderProfiling=[bool]$RenderProfiling;RenderProfileSeconds=$RenderProfileSeconds
     StereoDrawAudit=[bool]$StereoDrawAudit
     StereoShaderCapture=[bool]($StereoDrawAudit -and $StereoShaderCapture)
+    StereoPairProof=[bool]($StereoDrawAudit -and $StereoPairProof)
+    CpuUploadReuse=[bool]$CpuUploadReuse
     DebugFocus=[bool]$DebugFocus
     Benchmark=[bool]$Benchmark;BenchmarkControl=$benchmarkControl;EnableOuterVrs=[bool]$EnableOuterVrs
     NativeOuterResolution=[bool]$NativeOuterResolution

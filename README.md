@@ -1,9 +1,11 @@
 # LMU Quad View Mod
 
-This research branch adds a portable D3D11 instanced-stereo proof and an opt-in
-LMU draw audit. The proof produces two correct eye images in one instanced draw;
-LMU continues using its existing per-eye renderer until a game shader/pass family
-has been converted and validated. No in-game CPU gain is claimed yet.
+This research branch adds an opt-in [CPU upload-reuse prototype](CPU-UPLOAD-REUSE.md),
+portable vertex/pixel shader conversion and an in-game private paired-draw check.
+The CPU prototype filters byte-identical native uploads within a focus geometry
+group. The stereo check compares one paired draw with two original references in
+private targets; normal game eye draws remain enabled. Full game-renderer single-
+pass stereo is still in development. No live-game CPU/FPS gain has been measured.
 See [research status, capture steps and hardware check](PORTABLE-STEREO-RESEARCH.txt).
 
 Experimental Windows x64 / D3D11 renderer integration for Le Mans Ultimate.

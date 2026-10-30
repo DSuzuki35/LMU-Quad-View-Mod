@@ -253,6 +253,8 @@ namespace LmuQuadViewLauncher
         readonly CheckBox diagnosticsEnabled=Toggle("Enable diagnostics and logging");
         readonly CheckBox stereoDrawAudit=Toggle("Record stereo draw audit (Ctrl+Alt+F8)");
         readonly CheckBox stereoShaderCapture=Toggle("Include shader programs for stereo conversion");
+        readonly CheckBox stereoPairProof=Toggle("Test paired rendering (Ctrl+Alt+F8)");
+        readonly CheckBox cpuUploadReuse=Toggle("Experimental CPU upload reuse");
         readonly NumericUpDown profileDuration=new NumericUpDown {Minimum=30,Maximum=300,Increment=30,Value=120,
             BackColor=Theme.Field,ForeColor=Theme.Text,BorderStyle=BorderStyle.FixedSingle,Dock=DockStyle.Fill,
             TextAlign=HorizontalAlignment.Right,Name="RenderProfileSeconds",AccessibleName="RenderProfileSeconds",Enabled=false};
@@ -311,7 +313,7 @@ namespace LmuQuadViewLauncher
         public Launcher()
         {
             SuspendLayout();
-            Text = "LMU Quad View - portable stereo research 2"; BackColor = Theme.Background; ForeColor = Theme.Text;
+            Text = "LMU Quad View - stereo prototype 3"; BackColor = Theme.Background; ForeColor = Theme.Text;
             Font = new Font("Segoe UI", 10F); AutoScaleDimensions = new SizeF(96F, 96F); AutoScaleMode = AutoScaleMode.Dpi;
             try {
                 using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("LmuQuadView.Icon")) {
@@ -343,8 +345,9 @@ namespace LmuQuadViewLauncher
             diagnosticsEnabled.Name="DiagnosticsEnabled";
             stereoDrawAudit.Name="StereoDrawAudit";
             stereoShaderCapture.Name="StereoShaderCapture";
-            diagnosticsEnabled.CheckedChanged+=delegate {renderProfiling.Enabled=diagnosticsEnabled.Checked;stereoDrawAudit.Enabled=diagnosticsEnabled.Checked;stereoShaderCapture.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked;profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;};
-            stereoDrawAudit.CheckedChanged+=delegate {stereoShaderCapture.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked;};
+            stereoPairProof.Name="StereoPairProof";cpuUploadReuse.Name="CpuUploadReuse";
+            diagnosticsEnabled.CheckedChanged+=delegate {renderProfiling.Enabled=diagnosticsEnabled.Checked;stereoDrawAudit.Enabled=diagnosticsEnabled.Checked;stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked;profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;};
+            stereoDrawAudit.CheckedChanged+=delegate {stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked;};
             renderProfiling.CheckedChanged+=delegate {profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;};
             renderingNav.Click += delegate { ShowPage(false); }; setupNav.Click += delegate { ShowPage(true); };
             save.Click += delegate { SaveSettings(); }; launch.Click += delegate { StartGame(); };
@@ -432,7 +435,7 @@ namespace LmuQuadViewLauncher
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 153)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 480)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 640)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
             var browseGame = Theme.Button("Browse", false); browseGame.Click += delegate {
                 using (var d = new FolderBrowserDialog { Description = "Select the folder containing Le Mans Ultimate.exe", ShowNewFolderButton = false }) {
                     if (Directory.Exists(game.Text)) d.SelectedPath = game.Text;
@@ -446,24 +449,30 @@ namespace LmuQuadViewLauncher
                 "Manifest JSON: leave blank to detect VectorXR. Enable an LMU Quadviews profile in its app.",true,
                 "https://github.com/DienerTech/vectorxr#installation"),0,2);
             var options = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
-            var stack = Stack(12); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 23)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 30)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            var stack = Stack(16); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 23)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 30)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute,30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute,45));
             stack.RowStyles.Add(new RowStyle(SizeType.Absolute,30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute,40));
             stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
             stack.RowStyles.Add(new RowStyle(SizeType.Absolute,30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute,45));
             stack.RowStyles.Add(new RowStyle(SizeType.Absolute,30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute,45));
+            stack.RowStyles.Add(new RowStyle(SizeType.Absolute,30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute,45));
             stack.Controls.Add(Caption("ADVANCED"), 0, 0); stack.Controls.Add(nativeOuter, 0, 1);
             stack.Controls.Add(Caption("Experimental GPU savings. Disable to test full-size outer rendering with resampling."), 0, 2);
-            stack.Controls.Add(diagnosticsEnabled,0,3);
-            stack.Controls.Add(Caption("Untick for normal play. Stops mod logs and profiling. Applies next launch; VectorXR logging is separate."),0,4);
-            stack.Controls.Add(renderProfiling,0,5);
+            stack.Controls.Add(cpuUploadReuse,0,3);
+            stack.Controls.Add(Caption("Focus opaque geometry only. Skips uploads of unchanged constants; needs visual and performance testing."),0,4);
+            stack.Controls.Add(diagnosticsEnabled,0,5);
+            stack.Controls.Add(Caption("Untick for normal play. Stops mod logs and profiling. Applies next launch; VectorXR logging is separate."),0,6);
+            stack.Controls.Add(renderProfiling,0,7);
             var durationRow=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=new Padding(0)};
             durationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));durationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,80));
-            durationRow.Controls.Add(Theme.Label("Capture length (seconds)",10F,Theme.Text),0,0);profileDuration.Margin=new Padding(2,4,0,0);durationRow.Controls.Add(profileDuration,1,0);stack.Controls.Add(durationRow,0,6);
-            stack.Controls.Add(Caption("Press Ctrl+Alt+F9 on track. 30-300 seconds; closing LMU saves a partial capture."),0,7);
-            stack.Controls.Add(stereoDrawAudit,0,8);
-            stack.Controls.Add(Caption("Diagnostic only: captures two scene frames with overhead. Stereo optimization is still under development."),0,9);
-            stack.Controls.Add(stereoShaderCapture,0,10);
-            stack.Controls.Add(Caption("Saves programs used by the sampled focus views under logs/stereo-shaders. Local development files; keep out of GitHub."),0,11);
+            durationRow.Controls.Add(Theme.Label("Capture length (seconds)",10F,Theme.Text),0,0);profileDuration.Margin=new Padding(2,4,0,0);durationRow.Controls.Add(profileDuration,1,0);stack.Controls.Add(durationRow,0,8);
+            stack.Controls.Add(Caption("Press Ctrl+Alt+F9 on track. 30-300 seconds; closing LMU saves a partial capture."),0,9);
+            stack.Controls.Add(stereoDrawAudit,0,10);
+            stack.Controls.Add(Caption("Diagnostic only: captures two scene frames with overhead. Stereo optimization is still under development."),0,11);
+            stack.Controls.Add(stereoShaderCapture,0,12);
+            stack.Controls.Add(Caption("Saves programs used by the sampled focus views under logs/stereo-shaders. Local development files; keep out of GitHub."),0,13);
+            stack.Controls.Add(stereoPairProof,0,14);
+            stack.Controls.Add(Caption("One sampled object in private targets. Leave render profiling off; diagnostic hitch expected. Game draws remain enabled."),0,15);
             options.Controls.Add(stack); grid.Controls.Add(options, 0, 3);
             grid.Controls.Add(Caption("Keep your headset's OpenXR runtime active. Configure VectorXR's LMU Quadviews profile when using it; select one quad-view provider."), 0, 4);
         }
@@ -528,6 +537,7 @@ namespace LmuQuadViewLauncher
             diagnosticsEnabled.Checked=s.DiagnosticsEnabled;
             stereoDrawAudit.Checked=s.StereoDrawAudit;
             stereoShaderCapture.Checked=s.StereoShaderCapture;stereoShaderCapture.Enabled=s.DiagnosticsEnabled&&s.StereoDrawAudit;
+            stereoPairProof.Checked=s.StereoPairProof;stereoPairProof.Enabled=s.DiagnosticsEnabled&&s.StereoDrawAudit;cpuUploadReuse.Checked=s.CpuUploadReuse;
             profileDuration.Value=s.RenderProfileSeconds;
             outer.Value = s.OuterPercent; inner.Value = s.InnerPercent;
             focusWidth.Value = focusGeometry==null?s.FocusWidthPercent:focusGeometry.DisplayWidth(s.FocusWidthPercent);
@@ -539,7 +549,7 @@ namespace LmuQuadViewLauncher
         {
             var s = new LauncherSettings { GameDirectory = game.Text.Trim(), QuadViewsManifest = manifest.Text.Trim(),VectorXrManifest=vectorManifest.Text.Trim(),
                 Backend = backend.SelectedIndex == 2 ? "VectorXR" : backend.SelectedIndex == 1 ? "QVFR" : "Native", FoveationMode = mode.SelectedIndex == 1 ? "fixed" : "auto",
-                DebugFocus = outline.Checked, RenderProfiling=renderProfiling.Checked, DiagnosticsEnabled=diagnosticsEnabled.Checked,StereoDrawAudit=stereoDrawAudit.Checked,StereoShaderCapture=stereoShaderCapture.Checked, RenderProfileSeconds=Decimal.ToInt32(profileDuration.Value), NativeOuterResolution = nativeOuter.Checked,
+                DebugFocus = outline.Checked, RenderProfiling=renderProfiling.Checked, DiagnosticsEnabled=diagnosticsEnabled.Checked,StereoDrawAudit=stereoDrawAudit.Checked,StereoShaderCapture=stereoShaderCapture.Checked,StereoPairProof=stereoPairProof.Checked,CpuUploadReuse=cpuUploadReuse.Checked, RenderProfileSeconds=Decimal.ToInt32(profileDuration.Value), NativeOuterResolution = nativeOuter.Checked,
                 OuterPercent = outer.Value, InnerPercent = inner.Value,
                 FocusWidthPercent = focusGeometry==null?focusWidth.Value:focusGeometry.ProviderWidth(focusWidth.Value),
                 FocusHeightPercent = focusGeometry==null?focusHeight.Value:focusGeometry.ProviderHeight(focusHeight.Value),

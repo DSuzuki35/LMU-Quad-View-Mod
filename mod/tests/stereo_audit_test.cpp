@@ -28,7 +28,9 @@ int main(int argc,char** argv){
     const bool quiet=argc>1&&!std::strcmp(argv[1],"--diagnostics-off");if(quiet)SetEnvironmentVariableA("LMU_QV_DIAGNOSTICS","0");
     const bool hardware=argc>1&&!std::strcmp(argv[1],"--hardware");
     bool exportShaders=false;for(int i=1;i<argc;++i)exportShaders|=!std::strcmp(argv[i],"--shader-export");
+    bool proofRequested=false;for(int i=1;i<argc;++i)proofRequested|=!std::strcmp(argv[i],"--pair-proof");
     SetEnvironmentVariableA("LMU_QV_STEREO_SHADER_CAPTURE",exportShaders?"1":"0");
+    SetEnvironmentVariableA("LMU_QV_STEREO_DRAW_PROOF",proofRequested?"1":"0");
     wchar_t executable[32768]{};assert(GetModuleFileNameW(nullptr,executable,32768));
     const auto directory=std::filesystem::path(executable).parent_path()/("stereo-audit-test-"+std::to_string(GetTickCount64()));assert(std::filesystem::create_directory(directory));
     assert(!stereo_audit_prepare(false,directory.c_str(),log));
@@ -54,18 +56,24 @@ int main(int argc,char** argv){
     context->OMSetRenderTargets(1,&rtv,nullptr);D3D11_VIEWPORT viewport{0,0,8,8,0,1};context->RSSetViewports(1,&viewport);
     const UINT stride=8,offset=0;context->IASetVertexBuffers(0,1,&vb,&stride,&offset);context->IASetIndexBuffer(ib,DXGI_FORMAT_R32_UINT,0);context->IASetInputLayout(layout);context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context->VSSetShader(vs,nullptr,0);context->PSSetShader(ps,nullptr,0);context->VSSetConstantBuffers(2,1,&cb);const float zero[4]{};context->UpdateSubresource(cb,0,nullptr,zero,0,0);
-    auto draw=[&]{context->UpdateSubresource(cb,0,nullptr,zero,0,0);context->DrawIndexed(3,0,0);};
+    int nativeMeshIdentity=0;
+    auto draw=[&]{const auto native=stereo_audit_native_prepare_begin(&nativeMeshIdentity);context->UpdateSubresource(cb,0,nullptr,zero,0,0);stereo_audit_native_prepare_end(native);context->DrawIndexed(3,0,0);};
     draw();assert(files(directory).empty()); // All ordinary draws are forwarded.
+    ID3D11Query* query=nullptr;D3D11_QUERY_DESC queryDesc{D3D11_QUERY_OCCLUSION,0};assert(SUCCEEDED(device->CreateQuery(&queryDesc,&query)));context->Begin(query);
     for(unsigned frame=0;frame<2;++frame){
         stereo_audit_frame(true); // Holding the key must not stop/restart.
         for(unsigned pass=0;pass<4;++pass){StereoAuditScope scope{StereoAuditPass(pass)};StereoAuditGroup group(7);draw();}
         stereo_audit_frame_end();
+        if(frame==0)context->End(query);
     }
     assert(contains("stereo_audit complete")&&files(directory).size()==1);
     auto first=read(files(directory)[0]);assert(count(first,"\"kind\":")==8&&count(first,"\"sha256\":\"")==2);
     assert(first.find("\"scene_frames\":2")!=std::string::npos&&first.find("\"rendering\":\"legacy\"")!=std::string::npos);
     assert(first.find("\"name\":\"offset\"")!=std::string::npos&&first.find("\"group\":7")!=std::string::npos&&first.find("\"layout_known\":1")!=std::string::npos);
     assert(first.find("\"early_device\":1")!=std::string::npos&&first.find("\"shader_definitions_dropped\":0")!=std::string::npos);
+    assert(count(first,"\"native_mesh\":1")==8&&count(first,"\"active_queries\":1")==4&&count(first,"\"active_queries\":0")==4);
+    assert(first.find(proofRequested?"\"stereo_pair_proof\":{\"requested\":1":"\"stereo_pair_proof\":{\"requested\":0")!=std::string::npos);
+    if(proofRequested)assert(first.find("\"status\":\"inconclusive\"")!=std::string::npos&&first.find("no eligible draw outside queries")!=std::string::npos);drop(query);
     assert(count(first,"\"bytecode_file\":")==unsigned(exportShaders?2:0));
     unsigned bytecodeFiles=0;if(std::filesystem::exists(directory/L"stereo-shaders"))for(const auto& file:std::filesystem::directory_iterator(directory/L"stereo-shaders")){
         const auto data=read(file.path());assert(data.size()>4&&data.substr(0,4)=="DXBC");++bytecodeFiles;}

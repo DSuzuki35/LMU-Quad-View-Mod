@@ -35,6 +35,8 @@ def summarize(data):
             "draw_api_wall_ms": p["api_ticks"] * 1000 / frequency,
             "maps": p["maps"], "updates": p["updates"], "copies": p["copies"],
             "dispatches": p["dispatches"], "command_lists": p["command_lists"],
+            "native_mesh_preparations": p.get("native_mesh_preparations", p.get("native_mesh_binds", 0)),
+            "native_preparation_ms": p.get("native_prepare_ticks", p.get("native_bind_ticks", 0)) * 1000 / frequency,
         })
 
     def signatures(slot):
@@ -63,6 +65,7 @@ def summarize(data):
         "shader_definitions_dropped": data.get("shader_definitions_dropped", 0),
         "layout_definitions_dropped": data.get("layout_definitions_dropped", 0),
         "shader_export": data.get("shader_export", {"enabled": 0}),
+        "stereo_pair_proof": data.get("stereo_pair_proof", {"requested": 0}),
         "local_shader_program_files": sorted({s["bytecode_file"] for s in shaders.values() if s.get("bytecode_file")}),
         "shader_ids_without_definitions": sorted({s for d in data["draws"] for s in d["shaders"] if s and s not in shaders}),
         "simple_pipeline_draws_for_further_inspection": simple,
