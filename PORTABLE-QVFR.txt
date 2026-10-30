@@ -24,7 +24,18 @@ settings. Existing other-application settings and unowned LMU keys are preserved
 Changing settings outside the launcher is possible, but our managed values are
 reapplied on Save/Launch. Restart LMU after changes.
 
-Defaults: outer linear resolution 25%, inner 100%, box width 50%, height 50%.
+Build 2026.10.30.1: focus controls use equal-axis units after a measured FOV is
+available. 50/50 is approximately square near the center, using the shorter
+outer FOV tangent span as the reference for both dimensions. Saved old settings
+retain the same box: their displayed numbers change, not their provider values.
+Calibration is read from the latest run in this package's logs, and saved locally.
+On a fresh package, start LMU once and click "Read latest headset FOV". Until then
+the hint explicitly identifies the controls as legacy per-axis percentages.
+Repeat after changing headset, runtime or FOV. This is not live headset detection.
+QVFR can still widen or clip the region near the edges during eye tracking.
+The UI ranges reflect QVFR's 10-90% per-axis limits in the new units.
+
+Uncalibrated defaults: outer linear resolution 25%, inner 100%, box width 50%, height 50%.
 Outer is limited to 10-400%, inner 25-400%, box dimensions 10-90% to avoid upstream
 clamps. The outer dimension must fit the common focus buffer on BOTH axes. The
 launcher checks the nominal ratio; final runtime dimensions are checked by the

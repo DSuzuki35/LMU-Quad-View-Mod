@@ -21,6 +21,8 @@ namespace LmuQuadViewLauncher
         public decimal InnerPercent { get; set; }
         public decimal FocusWidthPercent { get; set; }
         public decimal FocusHeightPercent { get; set; }
+        // Provider percentages retain their old meaning; this is UI calibration only.
+        public decimal FocusAspectRatio { get; set; }
         public LauncherSettings()
         {
             GameDirectory = @"D:\SteamLibrary\steamapps\common\Le Mans Ultimate";
@@ -36,6 +38,7 @@ namespace LmuQuadViewLauncher
         public static void Validate(LauncherSettings s)
         {
             if (s == null) throw new ArgumentNullException("settings");
+            if(s.FocusAspectRatio!=0&&(s.FocusAspectRatio<0.1m||s.FocusAspectRatio>10m)) throw new ArgumentException("Invalid measured focus aspect ratio.");
             if (String.IsNullOrWhiteSpace(s.GameDirectory)) throw new ArgumentException("Select the LMU game folder.");
             if (s.Backend != "Native" && s.Backend != "QVFR") throw new ArgumentException("Choose Native or QVFR.");
             if (s.FoveationMode != "auto" && s.FoveationMode != "fixed") throw new ArgumentException("Choose Auto or Fixed foveation.");
@@ -65,6 +68,7 @@ namespace LmuQuadViewLauncher
             s.InnerPercent = Decimal.Parse(Value(x, "InnerPercent", "100"), CultureInfo.InvariantCulture);
             s.FocusWidthPercent = Decimal.Parse(Value(x, "FocusWidthPercent", "50"), CultureInfo.InvariantCulture);
             s.FocusHeightPercent = Decimal.Parse(Value(x, "FocusHeightPercent", "50"), CultureInfo.InvariantCulture);
+            s.FocusAspectRatio = Decimal.Parse(Value(x, "FocusAspectRatio", "0"), CultureInfo.InvariantCulture);
             Validate(s); return s;
         }
         public static void Save(string path, LauncherSettings s)
@@ -76,7 +80,8 @@ namespace LmuQuadViewLauncher
                 new XElement("NativeOuterResolution", s.NativeOuterResolution), new XElement("UseRuntimeSettings", true),
                 new XElement("OuterBlur", s.OuterBlur),
                 new XElement("OuterPercent", s.OuterPercent), new XElement("InnerPercent", s.InnerPercent),
-                new XElement("FocusWidthPercent", s.FocusWidthPercent), new XElement("FocusHeightPercent", s.FocusHeightPercent));
+                new XElement("FocusWidthPercent", s.FocusWidthPercent), new XElement("FocusHeightPercent", s.FocusHeightPercent),
+                new XElement("FocusAspectRatio", s.FocusAspectRatio));
             WriteAtomic(path, xml.ToString(), false);
         }
         public static string ProfileText(string existing, LauncherSettings s)

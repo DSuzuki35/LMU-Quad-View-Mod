@@ -33,10 +33,13 @@ class SettingsTests
         s.FocusWidthPercent=100; Rejected(delegate{QvfrSettings.Validate(s);}); s.FocusWidthPercent=33;
         s.FocusHeightPercent=9; Rejected(delegate{QvfrSettings.Validate(s);}); s.FocusHeightPercent=25;
         s.OuterBlur=4; Rejected(delegate{QvfrSettings.Validate(s);}); s.OuterBlur=1.25m;
+        s.FocusAspectRatio=2.19283709218806m;
         string xml=Path.Combine(folder,"launcher-settings.xml"); QvfrSettings.Save(xml,s); var loaded=QvfrSettings.Load(xml);
         Require(loaded.FocusWidthPercent==33 && loaded.FocusHeightPercent==25 && loaded.InnerPercent==200 && loaded.OuterBlur==1.25m,"Settings roundtrip");
+        Require(loaded.FocusAspectRatio==s.FocusAspectRatio,"Measured FOV calibration lost on roundtrip");
         File.WriteAllText(xml,"<QuadView><GameDirectory>D:\\Game</GameDirectory><DebugFocus>true</DebugFocus></QuadView>");
         loaded=QvfrSettings.Load(xml); Require(loaded.Backend=="Native" && loaded.DebugFocus && loaded.OuterPercent==25,"Old settings migration");
+        Require(loaded.FocusAspectRatio==0,"Old settings invent headset geometry");
         Console.WriteLine("C# settings tests passed: independent dimensions, invariant culture, backups, preservation, validation, migration.");
     }
 }

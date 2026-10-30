@@ -5,12 +5,12 @@ if (!(Test-Path -LiteralPath $compiler)) { throw '.NET Framework x64 C# compiler
 $OutputPath = [IO.Path]::GetFullPath($OutputPath)
 New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($OutputPath)) -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $PSScriptRoot 'build') -Force | Out-Null
-$core = @((Join-Path $PSScriptRoot 'launcher/QvfrSettings.cs'),(Join-Path $PSScriptRoot 'launcher/LaunchService.cs'),(Join-Path $PSScriptRoot 'launcher/AssemblyInfo.cs'))
+$core = @((Join-Path $PSScriptRoot 'launcher/QvfrSettings.cs'),(Join-Path $PSScriptRoot 'launcher/FocusGeometry.cs'),(Join-Path $PSScriptRoot 'launcher/LaunchService.cs'),(Join-Path $PSScriptRoot 'launcher/AssemblyInfo.cs'))
 $manifest = Join-Path $PSScriptRoot 'launcher/app.manifest'
 $icon = Join-Path $PSScriptRoot 'launcher/assets/quadview.ico'
 $appConfig = Join-Path $PSScriptRoot 'launcher/app.config'
 $references = @('/reference:System.Windows.Forms.dll','/reference:System.Drawing.dll','/reference:System.Xml.Linq.dll','/reference:System.Web.Extensions.dll')
-foreach ($test in @('SettingsTests','LaunchServiceTests')) {
+foreach ($test in @('SettingsTests','FocusGeometryTests','LaunchServiceTests')) {
     $testOutput = Join-Path $PSScriptRoot ('build/' + $test + '.exe')
     & $compiler /nologo /target:exe /platform:x64 /optimize+ /warnaserror+ "/main:$test" "/out:$testOutput" @references @core (Join-Path $PSScriptRoot "launcher/$test.cs")
     if ($LASTEXITCODE -ne 0) { throw "$test compilation failed" }

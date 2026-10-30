@@ -13,6 +13,15 @@ is required. The unsigned EXE may still trigger Windows reputation warnings.
 Keep the included `.exe.config` next to the launcher for per-monitor DPI support.
 
 QVFR mode exposes outer/inner resolution and independent box width/height.
+Build **2026.10.30.1** adds equal-axis focus controls: after measuring the headset
+FOV, 50/50 produces an approximately square region near the center. The launcher
+reads the latest local run's outer FOV and converts the displayed values to QVFR's
+per-axis fractions. Old settings preserve their existing region. On a fresh
+installation, controls explicitly remain per-axis percentages until you run LMU
+once and click **Read latest headset FOV**. Re-read after changing headset,
+runtime or FOV; calibration is a snapshot, not live headset detection. QVFR can
+widen/clip the region near gaze limits. Stored percentages and native rendering
+are unchanged. Always free; donations are completely optional.
 Save or Launch applies a backed-up LMU-only provider profile. Native mode uses
 runtime settings. Optional outer smoothing defaults to off and leaves focus
 sharp. It adds GPU work; no measured performance cost is claimed yet.

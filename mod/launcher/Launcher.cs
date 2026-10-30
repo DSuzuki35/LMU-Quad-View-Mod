@@ -211,6 +211,10 @@ namespace LmuQuadViewLauncher
         readonly NumericUpDown number = new NumericUpDown();
         readonly PurpleSlider slider = new PurpleSlider();
         public decimal Value { get { return number.Value; } set { number.Value = Math.Max(number.Minimum, Math.Min(number.Maximum, value)); } }
+        public void SetRange(decimal minimum,decimal maximum) {
+            number.Maximum=Math.Max(number.Maximum,maximum);number.Minimum=minimum;number.Maximum=maximum;
+            slider.Maximum=(int)Math.Ceiling(maximum);slider.Minimum=(int)Math.Floor(minimum);
+        }
         public PercentSetting(string title, int min, int max)
         {
             AutoScaleMode = AutoScaleMode.Inherit;
@@ -230,7 +234,7 @@ namespace LmuQuadViewLauncher
             slider.Dock = DockStyle.Fill; grid.Controls.Add(slider, 0, 1); grid.SetColumnSpan(slider, 3);
             bool synchronizing = false;
             number.ValueChanged += delegate { if (synchronizing) return; synchronizing = true; slider.Value = (int)Math.Round(number.Value); synchronizing = false; };
-            slider.ValueChanged += delegate { if (synchronizing) return; synchronizing = true; number.Value = slider.Value; synchronizing = false; };
+            slider.ValueChanged += delegate { if (synchronizing) return; synchronizing = true; Value = slider.Value; synchronizing = false; };
             Controls.Add(grid);
         }
     }
@@ -238,7 +242,7 @@ namespace LmuQuadViewLauncher
     sealed class Launcher : Form
     {
         readonly string root = AppDomain.CurrentDomain.BaseDirectory;
-        readonly ComboBox backend = Choice(new[] { "Native OpenXR", "Quad-Views-Foveated" });
+        readonly ComboBox backend = Choice(new[] { "Pimax OpenXR (Pimax Headsets only)", "Quad Views Foveated by mbucchia (all supported Headsets)" });
         readonly ComboBox mode = Choice(new[] { "Auto / eye tracking", "Fixed foveation" });
         readonly TextBox game = Field();
         readonly TextBox manifest = Field();
@@ -256,6 +260,9 @@ namespace LmuQuadViewLauncher
         readonly Label subheader = Theme.Label("Four views. One sharper racing experience.", 10F, Theme.Muted);
         readonly Label providerHint = Theme.Label("", 9F, Theme.Muted);
         readonly Label resolutionHint = Theme.Label("", 9F, Theme.Muted);
+        readonly Label focusHint = Theme.Label("", 9F, Theme.Muted);
+        readonly Button refreshFov = Theme.Button("Read latest headset FOV", false);
+        FocusGeometry focusGeometry;
         readonly Button launch = Theme.Button("Launch LMU", true);
         readonly Button save = Theme.Button("Save settings", false);
         readonly Button renderingNav = Theme.Button("  Rendering", false);
@@ -295,7 +302,7 @@ namespace LmuQuadViewLauncher
         public Launcher()
         {
             SuspendLayout();
-            Text = "LMU Quad View"; BackColor = Theme.Background; ForeColor = Theme.Text;
+            Text = "LMU Quad View — 2026.10.30.1"; BackColor = Theme.Background; ForeColor = Theme.Text;
             Font = new Font("Segoe UI", 10F); AutoScaleDimensions = new SizeF(96F, 96F); AutoScaleMode = AutoScaleMode.Dpi;
             try {
                 using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("LmuQuadView.Icon")) {
@@ -305,6 +312,7 @@ namespace LmuQuadViewLauncher
             } catch (ArgumentException) { }
             renderingNav.Name = "RenderingNav"; setupNav.Name = "SetupNav";
             save.Name = "SaveButton"; launch.Name = "LaunchButton";
+            backend.Name = "ProviderSelector";
             ClientSize = new Size(1050, 780); MinimumSize = new Size(900, 700); StartPosition = FormStartPosition.CenterScreen;
             var frame = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0) };
             frame.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -324,7 +332,12 @@ namespace LmuQuadViewLauncher
             renderingNav.Click += delegate { ShowPage(false); }; setupNav.Click += delegate { ShowPage(true); };
             save.Click += delegate { SaveSettings(); }; launch.Click += delegate { StartGame(); };
             AcceptButton = launch;
-            try { Fill(QvfrSettings.Load(SettingsPath)); }
+            try {
+                var settings=QvfrSettings.Load(SettingsPath);
+                var measurement=FocusGeometry.LoadCalibration(root,settings.FocusAspectRatio);
+                settings.FocusAspectRatio=measurement==null?0:measurement.Aspect;
+                Fill(settings);
+            }
             catch (Exception ex) { status.Text = "Settings could not be loaded: " + ex.Message; }
             UpdateProvider(); ShowPage(false);
             ResumeLayout(true);
@@ -336,7 +349,7 @@ namespace LmuQuadViewLauncher
             side.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             side.RowStyles.Add(new RowStyle(SizeType.AutoSize)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 49));
             side.RowStyles.Add(new RowStyle(SizeType.Absolute, 49)); side.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            side.RowStyles.Add(new RowStyle(SizeType.Absolute, 26)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 89)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 43));
+            side.RowStyles.Add(new RowStyle(SizeType.Absolute, 26)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 89)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 65));
             var brand = Stack(3); brand.AutoSize = true; brand.Dock = DockStyle.Top; brand.Margin = new Padding(0, 0, 0, 24);
             brand.RowStyles.Add(new RowStyle(SizeType.AutoSize)); brand.RowStyles.Add(new RowStyle(SizeType.AutoSize)); brand.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             var lmu = Theme.Label("LMU", 25F, Theme.Text); lmu.Name = "BrandTitle"; lmu.Font = new Font("Segoe UI", 25F, FontStyle.Bold);
@@ -344,28 +357,35 @@ namespace LmuQuadViewLauncher
             foreach (Control label in brand.Controls) { ((Label)label).AutoSize = true; label.Dock = DockStyle.Top; label.Margin = new Padding(0, 0, 0, 5); }
             foreach (var nav in new[] { renderingNav, setupNav }) { nav.Dock = DockStyle.Fill; nav.TextAlign = ContentAlignment.MiddleLeft; nav.Margin = new Padding(0, 3, 0, 5); nav.FlatAppearance.BorderSize = 0; }
             side.Controls.Add(renderingNav, 0, 1); side.Controls.Add(setupNav, 0, 2);
-            side.Controls.Add(Caption("SUPPORT THE PROJECT"), 0, 4);
+            side.Controls.Add(Caption("OPTIONAL SUPPORT"), 0, 4);
             var support = Stack(2); support.RowStyles.Add(new RowStyle(SizeType.Absolute, 41)); support.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
             var coffee = Theme.Button("Buy me a coffee", false); coffee.Name = "CoffeeButton"; coffee.Dock = DockStyle.Fill; coffee.Font = new Font("Segoe UI", 9F); coffee.Margin = new Padding(0, 0, 0, 4);
             coffee.Click += delegate { OpenLink("https://buymeacoffee.com/dansuzuki"); }; support.Controls.Add(coffee, 0, 0);
             Link(support, "Shop via affiliate links", "https://dansuzuki.com/discounts/", 1); side.Controls.Add(support, 0, 5);
-            var tag = Theme.Label("OFFLINE EXPERIMENTAL", 8F, Theme.Muted); side.Controls.Add(tag, 0, 6); return side;
+            var tag = Theme.Label("Always free.\nDonations are completely\noptional.", 8F, Theme.Muted); tag.Name="FreeNotice"; side.Controls.Add(tag, 0, 6); return side;
         }
         void BuildRendering()
         {
             var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 4, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 136)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 231));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 200)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 280));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54)); renderingPage.SetContent(grid);
             var provider = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
-            var p = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 3, Margin = new Padding(0) };
-            p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+            var p = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Margin = new Padding(0) };
+            p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            p.RowStyles.Add(new RowStyle(SizeType.Absolute, 25)); p.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
             p.RowStyles.Add(new RowStyle(SizeType.Absolute, 25)); p.RowStyles.Add(new RowStyle(SizeType.Absolute, 32)); p.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            p.Controls.Add(Caption("RENDERING PROVIDER"), 0, 0); p.Controls.Add(Caption("FOVEATION MODE"), 1, 0);
-            backend.Margin = new Padding(0, 0, 16, 0); mode.Margin = new Padding(0); p.Controls.Add(backend, 0, 1); p.Controls.Add(mode, 1, 1);
-            p.Controls.Add(providerHint, 0, 2); p.SetColumnSpan(providerHint, 2); provider.Controls.Add(p); grid.Controls.Add(provider, 0, 0); grid.SetColumnSpan(provider, 2);
+            p.Controls.Add(Caption("RENDERING PROVIDER"), 0, 0); p.Controls.Add(Caption("FOVEATION MODE"), 0, 2);
+            backend.Margin = mode.Margin = new Padding(0); p.Controls.Add(backend, 0, 1); p.Controls.Add(mode, 0, 3);
+            p.Controls.Add(providerHint, 0, 4); provider.Controls.Add(p); grid.Controls.Add(provider, 0, 0); grid.SetColumnSpan(provider, 2);
             grid.Controls.Add(SettingCard("Resolution", outer, inner, "Linear scale per dimension.", new Padding(0, 0, 7, 14)), 0, 1);
-            grid.Controls.Add(SettingCard("Focus region", focusWidth, focusHeight, "Fraction of the full view. QVFR allows 10–90%.", new Padding(7, 0, 0, 14)), 1, 1);
+            var focusCard=SettingCard("Focus region", focusWidth, focusHeight, "", new Padding(7, 0, 0, 14));
+            var focusContent=(TableLayoutPanel)focusCard.Controls[0];
+            focusContent.Controls.Remove(focusContent.GetControlFromPosition(0,3));
+            var focusFooter=Stack(2);focusFooter.RowStyles.Add(new RowStyle(SizeType.Percent,100));focusFooter.RowStyles.Add(new RowStyle(SizeType.Absolute,30));
+            focusFooter.Controls.Add(focusHint,0,0);refreshFov.Dock=DockStyle.Fill;refreshFov.Margin=new Padding(0);refreshFov.Font=new Font("Segoe UI",9F);
+            refreshFov.Click+=delegate { RefreshFocusGeometry(); };focusFooter.Controls.Add(refreshFov,0,1);focusContent.Controls.Add(focusFooter,0,3);
+            grid.Controls.Add(focusCard,1,1);
             var preview = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 12), Padding = new Padding(18, 10, 18, 10) };
             var info = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Margin = new Padding(0) };
             info.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); info.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -443,16 +463,24 @@ namespace LmuQuadViewLauncher
             bool qvfr = backend.SelectedIndex == 1;
             outer.Enabled = inner.Enabled = focusWidth.Enabled = focusHeight.Enabled = qvfr;
             manifest.Enabled = browseManifest.Enabled = qvfr;
+            refreshFov.Enabled=qvfr;
             providerHint.Text = qvfr ? "Uses Quad-Views-Foveated with your active OpenXR runtime." : "Use your runtime's quad-view settings, for example Pimax EVO.";
             resolutionHint.Text = qvfr ? "200% resolution means 2x width and 2x height (4x pixels). Save updates only LMU's QVFR profile and backs up existing settings. Restart LMU after changes."
                 : "Resolution and focus size are controlled by your native runtime. Switch to Quad-Views-Foveated to adjust them here. Restart LMU after changes.";
         }
         void Fill(LauncherSettings s)
         {
+            focusGeometry=s.FocusAspectRatio==0?null:new FocusGeometry(s.FocusAspectRatio);
+            focusWidth.SetRange(focusGeometry==null?10:focusGeometry.DisplayWidth(10),focusGeometry==null?90:focusGeometry.DisplayWidth(90));
+            focusHeight.SetRange(focusGeometry==null?10:focusGeometry.DisplayHeight(10),focusGeometry==null?90:focusGeometry.DisplayHeight(90));
+            focusHint.Text=focusGeometry==null?"Per-axis % until measured: run LMU once, then read FOV below."
+                :"Equal-axis sizes: 50 / 50 is square near the center. Re-read FOV after headset/FOV changes.";
             game.Text = s.GameDirectory ?? ""; manifest.Text = s.QuadViewsManifest ?? "";
             backend.SelectedIndex = s.Backend == "QVFR" ? 1 : 0; mode.SelectedIndex = s.FoveationMode == "fixed" ? 1 : 0;
             outline.Checked = s.DebugFocus; nativeOuter.Checked = s.NativeOuterResolution;
-            outer.Value = s.OuterPercent; inner.Value = s.InnerPercent; focusWidth.Value = s.FocusWidthPercent; focusHeight.Value = s.FocusHeightPercent;
+            outer.Value = s.OuterPercent; inner.Value = s.InnerPercent;
+            focusWidth.Value = focusGeometry==null?s.FocusWidthPercent:focusGeometry.DisplayWidth(s.FocusWidthPercent);
+            focusHeight.Value = focusGeometry==null?s.FocusHeightPercent:focusGeometry.DisplayHeight(s.FocusHeightPercent);
             outerBlur.Value = Math.Max(outerBlur.Minimum, Math.Min(outerBlur.Maximum, s.OuterBlur));
         }
         LauncherSettings Values()
@@ -460,8 +488,22 @@ namespace LmuQuadViewLauncher
             var s = new LauncherSettings { GameDirectory = game.Text.Trim(), QuadViewsManifest = manifest.Text.Trim(),
                 Backend = backend.SelectedIndex == 1 ? "QVFR" : "Native", FoveationMode = mode.SelectedIndex == 1 ? "fixed" : "auto",
                 DebugFocus = outline.Checked, NativeOuterResolution = nativeOuter.Checked,
-                OuterPercent = outer.Value, InnerPercent = inner.Value, FocusWidthPercent = focusWidth.Value, FocusHeightPercent = focusHeight.Value, OuterBlur = outerBlur.Value };
+                OuterPercent = outer.Value, InnerPercent = inner.Value,
+                FocusWidthPercent = focusGeometry==null?focusWidth.Value:focusGeometry.ProviderWidth(focusWidth.Value),
+                FocusHeightPercent = focusGeometry==null?focusHeight.Value:focusGeometry.ProviderHeight(focusHeight.Value),
+                FocusAspectRatio=focusGeometry==null?0:focusGeometry.Aspect, OuterBlur = outerBlur.Value };
             QvfrSettings.Validate(s); return s;
+        }
+        void RefreshFocusGeometry() {
+            try {
+                var measured=FocusGeometry.Latest(root);
+                if(measured==null) {
+                    var old=Values();old.FocusAspectRatio=0;Fill(old);
+                    throw new InvalidOperationException("No compatible stereo FOV measurement in the latest run. Returned to per-axis percentages. Start LMU with this package and headset, then try again.");
+                }
+                var settings=Values();settings.FocusAspectRatio=measured.Aspect;Fill(settings);
+                status.Text="Headset FOV refreshed. Current box preserved; equal width/height now uses equal-axis sizes. Save to keep this calibration.";
+            } catch(Exception error) { ShowError(error.Message); }
         }
         void SaveSettings()
         {
