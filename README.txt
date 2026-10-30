@@ -2,8 +2,9 @@ LMU QUAD VIEW MOD - DIRECT LAUNCHER TEST BUILD
 
 Extract the WHOLE ZIP into a new writable folder outside LMU.
 Open LMU-QuadView-Launcher.exe. PowerShell 7 and script unblocking are not needed.
-Windows x64 / .NET Framework 4.x and D3D11 are required. The EXE is unsigned;
+Windows x64 / .NET Framework 4.8 and D3D11 are required. The EXE is unsigned;
 Windows reputation or download warnings may still appear.
+Keep LMU-QuadView-Launcher.exe.config beside the EXE for per-monitor DPI support.
 
 Setup: select the LMU folder and the headset's active OpenXR runtime.
 Rendering: choose Native OpenXR or Quad-Views-Foveated, then Auto or Fixed.

@@ -7,6 +7,7 @@ New-Item -ItemType Directory -Path $stage,(Join-Path $stage 'build'),(Join-Path 
 $files = @{
     'mod/build/lmu_quadview.dll' = 'build/lmu_quadview.dll'
     'mod/build/LMU-QuadView-Launcher.exe' = 'LMU-QuadView-Launcher.exe'
+    'mod/build/LMU-QuadView-Launcher.exe.config' = 'LMU-QuadView-Launcher.exe.config'
     'PORTABLE-QVFR.txt' = 'PORTABLE-QVFR.txt'
     'TODO.md' = 'TODO.md'
     'mod/XR_APILAYER_LMU_quadview.json' = 'XR_APILAYER_LMU_quadview.json'

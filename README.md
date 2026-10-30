@@ -8,8 +8,9 @@ mbucchia's separately installed Quad-Views-Foveated stereo compositor.
 
 Extract the complete ZIP and open **LMU-QuadView-Launcher.exe**. No PowerShell
 installation, setup script or script-unblocking step is required. Select the
-game folder in Setup, then provider and mode in Rendering. .NET Framework 4.x
+game folder in Setup, then provider and mode in Rendering. .NET Framework 4.8
 is required. The unsigned EXE may still trigger Windows reputation warnings.
+Keep the included `.exe.config` next to the launcher for per-monitor DPI support.
 
 QVFR mode exposes outer/inner resolution and independent box width/height.
 Save or Launch applies a backed-up LMU-only provider profile. Native mode uses

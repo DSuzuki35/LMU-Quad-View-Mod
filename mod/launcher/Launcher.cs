@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
+using System.Reflection;
 using System.Windows.Forms;
 
 namespace LmuQuadViewLauncher
@@ -47,6 +48,120 @@ namespace LmuQuadViewLauncher
         }
     }
 
+    // A real scrollable viewport without the OS's bright non-client scroll bars.
+    sealed class DarkScrollBar : Control
+    {
+        int position, maximum, viewport;
+        int dragY, dragValue;
+        bool dragging;
+        public event EventHandler ValueChanged;
+        public int Maximum { get { return maximum; } set { maximum = Math.Max(0, value); Value = position; Invalidate(); } }
+        public int Viewport { get { return viewport; } set { viewport = Math.Max(1, value); Invalidate(); } }
+        public int Value { get { return position; } set { int next = Math.Max(0, Math.Min(maximum, value)); if (next == position) return;
+            position = next; Invalidate(); if (ValueChanged != null) ValueChanged(this, EventArgs.Empty); } }
+        int ThumbHeight { get { return Math.Min(Height, Math.Max(Font.Height * 2, Height * viewport / Math.Max(1, maximum + viewport))); } }
+        int ThumbTop { get { return maximum == 0 ? 0 : (int)((long)(Height - ThumbHeight) * position / maximum); } }
+        public DarkScrollBar()
+        {
+            Name = "PageScrollBar"; Width = 12; Dock = DockStyle.Right; TabStop = true; BackColor = Theme.Background;
+            AccessibleRole = AccessibleRole.ScrollBar; AccessibleName = "Page scroll"; Cursor = Cursors.Hand;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+                ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
+        }
+        public void ScrollWheel(int delta) { Value -= delta * Math.Max(1, SystemInformation.MouseWheelScrollLines) * Font.Height / 120; }
+        protected override bool IsInputKey(Keys keyData)
+        {
+            return keyData == Keys.Up || keyData == Keys.Down || keyData == Keys.PageUp || keyData == Keys.PageDown ||
+                keyData == Keys.Home || keyData == Keys.End || base.IsInputKey(keyData);
+        }
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            base.OnKeyDown(e);
+            if (e.KeyCode == Keys.Up) Value -= Font.Height; else if (e.KeyCode == Keys.Down) Value += Font.Height;
+            else if (e.KeyCode == Keys.PageUp) Value -= viewport; else if (e.KeyCode == Keys.PageDown) Value += viewport;
+            else if (e.KeyCode == Keys.Home) Value = 0; else if (e.KeyCode == Keys.End) Value = maximum;
+        }
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e); if (e.Button != MouseButtons.Left) return; Focus();
+            if (e.Y >= ThumbTop && e.Y < ThumbTop + ThumbHeight) { dragging = true; dragY = e.Y; dragValue = position; Capture = true; }
+            else Value += e.Y < ThumbTop ? -viewport : viewport;
+        }
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e); if (dragging) Value = dragValue + (int)((long)(e.Y - dragY) * maximum / Math.Max(1, Height - ThumbHeight));
+        }
+        protected override void OnMouseUp(MouseEventArgs e) { dragging = false; Capture = false; base.OnMouseUp(e); }
+        protected override void OnMouseCaptureChanged(EventArgs e) { if (!Capture) dragging = false; base.OnMouseCaptureChanged(e); }
+        protected override void OnMouseWheel(MouseEventArgs e) { ScrollWheel(e.Delta); base.OnMouseWheel(e); }
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e); if (maximum == 0) return;
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            float thickness = Math.Max(3, Width * 0.38F);
+            using (var track = new Pen(Theme.Line, Math.Max(1, thickness / 3))) e.Graphics.DrawLine(track, Width / 2F, 0, Width / 2F, Height);
+            using (var thumb = new Pen(Focused || dragging ? Theme.Accent : Theme.Muted, thickness)) {
+                thumb.StartCap = thumb.EndCap = LineCap.Round;
+                e.Graphics.DrawLine(thumb, Width / 2F, ThumbTop + thickness / 2, Width / 2F, ThumbTop + Math.Max(thickness / 2, ThumbHeight - thickness / 2));
+            }
+        }
+    }
+
+    sealed class DarkScrollPage : Panel
+    {
+        readonly Panel viewport = new Panel { Dock = DockStyle.Fill, AutoScroll = false, Margin = new Padding(0), BackColor = Theme.Background };
+        readonly DarkScrollBar bar = new DarkScrollBar();
+        Control content;
+        bool arranging;
+        public DarkScrollPage()
+        {
+            Dock = DockStyle.Fill; Margin = new Padding(0); BackColor = Theme.Background; AutoScroll = false;
+            Controls.Add(viewport); Controls.Add(bar); bar.Visible = false;
+            viewport.SizeChanged += delegate { ArrangeContent(); };
+            bar.ValueChanged += delegate { if (content != null) content.Top = -bar.Value; };
+            MouseWheel += Wheel; viewport.MouseWheel += Wheel;
+        }
+        public void SetContent(Control value)
+        {
+            content = value; value.AutoSize = false; value.Dock = DockStyle.None; value.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            viewport.Controls.Add(value); Watch(value); value.SizeChanged += delegate { ArrangeContent(); }; ArrangeContent();
+        }
+        void Watch(Control control)
+        {
+            control.MouseWheel += Wheel;
+            control.Enter += delegate { Reveal(control); };
+            control.ControlAdded += delegate(object sender, ControlEventArgs e) { Watch(e.Control); ArrangeContent(); };
+            foreach (Control child in control.Controls) Watch(child);
+        }
+        void Wheel(object sender, MouseEventArgs e)
+        {
+            if (bar.Maximum == 0) return; bar.ScrollWheel(e.Delta);
+            var handled = e as HandledMouseEventArgs; if (handled != null) handled.Handled = true;
+        }
+        void Reveal(Control control)
+        {
+            if (!Visible || content == null || !control.IsHandleCreated || bar.Maximum == 0) return;
+            var point = viewport.PointToClient(control.PointToScreen(Point.Empty));
+            if (point.Y < 0) bar.Value += point.Y - Font.Height;
+            else if (point.Y + control.Height > viewport.ClientSize.Height) bar.Value += point.Y + control.Height - viewport.ClientSize.Height + Font.Height;
+        }
+        protected override void OnLayout(LayoutEventArgs e) { base.OnLayout(e); ArrangeContent(); }
+        void ArrangeContent()
+        {
+            if (arranging || content == null || ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
+            arranging = true;
+            try {
+                int width = ClientSize.Width;
+                int height = content.GetPreferredSize(new Size(width, 0)).Height;
+                bar.Visible = height > ClientSize.Height;
+                width = Math.Max(1, ClientSize.Width - (bar.Visible ? bar.Width : 0));
+                height = content.GetPreferredSize(new Size(width, 0)).Height;
+                content.SetBounds(0, -bar.Value, width, height);
+                bar.Viewport = ClientSize.Height; bar.Maximum = height - ClientSize.Height; content.Top = -bar.Value;
+            } finally { arranging = false; }
+        }
+    }
+
     sealed class PurpleSlider : Control
     {
         int current;
@@ -66,7 +181,8 @@ namespace LmuQuadViewLauncher
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
                 ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
         }
-        void SetFromMouse(int x) { Value = Minimum + (int)Math.Round((Maximum - Minimum) * Math.Max(0, Math.Min(1, (x - 9.0) / Math.Max(1, Width - 18)))); }
+        float DpiScale { get { return DeviceDpi / 96F; } }
+        void SetFromMouse(int x) { Value = Minimum + (int)Math.Round((Maximum - Minimum) * Math.Max(0, Math.Min(1, (x - 9.0 * DpiScale) / Math.Max(1, Width - 18 * DpiScale)))); }
         protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); if (e.Button != MouseButtons.Left) return; Focus(); Capture = true; SetFromMouse(e.X); }
         protected override void OnMouseMove(MouseEventArgs e) { base.OnMouseMove(e); if (Capture && e.Button == MouseButtons.Left) SetFromMouse(e.X); }
         protected override void OnMouseUp(MouseEventArgs e) { Capture = false; base.OnMouseUp(e); }
@@ -81,11 +197,12 @@ namespace LmuQuadViewLauncher
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
-            int y = Height / 2; float end = 9 + (Width - 18) * (Value - Minimum) / (float)Math.Max(1, Maximum - Minimum);
-            using (var track = new Pen(Theme.Line, 4)) g.DrawLine(track, 9, y, Width - 9, y);
-            using (var active = new Pen(Enabled ? Theme.Accent : Theme.Muted, 4)) g.DrawLine(active, 9, y, end, y);
-            using (var dot = new SolidBrush(Enabled ? Theme.Accent : Theme.Muted)) g.FillEllipse(dot, end - 6, y - 6, 12, 12);
-            if (Focused) using (var ring = new Pen(Theme.Text)) g.DrawEllipse(ring, end - 9, y - 9, 18, 18);
+            float scale = DpiScale, inset = 9 * scale, radius = 6 * scale;
+            int y = Height / 2; float end = inset + (Width - 2 * inset) * (Value - Minimum) / (float)Math.Max(1, Maximum - Minimum);
+            using (var track = new Pen(Theme.Line, 4 * scale)) g.DrawLine(track, inset, y, Width - inset, y);
+            using (var active = new Pen(Enabled ? Theme.Accent : Theme.Muted, 4 * scale)) g.DrawLine(active, inset, y, end, y);
+            using (var dot = new SolidBrush(Enabled ? Theme.Accent : Theme.Muted)) g.FillEllipse(dot, end - radius, y - radius, radius * 2, radius * 2);
+            if (Focused) using (var ring = new Pen(Theme.Text)) g.DrawEllipse(ring, end - inset, y - inset, inset * 2, inset * 2);
         }
     }
 
@@ -96,6 +213,7 @@ namespace LmuQuadViewLauncher
         public decimal Value { get { return number.Value; } set { number.Value = Math.Max(number.Minimum, Math.Min(number.Maximum, value)); } }
         public PercentSetting(string title, int min, int max)
         {
+            AutoScaleMode = AutoScaleMode.Inherit;
             Height = 78; Dock = DockStyle.Fill; BackColor = Theme.Card; Margin = new Padding(0, 3, 0, 0);
             var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 2, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -143,8 +261,8 @@ namespace LmuQuadViewLauncher
         readonly Button renderingNav = Theme.Button("  Rendering", false);
         readonly Button setupNav = Theme.Button("  Setup", false);
         readonly Button browseManifest = Theme.Button("Browse", false);
-        readonly Panel renderingPage = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Background };
-        readonly Panel setupPage = new Panel { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Theme.Background };
+        readonly DarkScrollPage renderingPage = new DarkScrollPage { Name = "RenderingPage" };
+        readonly DarkScrollPage setupPage = new DarkScrollPage { Name = "SetupPage" };
         bool busy;
         string SettingsPath { get { return Path.Combine(root, "launcher-settings.xml"); } }
 
@@ -160,8 +278,9 @@ namespace LmuQuadViewLauncher
             ForeColor = Theme.Text, Font = new Font("Segoe UI", 10F), Cursor = Cursors.Hand, Margin = new Padding(0) }; }
         static TableLayoutPanel Stack(int rows)
         {
-            return new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = rows,
+            var stack = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = rows,
                 Margin = new Padding(0), Padding = new Padding(0), BackColor = Color.Transparent };
+            stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); return stack;
         }
         static Label Caption(string text) { return Theme.Label(text, 9F, Theme.Muted); }
         static void Link(Control parent, string text, string address, int row)
@@ -175,14 +294,25 @@ namespace LmuQuadViewLauncher
         }
         public Launcher()
         {
+            SuspendLayout();
             Text = "LMU Quad View"; BackColor = Theme.Background; ForeColor = Theme.Text;
-            Font = new Font("Segoe UI", 10F); AutoScaleMode = AutoScaleMode.Dpi;
+            Font = new Font("Segoe UI", 10F); AutoScaleDimensions = new SizeF(96F, 96F); AutoScaleMode = AutoScaleMode.Dpi;
+            try {
+                using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("LmuQuadView.Icon")) {
+                    if (stream != null) using (var icon = new Icon(stream)) Icon = (Icon)icon.Clone();
+                    else Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                }
+            } catch (ArgumentException) { }
+            renderingNav.Name = "RenderingNav"; setupNav.Name = "SetupNav";
+            save.Name = "SaveButton"; launch.Name = "LaunchButton";
             ClientSize = new Size(1050, 780); MinimumSize = new Size(900, 700); StartPosition = FormStartPosition.CenterScreen;
             var frame = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0) };
-            frame.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 184)); frame.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            frame.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            frame.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 204)); frame.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             Controls.Add(frame); frame.Controls.Add(BuildSidebar(), 0, 0);
             var main = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3,
                 Padding = new Padding(28, 14, 28, 14), Margin = new Padding(0) };
+            main.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             main.RowStyles.Add(new RowStyle(SizeType.Absolute, 91)); main.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); main.RowStyles.Add(new RowStyle(SizeType.Absolute, 106));
             frame.Controls.Add(main, 1, 0);
             var heading = Stack(2); heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
@@ -197,22 +327,26 @@ namespace LmuQuadViewLauncher
             try { Fill(QvfrSettings.Load(SettingsPath)); }
             catch (Exception ex) { status.Text = "Settings could not be loaded: " + ex.Message; }
             UpdateProvider(); ShowPage(false);
+            ResumeLayout(true);
         }
         Control BuildSidebar()
         {
             var side = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7,
                 BackColor = Theme.Sidebar, Padding = new Padding(16, 26, 16, 14), Margin = new Padding(0) };
-            side.RowStyles.Add(new RowStyle(SizeType.Absolute, 112)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 49));
+            side.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            side.RowStyles.Add(new RowStyle(SizeType.AutoSize)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 49));
             side.RowStyles.Add(new RowStyle(SizeType.Absolute, 49)); side.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             side.RowStyles.Add(new RowStyle(SizeType.Absolute, 26)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 89)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 43));
-            var brand = Stack(3); brand.RowStyles.Add(new RowStyle(SizeType.Absolute, 34)); brand.RowStyles.Add(new RowStyle(SizeType.Absolute, 28)); brand.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
-            var lmu = Theme.Label("LMU", 25F, Theme.Text); lmu.Font = new Font("Segoe UI", 25F, FontStyle.Bold);
+            var brand = Stack(3); brand.AutoSize = true; brand.Dock = DockStyle.Top; brand.Margin = new Padding(0, 0, 0, 24);
+            brand.RowStyles.Add(new RowStyle(SizeType.AutoSize)); brand.RowStyles.Add(new RowStyle(SizeType.AutoSize)); brand.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            var lmu = Theme.Label("LMU", 25F, Theme.Text); lmu.Name = "BrandTitle"; lmu.Font = new Font("Segoe UI", 25F, FontStyle.Bold);
             brand.Controls.Add(lmu, 0, 0); brand.Controls.Add(Theme.Label("QUAD VIEW", 12F, Theme.Accent), 0, 1); brand.Controls.Add(Caption("OPENXR RENDERING"), 0, 2); side.Controls.Add(brand, 0, 0);
+            foreach (Control label in brand.Controls) { ((Label)label).AutoSize = true; label.Dock = DockStyle.Top; label.Margin = new Padding(0, 0, 0, 5); }
             foreach (var nav in new[] { renderingNav, setupNav }) { nav.Dock = DockStyle.Fill; nav.TextAlign = ContentAlignment.MiddleLeft; nav.Margin = new Padding(0, 3, 0, 5); nav.FlatAppearance.BorderSize = 0; }
             side.Controls.Add(renderingNav, 0, 1); side.Controls.Add(setupNav, 0, 2);
             side.Controls.Add(Caption("SUPPORT THE PROJECT"), 0, 4);
             var support = Stack(2); support.RowStyles.Add(new RowStyle(SizeType.Absolute, 41)); support.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
-            var coffee = Theme.Button("Buy me a coffee", false); coffee.Dock = DockStyle.Fill; coffee.Font = new Font("Segoe UI", 9F); coffee.Margin = new Padding(0, 0, 0, 4);
+            var coffee = Theme.Button("Buy me a coffee", false); coffee.Name = "CoffeeButton"; coffee.Dock = DockStyle.Fill; coffee.Font = new Font("Segoe UI", 9F); coffee.Margin = new Padding(0, 0, 0, 4);
             coffee.Click += delegate { OpenLink("https://buymeacoffee.com/dansuzuki"); }; support.Controls.Add(coffee, 0, 0);
             Link(support, "Shop via affiliate links", "https://dansuzuki.com/discounts/", 1); side.Controls.Add(support, 0, 5);
             var tag = Theme.Label("OFFLINE EXPERIMENTAL", 8F, Theme.Muted); side.Controls.Add(tag, 0, 6); return side;
@@ -221,8 +355,8 @@ namespace LmuQuadViewLauncher
         {
             var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 4, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 142)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 231));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 60)); renderingPage.Controls.Add(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 136)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 231));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54)); renderingPage.SetContent(grid);
             var provider = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
             var p = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 3, Margin = new Padding(0) };
             p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -258,8 +392,9 @@ namespace LmuQuadViewLauncher
         void BuildSetup()
         {
             var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 4, Margin = new Padding(0) };
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 153)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 125)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.Controls.Add(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 125)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
             var browseGame = Theme.Button("Browse", false); browseGame.Click += delegate {
                 using (var d = new FolderBrowserDialog { Description = "Select the folder containing Le Mans Ultimate.exe", ShowNewFolderButton = false }) {
                     if (Directory.Exists(game.Text)) d.SelectedPath = game.Text;
