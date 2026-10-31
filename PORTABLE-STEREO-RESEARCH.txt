@@ -1,4 +1,4 @@
-PORTABLE STEREO PROTOTYPE 3
+PORTABLE STEREO PROTOTYPE 4
 
 STATUS
 
@@ -28,13 +28,22 @@ reference draws. Native game draws remain enabled; the checker does not change
 submitted eye images or provide a performance gain. It can cause a visible hitch.
 
 To use it, enable diagnostics, stereo draw audit, and Test paired rendering.
-Leave render profiling OFF so query scopes do not prevent the replay. Load a
+Leave render profiling OFF to keep these compatibility tests separate. Load a
 track and press/release Ctrl+Alt+F8 once. The JSON and log include stereo_pair_proof
 status, coverage and differing-pixel/depth counts. No images or buffer contents
 are saved. Shader-program export is optional and remains a separate checkbox.
-The selected initial opaque family is deliberately narrow. Nonmatching material,
-geometry, pipeline or ANY of the 128 VS/PS texture slots refuses the pair. Active
-queries, incomplete device interception and unsupported states prevent replay.
+Two explicitly checked opaque pixel-shader variants are accepted with the initial
+vertex shader. The second variant was present in both eyes of the latest runs;
+the original variant was absent or visible only in the right eye. Other shaders
+are still excluded. Candidate, rejected-shader and eligible-eye counts are saved.
+Nonmatching material,
+geometry, pipeline or ANY of the 128 VS/PS texture slots refuses the pair.
+Occlusion, statistics, counters and unknown query types prevent replay. Only
+timestamp-disjoint timing scopes may contain these extra private draws. Query
+type masks and timing overlaps are recorded; GPU timings spanning the test include
+its extra work and must not be used for performance comparisons. Incomplete
+device interception and unsupported states also prevent replay. A pair must come
+from the same scene frame, including when the second sampled frame is used.
 Reference targets use private D32 depth; source textures are retained rather than
 deep-copied. Texture-content changes can fail the sampled comparison. A passing
 sample is not permission to share CPU data or resources in later frames.

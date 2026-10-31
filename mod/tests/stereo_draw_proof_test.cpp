@@ -3,6 +3,11 @@
 #include <thread>
 
 namespace {
+void waitQuery(ID3D11DeviceContext* c,ID3D11Query* query,void* data,UINT bytes){
+    HRESULT hr=S_FALSE;const auto deadline=GetTickCount64()+5000;
+    while((hr=c->GetData(query,data,bytes,0))==S_FALSE&&GetTickCount64()<deadline)Sleep(1);
+    assert(hr==S_OK);
+}
 void bind(Fixture& f,unsigned eye){
     auto* c=f.c;const UINT stride=24,offset=0;c->IASetVertexBuffers(0,1,&f.vertices,&stride,&offset);c->IASetIndexBuffer(f.indices,DXGI_FORMAT_R32_UINT,0);c->IASetInputLayout(f.layout);c->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     c->VSSetShader(f.referenceVs,nullptr,0);c->PSSetShader(f.referencePs,nullptr,0);c->GSSetShader(nullptr,nullptr,0);c->RSSetState(f.raster);D3D11_VIEWPORT v{0,0,float(Fixture::width),float(Fixture::width),0,1};c->RSSetViewports(1,&v);c->OMSetDepthStencilState(f.depthState,0);c->OMSetRenderTargets(1,&f.eyeRt[eye],f.eyeDs[eye]);
@@ -26,14 +31,19 @@ int main(int argc,char** argv){
     for(auto format:{DXGI_FORMAT_R8G8B8A8_UNORM,DXGI_FORMAT_R16G16B16A16_FLOAT,DXGI_FORMAT_R32G32B32A32_FLOAT})for(bool geometry:{false,true}){
         Fixture f(hardware,format);const float marker[4]{.75f,.25f,.5f,1};f.c->ClearRenderTargetView(f.rt,marker);const auto before=nativePixels(f);bind(f,0);
         lmuqv::StereoProofDraw draw;draw.key=91;draw.indexCount=6;draw.vertexCode=vertex->GetBufferPointer();draw.vertexBytes=vertex->GetBufferSize();draw.pixelCode=pixel->GetBufferPointer();draw.pixelBytes=pixel->GetBufferSize();draw.vertexConstants=1|(1u<<4);draw.pixelConstants=1u<<3;draw.forceGeometry=geometry;
-        lmuqv::StereoDrawProof proof;proof.begin();
+        lmuqv::StereoDrawProof proof;proof.begin();ID3D11Query *timer=nullptr,*occlusion=nullptr;
+        D3D11_QUERY_DESC queryDesc{D3D11_QUERY_TIMESTAMP_DISJOINT,0};assert(SUCCEEDED(f.d->CreateQuery(&queryDesc,&timer)));f.c->Begin(timer);
+        queryDesc.Query=D3D11_QUERY_OCCLUSION;assert(SUCCEEDED(f.d->CreateQuery(&queryDesc,&occlusion)));f.c->Begin(occlusion);
         // Begin/End tracking in the caller must withhold extra replay draws
-        // during active query scopes; the proof must not even snapshot then.
-        proof.observe(f.c,false,draw,false);assert(proof.result().status=="armed"&&proof.result().querySkips==1);
-        proof.observe(f.c,false,draw,true);if(proof.result().status!="waiting_right")std::cerr<<proof.result().reason<<'\n';assert(proof.result().status=="waiting_right");checkState(f,0);
+        // during result-counting query scopes, even alongside a timing query.
+        // The occlusion result must stay empty: no diagnostic draws or snapshots.
+        proof.observe(f.c,false,draw,false,true);assert(proof.result().status=="armed"&&proof.result().querySkips==1&&proof.result().timingQueryOverlaps==0);
+        f.c->End(occlusion);UINT64 samples=~UINT64(0);waitQuery(f.c,occlusion,&samples,sizeof(samples));assert(samples==0);drop(occlusion);
+        proof.observe(f.c,false,draw,true,true);if(proof.result().status!="waiting_right")std::cerr<<proof.result().reason<<'\n';assert(proof.result().status=="waiting_right");checkState(f,0);
         // The SAME native buffers now contain the right-eye values. Retaining
         // only their pointers would corrupt the original left-eye reference.
-        bind(f,1);proof.observe(f.c,true,draw,true);const auto result=proof.result();if(result.status!="passed")std::cerr<<result.status<<": "<<result.reason<<" differences="<<result.colorDifferent[0]<<'/'<<result.colorDifferent[1]<<" depth="<<result.depthDifferent[0]<<'/'<<result.depthDifferent[1]<<'\n';assert(result.status=="passed"&&result.covered[0]>100&&result.covered[1]>100);checkState(f,1);assert(before==nativePixels(f));proof.finish();
+        bind(f,1);proof.observe(f.c,true,draw,true,true);const auto result=proof.result();if(result.status!="passed")std::cerr<<result.status<<": "<<result.reason<<" differences="<<result.colorDifferent[0]<<'/'<<result.colorDifferent[1]<<" depth="<<result.depthDifferent[0]<<'/'<<result.depthDifferent[1]<<'\n';assert(result.status=="passed"&&result.covered[0]>100&&result.covered[1]>100&&result.timingQueryOverlaps==2);checkState(f,1);assert(before==nativePixels(f));proof.finish();
+        f.c->End(timer);D3D11_QUERY_DATA_TIMESTAMP_DISJOINT timing{};waitQuery(f.c,timer,&timing,sizeof(timing));assert(timing.Frequency>0);drop(timer);
         std::cout<<"Private stereo proof format="<<unsigned(format)<<" route="<<result.route<<": GPU CB snapshots/packing, separate eye data, color/depth, native targets and context restoration PASS\n";
         // A mismatch in a high texture slot must be rejected even when a simple
         // shader happens not to sample it. No first-16-only sharing assumption.
@@ -43,5 +53,5 @@ int main(int argc,char** argv){
         bind(f,0);proof.begin();proof.observe(f.c,false,draw,true);auto different=draw;different.key=92;bind(f,1);proof.observe(f.c,true,different,true);proof.finish();assert(proof.result().status=="inconclusive"&&proof.result().reason=="no matching right-eye draw");
         proof.begin();bind(f,0);proof.observe(f.c,false,draw,true);std::thread close([&]{proof.finish();});close.join();assert(proof.result().status=="inconclusive");
     }
-    drop(vertex);drop(pixel);std::cout<<"Stereo private-draw proof "<<(hardware?"hardware":"WARP")<<" passed: no game draw suppression; query guards, high texture slots, unmatched eye and cross-thread release\n";
+    drop(vertex);drop(pixel);std::cout<<"Stereo private-draw proof "<<(hardware?"hardware":"WARP")<<" passed: no game draw suppression; timing scopes allowed, empty occlusion result preserved, high texture slots, unmatched eye and cross-thread release\n";
 }

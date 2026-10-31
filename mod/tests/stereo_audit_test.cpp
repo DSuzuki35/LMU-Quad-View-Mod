@@ -59,7 +59,8 @@ int main(int argc,char** argv){
     int nativeMeshIdentity=0;
     auto draw=[&]{const auto native=stereo_audit_native_prepare_begin(&nativeMeshIdentity);context->UpdateSubresource(cb,0,nullptr,zero,0,0);stereo_audit_native_prepare_end(native);context->DrawIndexed(3,0,0);};
     draw();assert(files(directory).empty()); // All ordinary draws are forwarded.
-    ID3D11Query* query=nullptr;D3D11_QUERY_DESC queryDesc{D3D11_QUERY_OCCLUSION,0};assert(SUCCEEDED(device->CreateQuery(&queryDesc,&query)));context->Begin(query);
+    ID3D11Query *query=nullptr,*timer=nullptr;D3D11_QUERY_DESC queryDesc{D3D11_QUERY_OCCLUSION,0};assert(SUCCEEDED(device->CreateQuery(&queryDesc,&query)));
+    queryDesc.Query=D3D11_QUERY_TIMESTAMP_DISJOINT;assert(SUCCEEDED(device->CreateQuery(&queryDesc,&timer)));context->Begin(timer);context->Begin(query);
     for(unsigned frame=0;frame<2;++frame){
         stereo_audit_frame(true); // Holding the key must not stop/restart.
         for(unsigned pass=0;pass<4;++pass){StereoAuditScope scope{StereoAuditPass(pass)};StereoAuditGroup group(7);draw();}
@@ -71,9 +72,12 @@ int main(int argc,char** argv){
     assert(first.find("\"scene_frames\":2")!=std::string::npos&&first.find("\"rendering\":\"legacy\"")!=std::string::npos);
     assert(first.find("\"name\":\"offset\"")!=std::string::npos&&first.find("\"group\":7")!=std::string::npos&&first.find("\"layout_known\":1")!=std::string::npos);
     assert(first.find("\"early_device\":1")!=std::string::npos&&first.find("\"shader_definitions_dropped\":0")!=std::string::npos);
-    assert(count(first,"\"native_mesh\":1")==8&&count(first,"\"active_queries\":1")==4&&count(first,"\"active_queries\":0")==4);
+    // Timing-only and timing+occlusion scopes must be distinguished, including
+    // scopes begun before a capture. Only the former permits private replay.
+    assert(count(first,"\"native_mesh\":1")==8&&count(first,"\"active_queries\":2")==4&&count(first,"\"active_queries\":1")==4);
+    assert(count(first,"\"active_query_mask\":10")==4&&count(first,"\"active_query_mask\":8")==4);context->End(timer);drop(timer);
     assert(first.find(proofRequested?"\"stereo_pair_proof\":{\"requested\":1":"\"stereo_pair_proof\":{\"requested\":0")!=std::string::npos);
-    if(proofRequested)assert(first.find("\"status\":\"inconclusive\"")!=std::string::npos&&first.find("no eligible draw outside queries")!=std::string::npos);drop(query);
+    if(proofRequested)assert(first.find("\"status\":\"inconclusive\"")!=std::string::npos&&first.find("no eligible draw with safe query state")!=std::string::npos);drop(query);
     assert(count(first,"\"bytecode_file\":")==unsigned(exportShaders?2:0));
     unsigned bytecodeFiles=0;if(std::filesystem::exists(directory/L"stereo-shaders"))for(const auto& file:std::filesystem::directory_iterator(directory/L"stereo-shaders")){
         const auto data=read(file.path());assert(data.size()>4&&data.substr(0,4)=="DXBC");++bytecodeFiles;}

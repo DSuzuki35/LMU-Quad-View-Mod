@@ -151,15 +151,15 @@ struct StereoDrawProof::State {
 StereoDrawProof::StereoDrawProof()=default;StereoDrawProof::~StereoDrawProof()=default;
 void StereoDrawProof::begin(){reset();state_=std::make_unique<State>();result_.status="armed";}
 void StereoDrawProof::reset(){state_.reset();result_={};}
-void StereoDrawProof::observe(ID3D11DeviceContext* c,bool right,const StereoProofDraw& draw,bool outsideQueries){
+void StereoDrawProof::observe(ID3D11DeviceContext* c,bool right,const StereoProofDraw& draw,bool outsideResultQueries,bool insideTimingQuery){
     if(!state_||(result_.status!="armed"&&result_.status!="waiting_right"))return;++result_.observed;
-    if(!outsideQueries){++result_.querySkips;return;}
+    if(!outsideResultQueries){++result_.querySkips;return;}
     try{check(c&&GetCurrentThreadId()==state_->owner,"proof called from a different context thread");
-        if(!right&&!state_->haveLeft){check(draw.key&&draw.indexCount,"native mesh identity and nonempty indexed draw required");state_->prepare(c,draw,result_);state_->reference(c,0);result_.status="waiting_right";}
+        if(!right&&!state_->haveLeft){if(insideTimingQuery)++result_.timingQueryOverlaps;check(draw.key&&draw.indexCount,"native mesh identity and nonempty indexed draw required");state_->prepare(c,draw,result_);state_->reference(c,0);result_.status="waiting_right";}
         else if(right&&state_->haveLeft&&draw.key==state_->draw.key&&draw.indexCount==state_->draw.indexCount&&draw.startIndex==state_->draw.startIndex&&draw.baseVertex==state_->draw.baseVertex){
-            state_->right.capture(state_->device.p,c);check(state_->left.compatible(state_->right),"geometry, all VS/PS SRV/sampler slots, pipeline or viewport differs between eyes");state_->reference(c,1);state_->paired(c);state_->compare(c,result_);
+            if(insideTimingQuery)++result_.timingQueryOverlaps;state_->right.capture(state_->device.p,c);check(state_->left.compatible(state_->right),"geometry, all VS/PS SRV/sampler slots, pipeline or viewport differs between eyes");state_->reference(c,1);state_->paired(c);state_->compare(c,result_);
         }
     }catch(const std::exception& e){result_.status="unavailable";result_.reason=e.what();}catch(...){result_.status="unavailable";result_.reason="proof allocation failed";}
 }
-void StereoDrawProof::finish(){if(result_.status=="armed"||result_.status=="waiting_right"){result_.reason=result_.status=="armed"?"no eligible draw outside queries":"no matching right-eye draw";result_.status="inconclusive";}state_.reset();}
+void StereoDrawProof::finish(){if(result_.status=="armed"||result_.status=="waiting_right"){result_.reason=result_.status=="armed"?"no eligible draw with safe query state":"no matching right-eye draw";result_.status="inconclusive";}state_.reset();}
 }
