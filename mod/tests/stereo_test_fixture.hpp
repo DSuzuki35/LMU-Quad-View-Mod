@@ -42,8 +42,8 @@ struct Fixture {
     lmuqv::StereoShaderVariant vertex,pixelVariant;std::array<Camera,2> cameras;float scales[2][4]{{1,.75f,.5f,1},{.5f,1,.8f,1}};
     float extras[2][4]{{0,0,.125f,0},{.125f,0,0,0}};
     ID3D11Buffer* buffer(UINT bytes,UINT bind,const void* data=nullptr){D3D11_BUFFER_DESC desc{};desc.ByteWidth=bytes;desc.BindFlags=bind;D3D11_SUBRESOURCE_DATA initial{data,0,0};ID3D11Buffer* b=nullptr;assert(SUCCEEDED(d->CreateBuffer(&desc,data?&initial:nullptr,&b)));return b;}
-    Fixture(bool hardware,DXGI_FORMAT colorFormat=DXGI_FORMAT_R8G8B8A8_UNORM){
-        D3D_FEATURE_LEVEL level{};assert(SUCCEEDED(D3D11CreateDevice(nullptr,hardware?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&d,&level,&c)));
+    Fixture(bool hardware,DXGI_FORMAT colorFormat=DXGI_FORMAT_R8G8B8A8_UNORM,UINT deviceFlags=0){
+        D3D_FEATURE_LEVEL level{};assert(SUCCEEDED(D3D11CreateDevice(nullptr,hardware?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP,nullptr,deviceFlags,nullptr,0,D3D11_SDK_VERSION,&d,&level,&c)));
         D3D11_TEXTURE2D_DESC td{};td.Width=td.Height=width;td.ArraySize=2;td.MipLevels=td.SampleDesc.Count=1;td.Format=colorFormat;td.BindFlags=D3D11_BIND_RENDER_TARGET;assert(SUCCEEDED(d->CreateTexture2D(&td,nullptr,&color)));
         td.Format=DXGI_FORMAT_D32_FLOAT;td.BindFlags=D3D11_BIND_DEPTH_STENCIL;assert(SUCCEEDED(d->CreateTexture2D(&td,nullptr,&depth)));
         D3D11_RENDER_TARGET_VIEW_DESC r{};r.Format=colorFormat;r.ViewDimension=D3D11_RTV_DIMENSION_TEXTURE2DARRAY;r.Texture2DArray.ArraySize=2;assert(SUCCEEDED(d->CreateRenderTargetView(color,&r,&rt)));

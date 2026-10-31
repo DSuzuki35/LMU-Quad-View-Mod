@@ -1,4 +1,4 @@
-PORTABLE STEREO PROTOTYPE 4
+PORTABLE STEREO PROTOTYPE 5
 
 STATUS
 
@@ -44,9 +44,28 @@ type masks and timing overlaps are recorded; GPU timings spanning the test inclu
 its extra work and must not be used for performance comparisons. Incomplete
 device interception and unsupported states also prevent replay. A pair must come
 from the same scene frame, including when the second sampled frame is used.
-Reference targets use private D32 depth; source textures are retained rather than
-deep-copied. Texture-content changes can fail the sampled comparison. A passing
+Reference and paired targets use the native depth/stencil format and preserve
+the native depth state and DSV flags. Each eye's input depth/stencil subresource
+is copied on the GPU before its game draw, then used to seed BOTH private paths.
+This supports depth-equal/no-write shading after a depth prepass, reversed depth,
+disabled depth, stencil operations and read-only views without changing the
+game's state. D16, D24/S8, D32 and D32/S8 formats are supported at single sample;
+mip-zero 2D views and individual array slices must match the color dimensions.
+The native state and formats, snapshot submission, stencil differences and
+coverage method are saved in the JSON. `covered` now counts passed samples from
+private occlusion queries (not pixels whose depth is below 1). Paired samples
+must equal the two reference counts combined; near-zero coverage is inconclusive.
+Detailed refusal messages identify different resource slots or pipeline states.
+Color inputs and other source textures are retained rather than deep-copied.
+Texture-content changes can fail the sampled comparison. A passing
 sample is not permission to share CPU data or resources in later frames.
+
+Tests exercise all four depth formats with LESS, EQUAL/no-write, GREATER,
+read-only views, disabled depth, stencil updates and fully occluded draws; plain
+2D and nonzero array slices are covered. They overwrite the source depth between
+eyes and verify native color/depth/stencil remain unchanged by the checker.
+WARP and RTX 4080 tests passed. Optional --debug validation requires the Windows
+D3D11 debug layer, which was unavailable on the local development system.
 
 Native preparation IDs/timing are now recorded through an independently verified
 per-mesh hook. Pointer identities are anonymized; no game object names are read.
