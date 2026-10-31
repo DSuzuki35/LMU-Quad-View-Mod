@@ -63,6 +63,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Native upload reuse compilation failed' }
     & .\build\native_upload_reuse_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native upload reuse tests failed' }
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static tests/native_upload_batch_test.cpp -ld3d11 -ld3dcompiler -o build/native_upload_batch_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native upload batch compilation failed' }
+    & .\build\native_upload_batch_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native upload batch tests failed' }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/benchmark_engine_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ladvapi32 -luser32 -o build/benchmark_engine_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Benchmark engine tests compilation failed' }
     & .\build\benchmark_engine_test.exe

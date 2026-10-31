@@ -39,7 +39,8 @@ class SettingsTests
         Require(!loaded.DiagnosticsEnabled&&new LauncherSettings().DiagnosticsEnabled,"Diagnostics off setting/default lost");
         Require(loaded.StereoDrawAudit&&!new LauncherSettings().StereoDrawAudit,"Stereo audit preference/default lost");
         Require(loaded.StereoShaderCapture&&!new LauncherSettings().StereoShaderCapture,"Shader capture preference/default lost");
-        Require(loaded.StereoPairProof&&loaded.CpuUploadReuse&&!new LauncherSettings().StereoPairProof&&!new LauncherSettings().CpuUploadReuse,"Prototype preferences/defaults lost");
+        Require(loaded.StereoPairProof&&loaded.CpuUploadReuse&&!new LauncherSettings().StereoPairProof&&!new LauncherSettings().CpuUploadReuse&&!new LauncherSettings().CpuUploadBatch,"Prototype preferences/defaults lost");
+        s.CpuUploadBatch=true;QvfrSettings.Save(xml,s);Require(QvfrSettings.Load(xml).CpuUploadBatch,"CPU upload fast-path preference lost");
         Require(loaded.RenderProfileSeconds==300&&new LauncherSettings().RenderProfileSeconds==120,"Capture length roundtrip/default");
         s.RenderProfileSeconds=29;Rejected(delegate{QvfrSettings.Validate(s);});s.RenderProfileSeconds=301;Rejected(delegate{QvfrSettings.Validate(s);});s.RenderProfileSeconds=300;
         Require(!new LauncherSettings().RenderProfiling,"Profiling enabled by default");
@@ -50,7 +51,7 @@ class SettingsTests
         Require(loaded.DiagnosticsEnabled,"Existing settings must retain diagnostic logging");
         Require(!loaded.StereoDrawAudit,"Existing settings must not enable draw auditing");
         Require(!loaded.StereoShaderCapture,"Existing settings must not enable shader capture");
-        Require(!loaded.StereoPairProof&&!loaded.CpuUploadReuse,"Existing settings must not enable prototype options");
+        Require(!loaded.StereoPairProof&&!loaded.CpuUploadReuse&&!loaded.CpuUploadBatch,"Existing settings must not enable prototype options");
         Require(loaded.FocusAspectRatio==0,"Old settings invent headset geometry");
         s.Backend="VectorXR";s.VectorXrManifest=@"E:\VectorXR\layer.json";s.QuadViewsManifest=@"E:\QVFR\layer.json";
         QvfrSettings.Save(xml,s);loaded=QvfrSettings.Load(xml);

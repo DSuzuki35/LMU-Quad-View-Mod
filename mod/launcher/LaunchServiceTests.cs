@@ -95,6 +95,14 @@ class LaunchServiceTests {
             Check(quiet.EnvironmentVariables["LMU_QV_STEREO_DRAW_PROOF"]=="0"&&quiet.EnvironmentVariables["LMU_QV_CPU_UPLOAD_REUSE"]=="1","Master switch must disable proof while preserving the rendering option");
             Check(quiet.EnvironmentVariables["XR_ENABLE_API_LAYERS"]==profiled.EnvironmentVariables["XR_ENABLE_API_LAYERS"],"Diagnostics changed renderer layer chain");
             vectorSettings.DiagnosticsEnabled=true;
+            vectorSettings.CpuUploadBatch=true;
+            var fast=LaunchService.MakeStartInfo(root,vectorSettings,vectorPlan,Path.Combine(root,"fast.log"));
+            Check(fast.EnvironmentVariables["LMU_QV_CPU_UPLOAD_BATCH"]=="1"&&fast.EnvironmentVariables["LMU_QV_CPU_UPLOAD_REUSE"]=="0","Combined upload mode must own its reuse path");
+            Check(fast.EnvironmentVariables["LMU_QV_STEREO_AUDIT"]=="0"&&fast.EnvironmentVariables["LMU_QV_STEREO_DRAW_PROOF"]=="0"&&fast.EnvironmentVariables["LMU_QV_STEREO_SHADER_CAPTURE"]=="0","Draw audit does not understand ranged CB bindings and must stay off during batching");
+            Check(fast.EnvironmentVariables["LMU_QV_PROFILE"]=="1","Ordinary profiling must remain available with CPU fast path");
+            vectorSettings.DiagnosticsEnabled=false;
+            Check(LaunchService.MakeStartInfo(root,vectorSettings,vectorPlan,Path.Combine(root,"quiet-fast.log")).EnvironmentVariables["LMU_QV_CPU_UPLOAD_BATCH"]=="1","CPU fast path must work with diagnostics off");
+            vectorSettings.DiagnosticsEnabled=true;vectorSettings.CpuUploadBatch=false;
             Check(Environment.GetEnvironmentVariable("LMU_QV_PROFILE")==null,"Profiling switch leaked into host");
             Check(vectorInfo.EnvironmentVariables["XR_ENABLE_API_LAYERS"]==vectorPlan.Layers,"VectorXR child layer list");
             foreach(var variable in new[]{"DISABLE_XR_APILAYER_DIENERTECH_VECTORXR","DISABLE_XR_APILAYER_MBUCCHIA_quad_views_foveated","DISABLE_QUAD_VIEWS_FOVEATED","DISABLE_VENDOR_QUAD_EMULATION","DISABLE_XR_APILAYER_MBUCCHIA_toolkit"})

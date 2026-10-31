@@ -1,4 +1,4 @@
-param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'),[string]$ArchiveName='LMU-Quad-View-Mod-portable-stereo-prototype5.zip')
+param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'),[string]$ArchiveName='LMU-Quad-View-Mod-cpu-fastpath1.zip')
 $ErrorActionPreference = 'Stop'
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if([IO.Path]::GetFileName($ArchiveName) -cne $ArchiveName -or !$ArchiveName.EndsWith('.zip',[StringComparison]::OrdinalIgnoreCase)){throw 'ArchiveName must be a ZIP filename, without directory components.'}
@@ -16,6 +16,7 @@ $files = @{
     'RENDER-PROFILING.txt' = 'RENDER-PROFILING.txt'
     'PORTABLE-STEREO-RESEARCH.txt' = 'PORTABLE-STEREO-RESEARCH.txt'
     'CPU-UPLOAD-REUSE.md' = 'CPU-UPLOAD-REUSE.md'
+    'CPU-UPLOAD-FASTPATH.md' = 'CPU-UPLOAD-FASTPATH.md'
     'tools/analyze_stereo_audit.py' = 'tools/analyze_stereo_audit.py'
     'tools/check-hardware-stereo.cmd' = 'tools/check-hardware-stereo.cmd'
     'TODO.md' = 'TODO.md'

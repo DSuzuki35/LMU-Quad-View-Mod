@@ -22,6 +22,7 @@ namespace LmuQuadViewLauncher
         public bool StereoShaderCapture { get; set; }
         public bool StereoPairProof { get; set; }
         public bool CpuUploadReuse { get; set; }
+        public bool CpuUploadBatch { get; set; }
         public int RenderProfileSeconds { get; set; }
         public bool NativeOuterResolution { get; set; }
         public decimal OuterBlur { get; set; }
@@ -80,6 +81,7 @@ namespace LmuQuadViewLauncher
             s.StereoShaderCapture=Boolean.Parse(Value(x,"StereoShaderCapture","false"));
             s.StereoPairProof=Boolean.Parse(Value(x,"StereoPairProof","false"));
             s.CpuUploadReuse=Boolean.Parse(Value(x,"CpuUploadReuse","false"));
+            s.CpuUploadBatch=Boolean.Parse(Value(x,"CpuUploadBatch","false"));
             s.RenderProfileSeconds=Int32.Parse(Value(x,"RenderProfileSeconds","120"),CultureInfo.InvariantCulture);
             s.NativeOuterResolution = Boolean.Parse(Value(x, "NativeOuterResolution", "true"));
             s.OuterBlur = Decimal.Parse(Value(x, "OuterBlur", "0"), CultureInfo.InvariantCulture);
@@ -102,6 +104,7 @@ namespace LmuQuadViewLauncher
                 new XElement("StereoShaderCapture",s.StereoShaderCapture),
                 new XElement("StereoPairProof",s.StereoPairProof),
                 new XElement("CpuUploadReuse",s.CpuUploadReuse),
+                new XElement("CpuUploadBatch",s.CpuUploadBatch),
                 new XElement("RenderProfileSeconds",s.RenderProfileSeconds),
                 new XElement("NativeOuterResolution", s.NativeOuterResolution), new XElement("UseRuntimeSettings", true),
                 new XElement("OuterBlur", s.OuterBlur),

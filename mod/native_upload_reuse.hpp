@@ -12,11 +12,11 @@ namespace lmuqv {
 struct NativeUploadRange {size_t buffer,data,bytes,dirty;};
 inline constexpr std::array<NativeUploadRange,7> native_upload_ranges{{
     {0,8,272,0x11c},{0x120,0x128,2624,0xb6c},{0xb70,0xb78,2624,0x15bc},
-    {0x15c0,0x15c8,2624,0x204c},{0x2050,0x2058,640,0x22dc},
+    {0x15c0,0x15c8,2688,0x204c},{0x2050,0x2058,640,0x22dc},
     {0x22e0,0x22e8,544,0x250c},{0x2510,0x2518,192,0x25dc}
 }};
 class NativeUploadReuse {
-    struct Last {ID3D11Buffer* buffer=nullptr;bool known=false,aliased=false,supported=false;std::array<std::byte,2624> data{};};
+    struct Last {ID3D11Buffer* buffer=nullptr;bool known=false,aliased=false,supported=false;std::array<std::byte,2688> data{};};
     std::array<Last,7> last_{};void* cache_=nullptr;ID3D11DeviceContext* context_=nullptr;DWORD owner_=0;bool collect_=false;
     template<class T>static T at(const void* base,size_t offset){T value{};std::memcpy(&value,static_cast<const std::byte*>(base)+offset,sizeof(value));return value;}
 public:

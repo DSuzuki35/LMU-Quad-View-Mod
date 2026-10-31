@@ -255,6 +255,7 @@ namespace LmuQuadViewLauncher
         readonly CheckBox stereoShaderCapture=Toggle("Include shader programs for stereo conversion");
         readonly CheckBox stereoPairProof=Toggle("Test paired rendering (Ctrl+Alt+F8)");
         readonly CheckBox cpuUploadReuse=Toggle("Experimental CPU upload reuse");
+        readonly CheckBox cpuUploadBatch=Toggle("Experimental CPU upload fast path");
         readonly NumericUpDown profileDuration=new NumericUpDown {Minimum=30,Maximum=300,Increment=30,Value=120,
             BackColor=Theme.Field,ForeColor=Theme.Text,BorderStyle=BorderStyle.FixedSingle,Dock=DockStyle.Fill,
             TextAlign=HorizontalAlignment.Right,Name="RenderProfileSeconds",AccessibleName="RenderProfileSeconds",Enabled=false};
@@ -313,7 +314,7 @@ namespace LmuQuadViewLauncher
         public Launcher()
         {
             SuspendLayout();
-            Text = "LMU Quad View - stereo prototype 5"; BackColor = Theme.Background; ForeColor = Theme.Text;
+            Text = "LMU Quad View - CPU fast path 1"; BackColor = Theme.Background; ForeColor = Theme.Text;
             Font = new Font("Segoe UI", 10F); AutoScaleDimensions = new SizeF(96F, 96F); AutoScaleMode = AutoScaleMode.Dpi;
             try {
                 using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("LmuQuadView.Icon")) {
@@ -345,9 +346,10 @@ namespace LmuQuadViewLauncher
             diagnosticsEnabled.Name="DiagnosticsEnabled";
             stereoDrawAudit.Name="StereoDrawAudit";
             stereoShaderCapture.Name="StereoShaderCapture";
-            stereoPairProof.Name="StereoPairProof";cpuUploadReuse.Name="CpuUploadReuse";
-            diagnosticsEnabled.CheckedChanged+=delegate {renderProfiling.Enabled=diagnosticsEnabled.Checked;stereoDrawAudit.Enabled=diagnosticsEnabled.Checked;stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked;profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;};
-            stereoDrawAudit.CheckedChanged+=delegate {stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked;};
+            stereoPairProof.Name="StereoPairProof";cpuUploadReuse.Name="CpuUploadReuse";cpuUploadBatch.Name="CpuUploadBatch";
+            cpuUploadBatch.CheckedChanged+=delegate {if(cpuUploadBatch.Checked){cpuUploadReuse.Checked=false;stereoDrawAudit.Checked=false;}cpuUploadReuse.Enabled=!cpuUploadBatch.Checked;stereoDrawAudit.Enabled=diagnosticsEnabled.Checked&&!cpuUploadBatch.Checked;stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked&&!cpuUploadBatch.Checked;};
+            diagnosticsEnabled.CheckedChanged+=delegate {renderProfiling.Enabled=diagnosticsEnabled.Checked;stereoDrawAudit.Enabled=diagnosticsEnabled.Checked&&!cpuUploadBatch.Checked;stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked&&!cpuUploadBatch.Checked;profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;};
+            stereoDrawAudit.CheckedChanged+=delegate {stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked&&!cpuUploadBatch.Checked;};
             renderProfiling.CheckedChanged+=delegate {profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;};
             renderingNav.Click += delegate { ShowPage(false); }; setupNav.Click += delegate { ShowPage(true); };
             save.Click += delegate { SaveSettings(); }; launch.Click += delegate { StartGame(); };
@@ -435,7 +437,7 @@ namespace LmuQuadViewLauncher
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 153)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 640)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 720)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
             var browseGame = Theme.Button("Browse", false); browseGame.Click += delegate {
                 using (var d = new FolderBrowserDialog { Description = "Select the folder containing Le Mans Ultimate.exe", ShowNewFolderButton = false }) {
                     if (Directory.Exists(game.Text)) d.SelectedPath = game.Text;
@@ -449,13 +451,8 @@ namespace LmuQuadViewLauncher
                 "Manifest JSON: leave blank to detect VectorXR. Enable an LMU Quadviews profile in its app.",true,
                 "https://github.com/DienerTech/vectorxr#installation"),0,2);
             var options = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
-            var stack = Stack(16); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 23)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 30)); stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
-            stack.RowStyles.Add(new RowStyle(SizeType.Absolute,30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute,45));
-            stack.RowStyles.Add(new RowStyle(SizeType.Absolute,30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute,40));
-            stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));stack.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
-            stack.RowStyles.Add(new RowStyle(SizeType.Absolute,30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute,45));
-            stack.RowStyles.Add(new RowStyle(SizeType.Absolute,30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute,45));
-            stack.RowStyles.Add(new RowStyle(SizeType.Absolute,30));stack.RowStyles.Add(new RowStyle(SizeType.Absolute,45));
+            var stack = Stack(18);
+            foreach(int height in new[]{23,30,40,30,45,30,40,30,35,46,30,45,30,45,30,45,30,45})stack.RowStyles.Add(new RowStyle(SizeType.Absolute,height));
             stack.Controls.Add(Caption("ADVANCED"), 0, 0); stack.Controls.Add(nativeOuter, 0, 1);
             stack.Controls.Add(Caption("Experimental GPU savings. Disable to test full-size outer rendering with resampling."), 0, 2);
             stack.Controls.Add(cpuUploadReuse,0,3);
@@ -473,6 +470,8 @@ namespace LmuQuadViewLauncher
             stack.Controls.Add(Caption("Saves programs used by the sampled focus views under logs/stereo-shaders. Local development files; keep out of GitHub."),0,13);
             stack.Controls.Add(stereoPairProof,0,14);
             stack.Controls.Add(Caption("One sampled object in private targets. Leave render profiling off; diagnostic hitch expected. Game draws remain enabled."),0,15);
+            stack.Controls.Add(cpuUploadBatch,0,16);
+            stack.Controls.Add(Caption("Combines unchanged-upload filtering and small-buffer batching for outer and focus geometry. Compare on/off runs; draw audit is disabled."),0,17);
             options.Controls.Add(stack); grid.Controls.Add(options, 0, 3);
             grid.Controls.Add(Caption("Keep your headset's OpenXR runtime active. Configure VectorXR's LMU Quadviews profile when using it; select one quad-view provider."), 0, 4);
         }
@@ -538,6 +537,7 @@ namespace LmuQuadViewLauncher
             stereoDrawAudit.Checked=s.StereoDrawAudit;
             stereoShaderCapture.Checked=s.StereoShaderCapture;stereoShaderCapture.Enabled=s.DiagnosticsEnabled&&s.StereoDrawAudit;
             stereoPairProof.Checked=s.StereoPairProof;stereoPairProof.Enabled=s.DiagnosticsEnabled&&s.StereoDrawAudit;cpuUploadReuse.Checked=s.CpuUploadReuse;
+            cpuUploadBatch.Checked=s.CpuUploadBatch;
             profileDuration.Value=s.RenderProfileSeconds;
             outer.Value = s.OuterPercent; inner.Value = s.InnerPercent;
             focusWidth.Value = focusGeometry==null?s.FocusWidthPercent:focusGeometry.DisplayWidth(s.FocusWidthPercent);
@@ -549,7 +549,7 @@ namespace LmuQuadViewLauncher
         {
             var s = new LauncherSettings { GameDirectory = game.Text.Trim(), QuadViewsManifest = manifest.Text.Trim(),VectorXrManifest=vectorManifest.Text.Trim(),
                 Backend = backend.SelectedIndex == 2 ? "VectorXR" : backend.SelectedIndex == 1 ? "QVFR" : "Native", FoveationMode = mode.SelectedIndex == 1 ? "fixed" : "auto",
-                DebugFocus = outline.Checked, RenderProfiling=renderProfiling.Checked, DiagnosticsEnabled=diagnosticsEnabled.Checked,StereoDrawAudit=stereoDrawAudit.Checked,StereoShaderCapture=stereoShaderCapture.Checked,StereoPairProof=stereoPairProof.Checked,CpuUploadReuse=cpuUploadReuse.Checked, RenderProfileSeconds=Decimal.ToInt32(profileDuration.Value), NativeOuterResolution = nativeOuter.Checked,
+                DebugFocus = outline.Checked, RenderProfiling=renderProfiling.Checked, DiagnosticsEnabled=diagnosticsEnabled.Checked,StereoDrawAudit=stereoDrawAudit.Checked,StereoShaderCapture=stereoShaderCapture.Checked,StereoPairProof=stereoPairProof.Checked,CpuUploadReuse=cpuUploadReuse.Checked,CpuUploadBatch=cpuUploadBatch.Checked, RenderProfileSeconds=Decimal.ToInt32(profileDuration.Value), NativeOuterResolution = nativeOuter.Checked,
                 OuterPercent = outer.Value, InnerPercent = inner.Value,
                 FocusWidthPercent = focusGeometry==null?focusWidth.Value:focusGeometry.ProviderWidth(focusWidth.Value),
                 FocusHeightPercent = focusGeometry==null?focusHeight.Value:focusGeometry.ProviderHeight(focusHeight.Value),

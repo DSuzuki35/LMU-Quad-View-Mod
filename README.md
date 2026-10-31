@@ -2,6 +2,8 @@
 
 This research branch adds an opt-in [CPU upload-reuse prototype](CPU-UPLOAD-REUSE.md),
 portable vertex/pixel shader conversion and an in-game private paired-draw check.
+The current [CPU fast-path candidate](CPU-UPLOAD-FASTPATH.md) combines unchanged
+upload filtering and adaptive buffer batching for outer and focus geometry.
 The CPU prototype filters byte-identical native uploads within a focus geometry
 group. The stereo check compares one paired draw with two original references in
 private targets; normal game eye draws remain enabled. Full game-renderer single-
