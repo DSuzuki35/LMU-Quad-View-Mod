@@ -38,6 +38,10 @@ the original variant was absent or visible only in the right eye. Other shaders
 are still excluded. Candidate, rejected-shader and eligible-eye counts are saved.
 Nonmatching material,
 geometry, pipeline or ANY of the 128 VS/PS texture slots refuses the pair.
+Current source checks only samplers declared by the converted VS/PS; undeclared
+or dynamically indexed sampler operands are refused during conversion. Stale
+unused sampler bindings may differ. The masks are recorded in used_sampler_masks.
+The archived prototype 5 package predates this sampler-check refinement.
 Occlusion, statistics, counters and unknown query types prevent replay. Only
 timestamp-disjoint timing scopes may contain these extra private draws. Query
 type masks and timing overlaps are recorded; GPU timings spanning the test include
@@ -66,6 +70,17 @@ read-only views, disabled depth, stencil updates and fully occluded draws; plain
 eyes and verify native color/depth/stencil remain unchanged by the checker.
 WARP and RTX 4080 tests passed. Optional --debug validation requires the Windows
 D3D11 debug layer, which was unavailable on the local development system.
+
+LIVE PROTOTYPE 5 RESULT (2026-10-31)
+
+One sampled opaque object passed the private comparison using instanced VPRT:
+1352x1734 per eye, 535,280 and 565,315 reference samples, 1,100,595 paired samples.
+Color matched within the declared tolerance (maximum error 0.0000610352); depth
+matched exactly. The native mode was D32, GREATER comparison, depth writes on.
+Another capture refused an unused PS sampler s8 difference; source now derives
+sampler masks from the actual bytecode declarations, keeping used-slot checks.
+This validates one sampled object. A full paired game pass, shared native CPU
+preparation, released-image scheduling and a measured CPU saving remain pending.
 
 Native preparation IDs/timing are now recorded through an independently verified
 per-mesh hook. Pointer identities are anonymized; no game object names are read.

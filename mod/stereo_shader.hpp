@@ -14,6 +14,9 @@ struct StereoShaderVariant {
     std::vector<uint8_t> bytecode;
     std::vector<StereoConstantRange> constants;
     unsigned packedSlot=13,eyeStride=0;
+    // Exact SM4 sampler declarations; body operands must reference a declared
+    // immediate slot. Allows ignoring stale, unused sampler bindings safely.
+    uint32_t samplerSlots=0;
     std::string geometrySource;
 };
 // The first supported family is legacy SM4 VS/PS with ordinary signatures and

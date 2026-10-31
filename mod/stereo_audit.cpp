@@ -321,7 +321,7 @@ void save_impl(const char* reason){
     const auto& proof=pairProof.result();
     out<<"],\"stereo_pair_proof\":{\"requested\":"<<unsigned(proofRequested)<<",\"status\":"<<quoted(proof.status.c_str())<<",\"reason\":"<<quoted(proof.reason.c_str())<<",\"route\":"<<quoted(proof.route.c_str());
     out<<",\"key\":"<<proof.key<<",\"observed\":"<<proof.observed<<",\"query_skips\":"<<proof.querySkips<<",\"timing_query_overlaps\":"<<proof.timingQueryOverlaps<<",\"opaque_candidates\":"<<proofCandidates<<",\"shader_rejections\":"<<proofShaderRejected;
-    out<<",\"eligible_draws\":["<<proofEligible[0]<<','<<proofEligible[1]<<"],\"width\":"<<proof.width<<",\"height\":"<<proof.height<<",\"reference_depth_format\":"<<proof.depthFormat<<",\"native_cpu_preparation_shared\":false";
+    out<<",\"eligible_draws\":["<<proofEligible[0]<<','<<proofEligible[1]<<"],\"used_sampler_masks\":["<<proof.samplerSlots[0]<<','<<proof.samplerSlots[1]<<"],\"width\":"<<proof.width<<",\"height\":"<<proof.height<<",\"reference_depth_format\":"<<proof.depthFormat<<",\"native_cpu_preparation_shared\":false";
     out<<",\"depth_snapshots_queued\":["<<(proof.depthCopied[0]?"true":"false")<<','<<(proof.depthCopied[1]?"true":"false")<<"],\"native_depth\":[";
     for(unsigned eye=0;eye<2;++eye){if(eye)out<<',';const auto& d=proof.nativeDepth[eye];
         out<<"{\"enabled\":"<<d[0]<<",\"write_mask\":"<<d[1]<<",\"comparison\":"<<d[2]<<",\"stencil_enabled\":"<<d[3]<<",\"view_flags\":"<<d[4]<<'}';}

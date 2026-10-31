@@ -102,7 +102,7 @@ struct Snapshot {
             if(stage==0){c->VSGetShaderResources(0,128,resources);c->VSGetSamplers(0,16,samplers);}else{c->PSGetShaderResources(0,128,resources);c->PSGetSamplers(0,16,samplers);}take_refs(srv[stage],resources);take_refs(sampler[stage],samplers);
         }
     }
-    std::string difference(const Snapshot& b)const{
+    std::string difference(const Snapshot& b,uint32_t vertexSamplers,uint32_t pixelSamplers)const{
         if(width!=b.width||height!=b.height||colorFormat!=b.colorFormat||depthFormat!=b.depthFormat||depthResourceFormat!=b.depthResourceFormat||depthFlags!=b.depthFlags)return "target dimensions, formats or depth-view flags differ between eyes";
         if(vs.p!=b.vs.p||ps.p!=b.ps.p)return "shader objects differ between eyes";
         if(layout.p!=b.layout.p||ib.p!=b.ib.p||indexFormat!=b.indexFormat||indexOffset!=b.indexOffset||stride!=b.stride||offset!=b.offset)return "vertex/index layout or offsets differ between eyes";
@@ -112,7 +112,8 @@ struct Snapshot {
         for(unsigned s=0;s<2;++s){
             const std::string stage=s?"PS":"VS";
             for(unsigned i=0;i<128;++i)if(srv[s][i].p!=b.srv[s][i].p)return stage+" SRV slot "+std::to_string(i)+" differs between eyes";
-            for(unsigned i=0;i<16;++i)if(sampler[s][i].p!=b.sampler[s][i].p)return stage+" sampler slot "+std::to_string(i)+" differs between eyes";
+            const auto used=s?pixelSamplers:vertexSamplers;
+            for(unsigned i=0;i<16;++i)if((used&(1u<<i))&&sampler[s][i].p!=b.sampler[s][i].p)return stage+" sampler slot "+std::to_string(i)+" differs between eyes";
         }return {};
     }
     void bind(ID3D11DeviceContext* c)const{
@@ -138,6 +139,7 @@ struct StereoDrawProof::State {
         const bool direct=caps.vertexArrayIndex&&!source.forceGeometry;
         const bool vertexOkay=convert_stereo_shader(source.vertexCode,source.vertexBytes,StereoShaderStage::vertex,source.vertexConstants,direct,vertex,error);check(vertexOkay,error.c_str());
         const bool pixelOkay=convert_stereo_shader(source.pixelCode,source.pixelBytes,StereoShaderStage::pixel,source.pixelConstants,false,pixel,error);check(pixelOkay,error.c_str());
+        result.samplerSlots={vertex.samplerSlots,pixel.samplerSlots};
         okay(device.p->CreateVertexShader(vertex.bytecode.data(),vertex.bytecode.size(),nullptr,&vs.p),"converted VS creation failed");okay(device.p->CreatePixelShader(pixel.bytecode.data(),pixel.bytecode.size(),nullptr,&ps.p),"converted PS creation failed");
         if(!direct){Ref<ID3DBlob> code,errors;okay(D3DCompile(vertex.geometrySource.data(),vertex.geometrySource.size(),nullptr,nullptr,nullptr,"main","gs_5_0",D3DCOMPILE_OPTIMIZATION_LEVEL3,0,&code.p,&errors.p),"geometry adapter compilation failed");okay(device.p->CreateGeometryShader(code.p->GetBufferPointer(),code.p->GetBufferSize(),nullptr,&gs.p),"geometry adapter creation failed");}
         result.route=stereo_route_name(direct?StereoRoute::vertex_array_index:StereoRoute::geometry_array_index);draw=source;left.capture(device.p,c,result,0);result.width=left.width;result.height=left.height;result.key=source.key;
@@ -211,7 +213,7 @@ void StereoDrawProof::observe(ID3D11DeviceContext* c,bool right,const StereoProo
     try{check(c&&GetCurrentThreadId()==state_->owner,"proof called from a different context thread");
         if(!right&&!state_->haveLeft){if(insideTimingQuery)++result_.timingQueryOverlaps;check(draw.key&&draw.indexCount,"native mesh identity and nonempty indexed draw required");state_->prepare(c,draw,result_);state_->reference(c,0);result_.status="waiting_right";}
         else if(right&&state_->haveLeft&&draw.key==state_->draw.key&&draw.indexCount==state_->draw.indexCount&&draw.startIndex==state_->draw.startIndex&&draw.baseVertex==state_->draw.baseVertex){
-            if(insideTimingQuery)++result_.timingQueryOverlaps;state_->right.capture(state_->device.p,c,result_,1);const auto difference=state_->left.difference(state_->right);check(difference.empty(),difference.c_str());state_->reference(c,1);state_->paired(c);state_->compare(c,result_);
+            if(insideTimingQuery)++result_.timingQueryOverlaps;state_->right.capture(state_->device.p,c,result_,1);const auto difference=state_->left.difference(state_->right,state_->vertex.samplerSlots,state_->pixel.samplerSlots);check(difference.empty(),difference.c_str());state_->reference(c,1);state_->paired(c);state_->compare(c,result_);
         }
     }catch(const std::exception& e){result_.status="unavailable";result_.reason=e.what();}catch(...){result_.status="unavailable";result_.reason="proof allocation failed";}
 }

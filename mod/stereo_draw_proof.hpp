@@ -21,6 +21,7 @@ struct StereoProofResult {
     // Per eye: depth enabled, write mask, comparison, stencil enabled, DSV flags.
     std::array<std::array<unsigned,5>,2> nativeDepth{};
     std::array<bool,2> depthCopied{};
+    std::array<uint32_t,2> samplerSlots{}; // Declared VS/PS sampler masks.
     // Covered counts are passed samples from private occlusion queries. They
     // remain meaningful for read-only depth, EQUAL shading and reversed depth.
     std::array<uint64_t,2> covered{},colorDifferent{},depthDifferent{},stencilDifferent{};

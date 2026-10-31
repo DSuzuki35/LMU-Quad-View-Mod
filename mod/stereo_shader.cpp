@@ -10,8 +10,8 @@
 
 namespace lmuqv {namespace {
 using Words=std::vector<uint32_t>;using Bytes=std::vector<uint8_t>;
-constexpr uint32_t input=1,output=2,temporary=0,immediate=4,constant=8;
-constexpr uint32_t mov=54,ret=62,retc=63,dclCB=89,dclTemps=104;
+constexpr uint32_t input=1,output=2,temporary=0,immediate=4,sampler=6,constant=8;
+constexpr uint32_t mov=54,ret=62,retc=63,dclCB=89,dclSampler=90,dclTemps=104;
 constexpr char eyeSemantic[]="LMU_STEREO_EYE";
 void require(bool condition,const char* message){if(!condition)throw std::runtime_error(message);}
 uint32_t word(const Bytes& data,size_t offset){require(offset<=data.size()&&data.size()-offset>=4,"truncated container");uint32_t v;std::memcpy(&v,data.data()+offset,4);return v;}
@@ -134,16 +134,19 @@ bool convert_stereo_shader(const void* raw,size_t size,StereoShaderStage stage,u
         require(code[0]==(stage==StereoShaderStage::vertex?0x10040u:0x40u),"initial converter supports SM4.0 VS/PS only");
         for(const auto& p:inputs)require(p.semantic!=eyeSemantic&&p.system!=8&&p.system!=4&&p.system!=5,"existing instanced/stereo input requires a separate adapter");
         for(const auto& p:outputs)require(p.semantic!=eyeSemantic&&p.system!=4&&p.system!=5,"existing stereo/viewport output requires a separate adapter");
-        const auto parsed=instructions(code);unsigned temps=0;bool foundTemps=false,body=false;std::map<unsigned,StereoConstantRange> bindings;
+        const auto parsed=instructions(code);unsigned temps=0;uint32_t samplerSlots=0;bool foundTemps=false,body=false;std::map<unsigned,StereoConstantRange> bindings;
         for(const auto& inst:parsed){
             if(inst.opcode<88)body=true;else require(!body,"declarations after shader body");
             if(inst.opcode==dclTemps){require(inst.end-inst.start==2&&!foundTemps,"invalid temporary declaration");temps=code[inst.start+1];foundTemps=true;require(temps<4096,"temporary register limit");}
+            if(inst.opcode==dclSampler){size_t at=inst.start+1;const auto o=operand(code,at,inst.end);
+                require(at==inst.end&&o.type==sampler&&o.indices.size()==1&&o.reps[0]==0&&o.indices[0]<16,"unsupported sampler declaration");
+                const auto bit=1u<<o.indices[0];require(!(samplerSlots&bit),"duplicate sampler declaration");samplerSlots|=bit;}
             if(inst.opcode==dclCB){size_t at=inst.start+1;const auto o=operand(code,at,inst.end);require(at==inst.end&&o.type==constant&&o.indices.size()==2&&o.reps[0]==0&&o.reps[1]==0,"unsupported CB declaration");
                 const auto slot=o.indices[0],count=o.indices[1];require(slot<13&&count&&count<=4096,"packed constant slot unavailable or invalid CB size");
                 if(slots&(1u<<slot)){require(!(code[inst.start]&(1u<<11)),"selected CB uses dynamic indexing");bindings.emplace(slot,StereoConstantRange{slot,count,0});}
             }
         }
-        require(!bindings.empty(),"no selected CB declaration");StereoShaderVariant variant;
+        require(!bindings.empty(),"no selected CB declaration");StereoShaderVariant variant;variant.samplerSlots=samplerSlots;
         for(auto& item:bindings){item.second.offset=variant.eyeStride;variant.eyeStride+=item.second.registers;variant.constants.push_back(item.second);}
         require(variant.eyeStride<=2048,"paired constants exceed D3D11 CB capacity");
         const auto eyeInput=free_register(inputs);inputs.push_back({stage==StereoShaderStage::vertex?"SV_InstanceID":eyeSemantic,0,stage==StereoShaderStage::vertex?8u:0u,1,eyeInput,0x101});
@@ -169,6 +172,7 @@ bool convert_stereo_shader(const void* raw,size_t size,StereoShaderStage stage,u
             const auto begin=converted.size();converted.push_back(code[inst.start]);size_t at=inst.start+1;
             auto extension=code[inst.start];while(extension>>31){require(at<inst.end,"truncated instruction extension");extension=code[at++];converted.push_back(extension);}
             while(at<inst.end){const auto o=operand(code,at,inst.end);bool rewritten=false;
+                if(o.type==sampler)require(o.indices.size()==1&&o.reps[0]==0&&o.indices[0]<16&&(samplerSlots&(1u<<o.indices[0])),"undeclared or dynamically indexed sampler operand");
                 if(o.type==constant){require(o.indices.size()==2&&o.reps[0]==0,"unsupported CB operand");const auto found=bindings.find(o.indices[0]);
                     if(found!=bindings.end()){require(o.reps[1]==0&&o.indices[1]<found->second.registers,"unsupported selected CB operand indexing");
                         converted.push_back((o.token&~(7u<<25))|(3u<<25));converted.insert(converted.end(),code.begin()+o.begin+1,code.begin()+o.indexStart);converted.push_back(variant.packedSlot);converted.push_back(found->second.offset+o.indices[1]);add(converted,reg(temporary,temps,1,false));rewritten=true;}

@@ -89,8 +89,29 @@ int main(int argc,char** argv){
         D3D11_TEXTURE2D_DESC td{};td.Width=td.Height=td.ArraySize=td.MipLevels=td.SampleDesc.Count=1;td.Format=DXGI_FORMAT_R8G8B8A8_UNORM;td.BindFlags=D3D11_BIND_SHADER_RESOURCE;ID3D11Texture2D* t=nullptr;ID3D11ShaderResourceView* srv=nullptr;assert(SUCCEEDED(f.d->CreateTexture2D(&td,nullptr,&t)));assert(SUCCEEDED(f.d->CreateShaderResourceView(t,nullptr,&srv)));f.c->PSSetShaderResources(20,1,&srv);
         proof.observe(f.c,true,draw,true);assert(proof.result().status=="unavailable"&&proof.result().reason.find("SRV")!=std::string::npos);checkState(f,1);proof.finish();ID3D11ShaderResourceView* empty=nullptr;f.c->PSSetShaderResources(20,1,&empty);drop(srv);drop(t);
         bind(f,0);proof.begin();proof.observe(f.c,false,draw,true);auto different=draw;different.key=92;bind(f,1);proof.observe(f.c,true,different,true);proof.finish();assert(proof.result().status=="inconclusive"&&proof.result().reason=="no matching right-eye draw");
+        // A stale sampler in an undeclared slot cannot affect this shader.
+        D3D11_SAMPLER_DESC sd{};sd.Filter=D3D11_FILTER_MIN_MAG_MIP_POINT;sd.AddressU=sd.AddressV=sd.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;sd.ComparisonFunc=D3D11_COMPARISON_ALWAYS;sd.MaxLOD=D3D11_FLOAT32_MAX;
+        ID3D11SamplerState* unused=nullptr;assert(SUCCEEDED(f.d->CreateSamplerState(&sd,&unused)));bind(f,0);proof.begin();proof.observe(f.c,false,draw,true);bind(f,1);f.c->PSSetSamplers(8,1,&unused);proof.observe(f.c,true,draw,true);assert(proof.result().status=="passed");proof.finish();ID3D11SamplerState* noSampler=nullptr;f.c->PSSetSamplers(8,1,&noSampler);drop(unused);
         proof.begin();bind(f,0);proof.observe(f.c,false,draw,true);std::thread close([&]{proof.finish();});close.join();assert(proof.result().status=="inconclusive");
         checkDebug(f,debug);
+    }
+    for(bool geometry:{false,true}){
+        Fixture f(hardware,DXGI_FORMAT_R16G16B16A16_FLOAT,debug?D3D11_CREATE_DEVICE_DEBUG:0);f.c->ClearDepthStencilView(f.ds,D3D11_CLEAR_DEPTH,1,0);
+        const char* sampledSource="cbuffer Frame:register(b3){float4 scale;}; Texture2D tex:register(t20); SamplerState samp:register(s8); float4 main(float4 p:SV_Position,float3 color:COLOR0):SV_Target{return float4(color*scale.rgb,1)*tex.SampleLevel(samp,float2(.5,.5),0);}";
+        auto* sampled=compile(sampledSource,"ps_4_0");drop(f.referencePs);assert(SUCCEEDED(f.d->CreatePixelShader(sampled->GetBufferPointer(),sampled->GetBufferSize(),nullptr,&f.referencePs)));
+        lmuqv::StereoShaderVariant variant;std::string error;assert(lmuqv::convert_stereo_shader(sampled->GetBufferPointer(),sampled->GetBufferSize(),lmuqv::StereoShaderStage::pixel,1u<<3,false,variant,error)&&variant.samplerSlots==(1u<<8));
+        D3D11_TEXTURE2D_DESC td{};td.Width=td.Height=td.ArraySize=td.MipLevels=td.SampleDesc.Count=1;td.Format=DXGI_FORMAT_R8G8B8A8_UNORM;td.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+        const uint32_t value=0xff804020;D3D11_SUBRESOURCE_DATA initial{&value,4,0};ID3D11Texture2D* t=nullptr;ID3D11ShaderResourceView* srv=nullptr;assert(SUCCEEDED(f.d->CreateTexture2D(&td,&initial,&t)));assert(SUCCEEDED(f.d->CreateShaderResourceView(t,nullptr,&srv)));
+        D3D11_SAMPLER_DESC sd{};sd.Filter=D3D11_FILTER_MIN_MAG_MIP_POINT;sd.AddressU=sd.AddressV=sd.AddressW=D3D11_TEXTURE_ADDRESS_CLAMP;sd.ComparisonFunc=D3D11_COMPARISON_ALWAYS;sd.MaxLOD=D3D11_FLOAT32_MAX;ID3D11SamplerState *a=nullptr,*b=nullptr;assert(SUCCEEDED(f.d->CreateSamplerState(&sd,&a)));sd.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;assert(SUCCEEDED(f.d->CreateSamplerState(&sd,&b)));
+        lmuqv::StereoProofDraw draw;draw.key=93;draw.indexCount=6;draw.vertexCode=vertex->GetBufferPointer();draw.vertexBytes=vertex->GetBufferSize();draw.pixelCode=sampled->GetBufferPointer();draw.pixelBytes=sampled->GetBufferSize();draw.vertexConstants=1|(1u<<4);draw.pixelConstants=1u<<3;draw.forceGeometry=geometry;
+        lmuqv::StereoDrawProof proof;
+        for(bool mismatch:{false,true}){
+            bind(f,0);f.c->PSSetShaderResources(20,1,&srv);f.c->PSSetSamplers(8,1,&a);proof.begin();proof.observe(f.c,false,draw,true);assert(proof.result().status=="waiting_right");
+            bind(f,1);auto* rightSampler=mismatch?b:a;f.c->PSSetSamplers(8,1,&rightSampler);proof.observe(f.c,true,draw,true);assert(proof.result().status==(mismatch?"unavailable":"passed"));
+            if(mismatch)assert(proof.result().reason=="PS sampler slot 8 differs between eyes");checkState(f,1);proof.finish();
+        }
+        f.c->ClearState();drop(a);drop(b);drop(srv);drop(t);drop(sampled);checkDebug(f,debug);
+        std::cout<<"Sampler declarations: unused slot 8 allowed; used slot 8 checked; high texture slot 20 retained, route="<<(geometry?"geometry":"vprt")<<" PASS\n";
     }
     for(auto depthFormat:{DXGI_FORMAT_D16_UNORM,DXGI_FORMAT_D24_UNORM_S8_UINT,DXGI_FORMAT_D32_FLOAT,DXGI_FORMAT_D32_FLOAT_S8X24_UINT})for(unsigned mode=0;mode<7;++mode)for(bool geometry:{false,true}){
         if(mode==5&&!hasStencil(depthFormat))continue;

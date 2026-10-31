@@ -1,9 +1,9 @@
 Portable shader conversion research
 ===================================
 
-This source change follows the research 2 game capture. It adds an offline
-compiler component and tests. It does not replace LMU's renderer, suppress game
-draws, or change the published research 2 package. No CPU/FPS gain is claimed.
+This research started with the research 2 game capture. It includes a compiler
+component, tests and an in-game private comparison. Normal game draws remain
+enabled; no CPU/FPS gain is claimed.
 
 The converter reads legacy SM4.0 vertex/pixel DXBC and emits a stereo variant.
 Selected constant buffers are packed into two eye banks in a spare buffer slot.
@@ -19,7 +19,11 @@ chunk ranges, token lengths, signature capacity and packed-buffer capacity. It
 generates a new valid DXBC container and discards stale reflection/debug metadata.
 It rejects unsupported profiles, existing instance/stereo inputs, occupied packed
 CB slots, dynamically indexed selected CBs, unsupported control/declarations, and
-signatures the initial geometry adapter cannot relay. A failed conversion returns
+signatures the initial geometry adapter cannot relay. Sampler declarations are
+decoded into a slot mask and every body sampler operand must use a declared,
+immediate slot. The checker compares those sampler slots; unused stale bindings
+cannot affect the shader. All VS/PS SRV slots remain conservatively checked.
+A failed conversion returns
 no usable shader or binding plan; callers must retain ordinary rendering.
 
 Successful compilation does not establish that a game pass can be combined. The
@@ -50,11 +54,27 @@ Optionally validate locally captured programs without redistributing them:
     stereo_shader_test.exe --hardware --validate-captured-directory <local-shader-folder>
 
 The selected opaque LMU family uses VS SHA256 beginning a99b2cd689aa55f5 and PS
-SHA256 beginning 79bed2230b50db6c. Its converted VS, PS and generated geometry
-adapter passed D3D11 creation checks on WARP and the RTX 4080. The game-program
-check does not claim image equivalence: real per-eye inputs/resources have not
-yet been supplied to a combined LMU draw. Raw game shaders, cache files and
-disassembly remain local development inputs outside version control.
+SHA256 beginning 79bed2230b50db6c or d41d95fc9c8fed23. Converted shaders and the
+generated geometry adapter passed D3D11 creation checks on WARP and the RTX 4080.
+Raw game shaders, cache files and disassembly remain local development inputs
+outside version control.
+
+On 2026-10-31, prototype 5 passed a live private comparison for one matched
+4,104-index object using the d41d95fc pixel shader. At 1352x1734 per eye, the
+instanced VPRT draw produced 1,100,595 passed samples, matching the two reference
+counts combined. No pixels exceeded the color tolerance; maximum color error
+was 0.0000610352. Depth matched exactly. The sampled native state was D32 with
+GREATER comparison and depth writes enabled. This validates that sampled object
+and its captured per-eye inputs, not the complete opaque pass or other programs.
+Both native CPU preparation paths and game draws remain enabled.
+
+A separate capture stopped on PS sampler slot 8 differing between eyes. These
+two pixel programs declare only s0, s1, s11, s13 and s14: s8 was an irrelevant
+stale binding. Source now checks sampler declarations rather than every slot.
+Tests allow an unused s8 difference but still refuse it when an owned shader
+actually samples through s8. Slot masks are also checked against D3DReflect for
+converted local programs. This does not establish that the refused capture
+would pass all remaining checks if replayed.
 
 The optional local corpus check also validated all 150 exported program checksums,
 including both checksum padding cases. Eighty programs converted and passed D3D11
