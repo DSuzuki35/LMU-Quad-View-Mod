@@ -1,4 +1,13 @@
-# LMU portable instanced stereo: maintainer handoff
+# LMU VectorXR and renderer work: maintainer handoff
+
+This handoff covers the VectorXR contribution, profiling and rendering changes,
+the experimental CPU upload optimization, and the unfinished vendor-agnostic
+instanced-stereo work. It is intended to let another maintainer build, review and
+continue the implementation without private captures or this conversation.
+
+Status recorded on 2026-10-31. Branch names and commit references describe the
+local source history; publication and pull-request inclusion must be checked
+separately.
 
 ## Status
 
@@ -27,8 +36,14 @@ research history, in dependency order:
 | `a3cb73a` | Native depth/stencil snapshots and comparison |
 | `bac0051` | Declared sampler masks and unused-sampler refusal fix |
 | `8913ddf` | Combined upload fast-path candidate and tests |
+| `6fd99ca` | Dormant focus-image ownership bridge and fake-runtime tests; no native scheduler |
 
 These are dependent research commits, not a list of independent cherry-picks.
+
+Do not assume opening or updating a pull request for the earlier feature branch
+includes the research branch. Inspect its base and commit list explicitly. If
+the earlier contribution is merged first, rebase the research work onto that
+accepted history and resolve any overlap before submitting a separate review.
 
 | Area | State |
 | --- | --- |
@@ -38,10 +53,51 @@ These are dependent research commits, not a list of independent cherry-picks.
 | Standard D3D11 instanced two-view backend | Implemented and tested offscreen |
 | SM4 vertex/pixel shader conversion | Implemented for a guarded subset |
 | One real LMU object's paired color/depth comparison | Passed in private targets |
-| Native focus-pass scheduling / consumer coordination | Investigation only; no scheduler implementation |
+| Native focus-pass scheduling / consumer coordination | No scheduler implementation; dormant focus-image ownership bridge added |
 | Replacing native eye draws with the paired pass | Not implemented |
 | Skipping duplicated native CPU preparation | Not implemented |
 | CPU upload filtering / batching | Separate experimental candidate; gain unconfirmed |
+
+## Existing VectorXR, profiling and outer-render changes
+
+These features precede the portable stereo research. Keep their behavior and
+tests intact while changing the renderer:
+
+| Change | Entry points and review focus |
+| --- | --- |
+| Optional VectorXR provider | `mod/launcher/LaunchService.cs`, `QvfrSettings.cs`, `Launcher.cs`, `mod/launch.ps1`; provider discovery/validation, separate saved manifest paths, explicit layer order, child-only environment and conflict disabling |
+| Direct compositor inputs | `mod/swapchain_sampling.hpp`, `mod/xr_layer.cpp`; eligible color swapchains request sampled usage, preserving metadata and retrying original usage when unsupported |
+| Smaller native outer rendering | `mod/engine_bridge.cpp`, `native_outer_bank.hpp`, `native_outer_bindings.hpp`, `native_outer_texture.hpp`; transactional native resource/view changes, exact restoration and full-size/resampling fallback |
+| Optional profiling and shutdown saving | `mod/render_profile.hpp`, `gpu_timing.hpp`, engine/XR hooks; per-XR-frame wall scopes, sparse GPU queries, periodic checkpoints and normal-close partial saving |
+| Diagnostic master switch | launcher settings/environment plus native enforcement; disables mod collection/logging at the next launch, independently of the rendering options |
+
+The launcher does not install VectorXR, replace the active headset runtime or
+change global layer registration. It selects one quad-view provider for the child
+game process. VectorXR's own LMU profile supplies resolution/focus/tracking
+settings; QVFR-specific sizing controls are inactive with this provider. Native
+OpenXR and mbucchia QVFR remain selectable. See [VectorXR setup](PORTABLE-VECTORXR.txt)
+and [provider design](PORTABLE-DESIGN.md).
+
+The smaller outer bank addresses some peripheral GPU cost. It does not eliminate
+the game's full post-processing pipeline, replace all internal transient targets
+or share the focus eye draws. Unsupported bank layouts fall back to full-size
+outer rendering and resampling, so visible quad views alone do not prove the bank
+savings are active. Confirm the startup acceptance/fallback messages.
+
+The native profiler replaces dependence on an OpenXR Toolkit overlay for these
+mod measurements. Its default capture is 120 seconds (configurable 30-300),
+triggered by Ctrl+Alt+F9. Normal teardown saves a partial capture, including on
+another teardown thread; forced termination can lose recent data. The diagnostic
+master stops the mod's instrumentation, while provider/runtime diagnostics remain
+separately controlled. See [profiling semantics](RENDER-PROFILING.txt) before
+interpreting the inclusive CPU scopes or partial GPU intervals.
+
+The tests most relevant to these established changes are
+`mod/launcher/LaunchServiceTests.cs`, `mod/launcher/SettingsTests.cs`,
+`mod/launcher/GuiLayoutTests.cs`,
+`mod/tests/swapchain_sampling_test.cpp`, `native_outer_bindings_test.cpp`,
+`native_outer_fallback_test.cpp`, `render_profile_test.cpp` and `mod/xr_layer_tests.cpp`.
+Synthetic/fake-runtime tests cannot establish every provider/headset combination.
 
 ## Files to start with
 
@@ -167,8 +223,23 @@ already have been released. The active opaque HDR/depth targets are also not
 interchangeable with the final runtime color images.
 
 The XR layer currently holds its own **outer** images until submission for UI
-work. Application focus-image releases are forwarded normally. There is no
-implemented focus-image lease/deferral mechanism for paired rendering.
+work. Application focus-image releases are forwarded normally in production.
+A dormant focus-image ownership bridge now supports explicit owner-thread leases,
+deferred downstream release, retry and stale-token rejection. No production
+renderer calls its preparation function, and it is not enabled by a user option.
+It does not own opaque HDR/depth banks, pause consumers or schedule a paired pass.
+
+Its API is in `mod/bridge.hpp`: `xr_prepare_focus_image_ownership`,
+`xr_hold_focus_image`, `xr_focus_lease_valid` and `xr_retire_focus_image`.
+Preparation must occur before application swapchain creation; holding requires
+one waited acquisition on the selected native eye chain in the current frame.
+The owner must retire before frame advancement, another acquire on that chain,
+end-session or swapchain destruction. An unresolved owner is rejected rather than
+allowing writes after downstream release. Session destruction invalidates state.
+The future scheduler must implement fallback/draining for those boundaries before
+enabling the bridge. `mod/tests/focus_image_lease_test.cpp` exercises actual layer
+release/acquire/frame paths with a fake runtime and WARP texture; it does not
+attach to LMU or demonstrate game-pass replacement.
 
 Consequently, these remain two connected integration tasks:
 
@@ -281,6 +352,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\mod\build-launcher.ps1
 .\mod\build\msvc\stereo_instancing_test.exe --hardware
 .\mod\build\msvc\stereo_draw_proof_test.exe --hardware
 .\mod\build\msvc\native_upload_batch_test.exe --hardware
+.\mod\build-msvc.cmd -FocusLeaseOnly
 ```
 
 The MSVC build runs native and XR-layer tests and creates the DLL. Launcher
