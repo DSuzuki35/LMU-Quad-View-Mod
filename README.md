@@ -9,6 +9,8 @@ group. The stereo check compares one paired draw with two original references in
 private targets; normal game eye draws remain enabled. Full game-renderer single-
 pass stereo is still in development. No live-game CPU/FPS gain has been measured.
 See [research status, capture steps and hardware check](PORTABLE-STEREO-RESEARCH.txt).
+For continuing the renderer work, read the [maintainer handoff](INSTANCED-STEREO-HANDOFF.md),
+which separates completed GPU checks from the unimplemented native pass integration.
 
 Experimental Windows x64 / D3D11 renderer integration for Le Mans Ultimate.
 It renders two outer and two focus views, with native OpenXR quad runtimes or
