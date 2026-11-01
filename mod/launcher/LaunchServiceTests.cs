@@ -60,6 +60,14 @@ class LaunchServiceTests {
             File.WriteAllText(toolkit,original.Replace("XR_APILAYER_MBUCCHIA_quad_views_foveated","XR_APILAYER_MBUCCHIA_toolkit"));
             var customQvfr=Path.Combine(providerRoot,"custom-quad.json");
             File.WriteAllText(customQvfr,original.Replace("DISABLE_XR_APILAYER_MBUCCHIA_quad_views_foveated","DISABLE_VENDOR_QUAD_EMULATION"));
+            var malformedManifest=Path.Combine(providerRoot,"unrelated-broken.json");
+            File.WriteAllText(malformedManifest,"{ not valid JSON");
+            foreach(var backend in new[]{"Native","QVFR","VectorXR"}) {
+                var scanPlan=new LaunchService.LayerPlan();
+                LaunchService.AddImplicitDisables(scanPlan,new[]{malformedManifest,customQvfr},backend);
+                Check(scanPlan.DisableVariables.Contains("DISABLE_VENDOR_QUAD_EMULATION"),"Malformed unrelated manifest blocked isolation for "+backend);
+            }
+            Reject(delegate{LaunchService.ReadProviderManifest(malformedManifest);},"Explicit malformed provider must still be rejected");
             LaunchService.AddImplicitDisables(vectorPlan,new[]{manifest,vectorManifest,toolkit,customQvfr},"VectorXR");
             var vectorSettings=new LauncherSettings {GameDirectory=settings.GameDirectory,Backend="VectorXR",FoveationMode="fixed"};
             var vectorInfo=LaunchService.MakeStartInfo(root,vectorSettings,vectorPlan,Path.Combine(root,"vector.log"));

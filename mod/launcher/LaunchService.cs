@@ -114,7 +114,7 @@ namespace LmuQuadViewLauncher {
                 Dictionary<string,object> layer;
                 try {
                     layer=Layer(ReadJson(path));
-                } catch(IOException) { continue; } catch(UnauthorizedAccessException) { continue; }
+                } catch(InvalidDataException) { continue; } catch(IOException) { continue; } catch(UnauthorizedAccessException) { continue; }
                 if(layer==null)continue;
                 var name=Value(layer,"name");
                 if(name!=ProviderName&&name!=VectorXrProviderName&&!(backend=="VectorXR"&&name=="XR_APILAYER_MBUCCHIA_toolkit"))continue;
