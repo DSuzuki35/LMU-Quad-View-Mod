@@ -41,5 +41,5 @@
 ### Task 2: Review and live validation
 
 - [x] Independently review the implementation.
-- [ ] Package separately and verify hashes; launch offline LMU, create/touch the marker through filesystem tooling, and verify a complete native source-containment capture without user keyboard input.
-- [ ] Close LMU when finished, publish reviewed source-containment and trigger prerequisites with live evidence. Genuine SPS remains unfinished.
+- [x] Package separately and verify hashes; launch offline LMU, create/touch the marker through filesystem tooling, and verify a complete native source-containment capture without user keyboard input.
+- [x] Close LMU when finished, publish reviewed source-containment and trigger prerequisites with live evidence. Genuine SPS remains unfinished.

@@ -342,3 +342,41 @@ snapshot tests, analytic matrix-order cases, refusal cases and WARP JSON/draw
 checks. The independently reviewed diagnostic preserved native preparation
 and drawing. All comparisons still report `scheduling_eligible=false`.
 There is no SPS performance claim or 0.1.1 release from this camera result.
+
+## Source-array containment and capture trigger (2026-11-01)
+
+The audit now checks each captured mesh against the source geometry's reported
+record array, copying at most 24 bytes per accepted packet. It records the array
+identity, count, mesh index, sorting distance and presence of a lazy refresh
+state. These are owned observations, not retained engine objects or proof that
+the array stays unchanged. The existing 32,768-packet capture limit also bounds
+these reads.
+
+A two-frame offline Monza session with mbucchia QVFR produced 73 left-eye and
+74 right-eye outer packets in each frame. All 294 packet observations matched
+their reported source arrays. The 73 shared meshes had identical array
+descriptions between eyes, but every shared mesh had a different sorting
+distance. Each right-eye list contained one additional mesh. A null lazy-state
+pointer was observed on 68 left and 69 right packets per frame; that excludes
+one known refresh path only, and does not establish general staticness.
+
+The capture finished normally with no native scope drops or diagnostic abort.
+The headset was in standby, so this result covers the outer-eye path only.
+It reinforces the requirement for independently owned membership and sorting
+data for each eye. Neither retaining an array address nor reusing the left-eye
+list supplies that data.
+
+Opt-in audits can also be requested by changing `logs/stereo-audit.request`
+after the diagnostic has initialized. The contents are ignored. The audit
+checks the timestamp at most twice a second outside active captures; a stale
+startup file does not trigger a capture. The Monza run used this trigger and
+completed the existing two-frame capture automatically. Ctrl+Alt+F8 remains
+available. Both methods add diagnostic overhead and are unsuitable for
+performance measurements.
+
+An independently reviewed, restricted numeric distance/frustum classifier now
+has 710 analytic checks passing at both unoptimized and optimized builds.
+It owns its inputs and distinguishes returned flags from stored flags. This
+models one native calculation, not the whole visibility decision. Comparison
+against the original invocation is the next diagnostic step; the model is not
+used to alter native rendering.

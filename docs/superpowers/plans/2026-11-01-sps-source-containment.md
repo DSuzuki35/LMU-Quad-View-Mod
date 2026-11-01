@@ -44,5 +44,5 @@
 ### Task 2: Live evidence and publication
 
 - [x] Independently review implementation and tests.
-- [ ] Package a separate diagnostic build with the user's settings; capture offline native packets and summarize resolved/unresolved containment, per-eye array identities/counts and scalar differences. Do not call these ownership or visibility proofs.
-- [ ] Close LMU when live inputs are no longer needed. Update development evidence, commit and push the reviewed prerequisite. Continue native SPS integration; conformal implementation remains on hold.
+- [x] Package a separate diagnostic build with the user's settings; capture offline native packets and summarize resolved/unresolved containment, per-eye array identities/counts and scalar differences. Do not call these ownership or visibility proofs.
+- [x] Close LMU when live inputs are no longer needed. Update development evidence, commit and push the reviewed prerequisite. Continue native SPS integration; conformal implementation remains on hold.
