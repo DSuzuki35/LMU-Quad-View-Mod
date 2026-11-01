@@ -518,13 +518,15 @@
             [0.8, -0.8],
             [-0.7, 0.6],
           ]) {
-            for (const tight of [false, true]) {
+            for (const boundDepth of [-1, 3, 10]) {
+              const tight = boundDepth >= 0;
               const bounded = configure({
                 strength,
                 gaze,
                 level: 0,
                 bounded: true,
                 tight,
+                boundDepth: Math.max(0, boundDepth),
               });
               if (
                 bounded.interiorWrongSurfacePixels > 2 ||
@@ -533,7 +535,7 @@
                 throw new Error(
                   "Bounded primitive rasterization differs from the analytic reference",
                 );
-              results.push({ strength, gaze, tight, bounded });
+              results.push({ strength, gaze, tight, boundDepth, bounded });
             }
           }
         return { passed: true, results };
@@ -570,13 +572,16 @@
           const times = [];
           let result;
           for (let i = 0; i < 12; i++) {
-            result = prepareBounds(depth >= 0, Math.max(0, depth));
-            if (i >= 2) times.push(result.cpuMs);
+            const started = performance.now();
+            for (let repeat = 0; repeat < 16; repeat++)
+              result = prepareBounds(depth >= 0, Math.max(0, depth));
+            if (i >= 2) times.push((performance.now() - started) / 16);
           }
           const name = depth < 0 ? "coarse" : "depth" + depth;
           prepared.set(name, result);
           report.cpuBounds.push({
             name,
+            batch: 16,
             ...summarize(times),
             areaOverSource: result.areaOverSource,
             segments: result.segments,

@@ -153,20 +153,28 @@
     if (strength === 0)
       return { bounds: coarse, segments: points.length, limitedSegments: 0 };
     const bounds = [Infinity, Infinity, -Infinity, -Infinity];
+    const observed = bounds.slice();
+    function observe(point) {
+      const p = transform(point, gaze, strength, false);
+      for (let i = 0; i < 2; i++) {
+        observed[i] = Math.min(observed[i], p[i]);
+        observed[i + 2] = Math.max(observed[i + 2], p[i]);
+      }
+    }
+    points.forEach(observe);
     let segments = 0,
       limitedSegments = 0;
     function edge(a, b, depth) {
       const mid = a.map((v, i) => (v + b[i]) * 0.5);
       const enclosure = intervalBounds([a, b], gaze, strength);
-      const samples = [a, mid, b].map((p) =>
-        transform(p, gaze, strength, false),
-      );
+      observe(mid);
+      // We need the polygon's global rectangle, not a tight box around every
+      // small edge segment. Once a segment's interval cannot enlarge the known
+      // extrema beyond tolerance, further local refinement buys nothing.
       const tight = [0, 1].every(
         (i) =>
-          Math.min(...samples.map((p) => p[i])) - enclosure[i] <=
-            tolerance[i] &&
-          enclosure[i + 2] - Math.max(...samples.map((p) => p[i])) <=
-            tolerance[i],
+          observed[i] - enclosure[i] <= tolerance[i] &&
+          enclosure[i + 2] - observed[i + 2] <= tolerance[i],
       );
       if (!tight && depth < maxDepth) {
         edge(a, mid, depth + 1);

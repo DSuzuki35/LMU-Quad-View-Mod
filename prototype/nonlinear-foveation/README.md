@@ -185,6 +185,17 @@ subdivision-6/rectangles including reconstruction. These tiny light-material,
 full-source runs demonstrate overhead, **not a foveation performance gain**.
 The unrestricted CPU refinement is unsuitable as a per-triangle game algorithm.
 
+A follow-up prunes segments whose conservative interval cannot enlarge the
+polygon's **global** bounds beyond tolerance. The centered depth-10 workload fell
+from 6,086 terminal segments to 215, keeping the 2.19x rectangle area. Batched CPU
+measurements (16 calculations per sample, ten samples after two warmups) gave
+approximately 0.44 ms at depth 10, 0.14 ms at depth 3, and 0.01 ms for coarse bounds.
+These JavaScript numbers cover only three primitives and include allocations;
+they do not establish a scalable native implementation. Four segments still hit
+the depth cap, retaining conservative coverage. Tests cover 40 seeded random and
+degenerate CPU triangles plus coarse/depth-3/depth-10 GPU cases across nine
+gaze/strength combinations. Pruning changes the work, not the coverage contract.
+
 There is no general-purpose shader rewriting here. LMU integration would still
 need primitive extraction, per-material interpolation and derivatives, clipping,
 transparency/order, multisampling, motion/depth history, UI/postprocessing, and

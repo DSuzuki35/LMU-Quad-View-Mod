@@ -198,3 +198,63 @@ test("refined boundary bounds stay conservative and reduce loose rectangles", ()
   assert.throws(() => M.refinedBounds(points, [0, 0], 4, [0, 0.001], 8));
   assert.throws(() => M.refinedBounds(points, [0, 0], 4, [0.001, 0.001], 15));
 });
+
+test("bound refinement prunes segments that cannot change global extrema", () => {
+  const points = [
+    [-0.88, -0.72],
+    [0.86, -0.55],
+    [-0.08, 0.88],
+  ];
+  const result = M.refinedBounds(points, [0, 0], 4, [0.5 / 640, 0.5 / 480], 10);
+  // Guard computational work rather than wall-clock time. Refining every local
+  // curve segment to subpixel tightness needlessly visits thousands of leaves.
+  assert.ok(
+    result.segments < 128,
+    `visited ${result.segments} terminal segments`,
+  );
+  // A few extrema may still reach the configured cap. The separate dense
+  // containment test checks the required contract: conservative, not exact.
+});
+
+test("pruned bounds contain seeded random and degenerate triangles", () => {
+  let seed = 73591;
+  const random = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  for (let trial = 0; trial < 40; trial++) {
+    const points = Array.from({ length: 3 }, () => [
+      random() * 2 - 1,
+      random() * 2 - 1,
+    ]);
+    if (trial % 5 === 0)
+      points[2] = points[0].map((v, i) => (v + points[1][i]) * 0.5);
+    const gaze = [random() * 1.6 - 0.8, random() * 1.6 - 0.8],
+      k = random() * 12;
+    const { bounds } = M.refinedBounds(
+      points,
+      gaze,
+      k,
+      [0.5 / 640, 0.5 / 480],
+      10,
+    );
+    for (let i = 0; i <= 20; i++)
+      for (let j = 0; j <= 20 - i; j++) {
+        const p = [0, 1].map(
+          (axis) =>
+            (i * points[0][axis] +
+              j * points[1][axis] +
+              (20 - i - j) * points[2][axis]) /
+            20,
+        );
+        const q = M.forward(p, gaze, k);
+        assert.ok(
+          q.every(
+            (v, axis) =>
+              v >= bounds[axis] - 1e-10 && v <= bounds[axis + 2] + 1e-10,
+          ),
+          `lost coverage in seeded trial ${trial}`,
+        );
+      }
+  }
+});
