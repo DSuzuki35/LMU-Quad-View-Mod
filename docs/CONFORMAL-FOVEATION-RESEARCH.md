@@ -24,9 +24,11 @@ A native offscreen D3D11 probe now computes coarse bounds in a geometry shader,
 with original-depth fragment intersection, GPU/independent CPU comparisons,
 WARP and RTX 5090 checks, and source-only statistics/timings. It also reconstructs
 native color from a reduced logical source and separately times the complete
-color path, including a 2048x1536 hardware preset. Gains appear only in selected
-expensive-shading fixtures; the full native depth/quality/quad comparison and
-LMU integration pipeline remain unimplemented.
+color path, including a 2048x1536 hardware preset. A native matched-budget quad
+comparator now includes outer/focus rendering and composition. Nonlinear wins
+over ordinary rendering only in selected expensive-shading fixtures and loses to
+this quad comparator in every tested native case. Native reconstructed depth,
+temporal history, full quality validation and LMU integration remain unimplemented.
 Concurrent single-pass stereo (SPS) work is separate and is not included here.
 
 ## Finding and evidence status

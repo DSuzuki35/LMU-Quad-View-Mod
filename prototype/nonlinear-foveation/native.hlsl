@@ -1,7 +1,9 @@
 // Owned-scene D3D11 experiment. Geometry is clipped before reaching this shader.
 cbuffer Fixture : register(b0) {
-    float4 config;     // gaze.xy, strength, synthetic material work
-    float4 dimensions; // width, height, clipped triangle count, tiles per axis
+    float4 config;         // gaze.xy, strength, synthetic material work
+    float4 dimensions;     // width, height, clipped triangle count, tiles per axis
+    float4 quadDimensions; // outer width/height, focus width/height
+    float4 focusRegion;    // clamped center.xy, fraction, unused
     float4 clipA[16];
     float4 clipB[16];
     float4 clipC[16];
@@ -27,7 +29,22 @@ float2 warp(float2 p, bool inverseMap) {
     return config.xy + (p - config.xy) * (mapped / t);
 }
 Texture2D<float4> sourceColor : register(t0);
+Texture2D<float4> focusColor : register(t1);
 SamplerState sourceSampler : register(s0);
+float4 ComposeQuadPS(float4 position : SV_Position) : SV_Target {
+    uint physicalWidth, physicalHeight;
+    sourceColor.GetDimensions(physicalWidth, physicalHeight);
+    float2 size = float2(physicalWidth, physicalHeight), uv = position.xy / size;
+    float2 ndc = float2(uv.x * 2 - 1, 1 - uv.y * 2);
+    float2 local = (ndc - focusRegion.xy) / focusRegion.z;
+    if (all(abs(local) <= 1)) {
+        float2 pixel = (local * float2(.5, -.5) + .5) * quadDimensions.zw;
+        return focusColor.SampleLevel(sourceSampler,
+                                      clamp(pixel, .5, quadDimensions.zw - .5) / size, 0);
+    }
+    return sourceColor.SampleLevel(
+        sourceSampler, clamp(uv * quadDimensions.xy, .5, quadDimensions.xy - .5) / size, 0);
+}
 float4 ReconstructPS(float4 position : SV_Position) : SV_Target {
     uint physicalWidth, physicalHeight;
     sourceColor.GetDimensions(physicalWidth, physicalHeight);
@@ -87,6 +104,11 @@ MeshOutput WarpedVS(MeshVertex v, uint instance : SV_InstanceID) {
     return o;
 }
 float4 OrdinaryPS(MeshOutput v) : SV_Target { return material(v.uv, v.id); }
+MeshOutput FocusVS(MeshVertex v, uint instance : SV_InstanceID) {
+    MeshOutput o = OrdinaryVS(v, instance);
+    o.position.xy = (o.position.xy - focusRegion.xy * o.position.w) / focusRegion.z;
+    return o;
+}
 
 struct BoundOutput {
     float4 position : SV_Position;

@@ -126,7 +126,7 @@ std::vector<Triangle> tiledScene(UINT tiles) {
     return result;
 }
 struct alignas(16) Constants {
-    Float4 config, dimensions;
+    Float4 config, dimensions, quadDimensions, focusRegion;
     std::array<Float4, 16> a{}, b{}, c{}, ua{}, ub{}, uc{};
 };
 static_assert(sizeof(Float4) == 16 && sizeof(Vertex) == 28, "Shader input layout changed");
@@ -140,15 +140,22 @@ struct Metrics {
     double rmse = 0, depthMax = 0;
     unsigned colorMax = 0;
 };
-Image cpuReference(const std::vector<Triangle> &triangles, float strength, float gx, float gy) {
+Image cpuReference(const std::vector<Triangle> &triangles, float strength, float gx, float gy,
+                   UINT sampleWidth = 0, UINT sampleHeight = 0, double cx = 0, double cy = 0,
+                   double fraction = 1) {
     // Independent double-precision sample/visibility path. This does not use
     // shader code, the GS bounds or rasterized candidate coverage.
     Image image;
     image.rgba.resize(width * height * 4);
     image.depth.assign(width * height, 1);
-    for (UINT y = 0; y < height; y++)
-        for (UINT x = 0; x < width; x++) {
-            double px = 2 * (double(x) + .5) / width - 1, py = 1 - 2 * (double(y) + .5) / height;
+    if (!sampleWidth)
+        sampleWidth = width;
+    if (!sampleHeight)
+        sampleHeight = height;
+    for (UINT y = 0; y < sampleHeight; y++)
+        for (UINT x = 0; x < sampleWidth; x++) {
+            double px = (2 * (double(x) + .5) / sampleWidth - 1) * fraction + cx;
+            double py = (1 - 2 * (double(y) + .5) / sampleHeight) * fraction + cy;
             const double dx = px - gx, dy = py - gy;
             const double t = std::max(std::abs(dx) / (dx >= 0 ? 1 - double(gx) : 1 + double(gx)),
                                       std::abs(dy) / (dy >= 0 ? 1 - double(gy) : 1 + double(gy)));
@@ -192,18 +199,19 @@ Image cpuReference(const std::vector<Triangle> &triangles, float strength, float
         }
     return image;
 }
-Metrics compare(const Image &candidate, const Image &reference) {
+Metrics compare(const Image &candidate, const Image &reference, UINT logicalWidth = width,
+                UINT logicalHeight = height) {
     Metrics result;
     double sum = 0;
     size_t channels = 0;
-    for (UINT y = 0; y < height; y++)
-        for (UINT x = 0; x < width; x++) {
+    for (UINT y = 0; y < logicalHeight; y++)
+        for (UINT x = 0; x < logicalWidth; x++) {
             const size_t p = size_t(y) * width + x, i = p * 4;
             const auto id = reference.rgba[i + 3];
             const bool wrong = candidate.rgba[i + 3] != id;
             if (wrong)
                 result.wrong++;
-            if (x == 0 || y == 0 || x == width - 1 || y == height - 1)
+            if (x == 0 || y == 0 || x == logicalWidth - 1 || y == logicalHeight - 1)
                 continue;
             if (reference.rgba[i - 4 + 3] != id || reference.rgba[i + 4 + 3] != id ||
                 reference.rgba[i - width * 4 + 3] != id || reference.rgba[i + width * 4 + 3] != id)
@@ -300,23 +308,57 @@ double rgbRmse(const std::vector<uint8_t> &a, const std::vector<uint8_t> &b) {
         }
     return std::sqrt(sum / (double(a.size()) * .75));
 }
-enum class Path { ordinary, vertices, bounded, analytic };
+std::vector<uint8_t> cpuComposeQuad(const Image &outer, const Image &focus, Float4 sizes,
+                                    Float4 region) {
+    std::vector<uint8_t> result(width * height * 4);
+    for (UINT y = 0; y < height; y++)
+        for (UINT x = 0; x < width; x++) {
+            const double u = (double(x) + .5) / width, v = (double(y) + .5) / height;
+            const double lx = (u * 2 - 1 - region.x) / region.z,
+                         ly = (1 - v * 2 - region.y) / region.z;
+            const bool inside = std::abs(lx) <= 1 && std::abs(ly) <= 1;
+            const auto &source = inside ? focus : outer;
+            const UINT sw = static_cast<UINT>(inside ? sizes.z : sizes.x),
+                       sh = static_cast<UINT>(inside ? sizes.w : sizes.y);
+            const double sx = std::clamp((inside ? lx * .5 + .5 : u) * sw - .5, 0., double(sw - 1));
+            const double sy = std::clamp((inside ? .5 - ly * .5 : v) * sh - .5, 0., double(sh - 1));
+            const UINT x0 = static_cast<UINT>(sx), y0 = static_cast<UINT>(sy),
+                       x1 = std::min(x0 + 1, sw - 1), y1 = std::min(y0 + 1, sh - 1);
+            const double fx = sx - x0, fy = sy - y0;
+            for (size_t c = 0; c < 4; c++) {
+                const auto sample = [&](UINT xx, UINT yy) {
+                    return double(source.rgba[(size_t(yy) * width + xx) * 4 + c]);
+                };
+                const double top = sample(x0, y0) * (1 - fx) + sample(x1, y0) * fx;
+                const double bottom = sample(x0, y1) * (1 - fx) + sample(x1, y1) * fx;
+                result[(size_t(y) * width + x) * 4 + c] =
+                    static_cast<uint8_t>(std::lround(top * (1 - fy) + bottom * fy));
+            }
+        }
+    return result;
+}
+struct QuadChecks {
+    Metrics outer, focus;
+    unsigned compositionMax = 0;
+    double ordinaryRmse = 0;
+};
+enum class Path { ordinary, vertices, bounded, analytic, focus, quad };
 class Fixture {
     Com<ID3D11Device> device;
     Com<ID3D11DeviceContext> context;
-    Com<ID3D11VertexShader> ordinaryVS, warpedVS, fullscreenVS;
+    Com<ID3D11VertexShader> ordinaryVS, warpedVS, fullscreenVS, focusVS;
     Com<ID3D11GeometryShader> boundsGS;
-    Com<ID3D11PixelShader> ordinaryPS, boundedPS, analyticPS, reconstructPS;
-    Com<ID3D11Buffer> vertices, constants;
+    Com<ID3D11PixelShader> ordinaryPS, boundedPS, analyticPS, reconstructPS, composeQuadPS;
+    Com<ID3D11Buffer> vertices, constants, outerConstants, focusConstants;
     Com<ID3D11InputLayout> layout;
-    Com<ID3D11Texture2D> color, depth, colorRead, depthRead, outputColor;
-    Com<ID3D11RenderTargetView> rtv, outputRtv;
-    Com<ID3D11ShaderResourceView> sourceView;
+    Com<ID3D11Texture2D> color, depth, colorRead, depthRead, outputColor, focusTarget;
+    Com<ID3D11RenderTargetView> rtv, outputRtv, focusRtv;
+    Com<ID3D11ShaderResourceView> sourceView, focusView;
     Com<ID3D11SamplerState> sampler;
     Com<ID3D11DepthStencilView> dsv;
     Com<ID3D11RasterizerState> raster;
     Com<ID3D11DepthStencilState> depthState;
-    Constants values{};
+    Constants values{}, outerValues{}, focusValues{};
     UINT vertexCount = 0;
     std::string shaderSource;
     void compile(const char *entry, const char *profile, Com<ID3DBlob> &code) {
@@ -367,10 +409,11 @@ class Fixture {
                 break;
             adapter.push_back(c < 128 ? static_cast<char>(c) : '?');
         }
-        for (const auto &entry : std::array<std::pair<const char *, Com<ID3D11VertexShader> *>, 3>{
+        for (const auto &entry : std::array<std::pair<const char *, Com<ID3D11VertexShader> *>, 4>{
                  {{"OrdinaryVS", &ordinaryVS},
                   {"WarpedVS", &warpedVS},
-                  {"FullscreenVS", &fullscreenVS}}}) {
+                  {"FullscreenVS", &fullscreenVS},
+                  {"FocusVS", &focusVS}}}) {
             Com<ID3DBlob> code;
             compile(entry.first, "vs_5_0", code);
             check(device->CreateVertexShader(code->GetBufferPointer(), code->GetBufferSize(),
@@ -388,11 +431,12 @@ class Fixture {
                       "CreateInputLayout");
             }
         }
-        for (const auto &entry : std::array<std::pair<const char *, Com<ID3D11PixelShader> *>, 4>{
+        for (const auto &entry : std::array<std::pair<const char *, Com<ID3D11PixelShader> *>, 5>{
                  {{"OrdinaryPS", &ordinaryPS},
                   {"BoundedPS", &boundedPS},
                   {"AnalyticPS", &analyticPS},
-                  {"ReconstructPS", &reconstructPS}}}) {
+                  {"ReconstructPS", &reconstructPS},
+                  {"ComposeQuadPS", &composeQuadPS}}}) {
             Com<ID3DBlob> code;
             compile(entry.first, "ps_5_0", code);
             check(device->CreatePixelShader(code->GetBufferPointer(), code->GetBufferSize(),
@@ -428,6 +472,8 @@ class Fixture {
         buffer.ByteWidth = sizeof(Constants);
         buffer.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         check(device->CreateBuffer(&buffer, nullptr, &constants.p), "Create constants");
+        check(device->CreateBuffer(&buffer, nullptr, &outerConstants.p), "Create outer constants");
+        check(device->CreateBuffer(&buffer, nullptr, &focusConstants.p), "Create focus constants");
         D3D11_TEXTURE2D_DESC texture{};
         texture.Width = width;
         texture.Height = height;
@@ -440,6 +486,11 @@ class Fixture {
         check(device->CreateRenderTargetView(color.p, nullptr, &rtv.p), "Create RTV");
         check(device->CreateShaderResourceView(color.p, nullptr, &sourceView.p),
               "Create source SRV");
+        check(device->CreateTexture2D(&texture, nullptr, &focusTarget.p), "Create focus target");
+        check(device->CreateRenderTargetView(focusTarget.p, nullptr, &focusRtv.p),
+              "Create focus RTV");
+        check(device->CreateShaderResourceView(focusTarget.p, nullptr, &focusView.p),
+              "Create focus SRV");
         texture.BindFlags = D3D11_BIND_RENDER_TARGET;
         check(device->CreateTexture2D(&texture, nullptr, &outputColor.p),
               "Create reconstructed color");
@@ -488,24 +539,58 @@ class Fixture {
         values.dimensions.y = std::max(1.f, std::round(height * scale));
         context->UpdateSubresource(constants.p, 0, nullptr, &values, 0, 0);
     }
-    void draw(Path path) {
+    void prepareQuad(bool identity = false) {
+        const double scale = .55, k = values.config.z, fraction = identity ? 1. : .3;
+        const double center = identity ? 1. : scale * (k == 0 ? 1 : k / std::asinh(k));
+        const double remaining = scale * scale - fraction * fraction * center * center;
+        require(identity || remaining > 0, "Quad focus alone exceeds sample budget");
+        const double outer = identity ? 1. : std::sqrt(remaining);
+        outerValues = values;
+        focusValues = values;
+        const Float4 sizes{std::round(float(width * outer)), std::round(float(height * outer)),
+                           std::round(float(width * fraction * center)),
+                           std::round(float(height * fraction * center))};
+        const Float4 region{
+            identity ? 0 : std::clamp(values.config.x, float(-1 + fraction), float(1 - fraction)),
+            identity ? 0 : std::clamp(values.config.y, float(-1 + fraction), float(1 - fraction)),
+            float(fraction), 0};
+        outerValues.quadDimensions = focusValues.quadDimensions = sizes;
+        outerValues.focusRegion = focusValues.focusRegion = region;
+        outerValues.dimensions.x = sizes.x;
+        outerValues.dimensions.y = sizes.y;
+        focusValues.dimensions.x = sizes.z;
+        focusValues.dimensions.y = sizes.w;
+        context->UpdateSubresource(outerConstants.p, 0, nullptr, &outerValues, 0, 0);
+        context->UpdateSubresource(focusConstants.p, 0, nullptr, &focusValues, 0, 0);
+    }
+    Float4 quadSizes() const { return outerValues.quadDimensions; }
+    void draw(Path path, const Constants *explicitValues = nullptr,
+              ID3D11Buffer *explicitBuffer = nullptr) {
+        if (path == Path::quad) {
+            drawQuad();
+            return;
+        }
+        const auto &frame = explicitValues ? *explicitValues : values;
+        ID3D11Buffer *uniforms = explicitBuffer ? explicitBuffer : constants.p;
+        ID3D11RenderTargetView *destination = path == Path::focus ? focusRtv.p : rtv.p;
         const float clear[4]{};
-        context->ClearRenderTargetView(rtv.p, clear);
+        context->ClearRenderTargetView(destination, clear);
         context->ClearDepthStencilView(dsv.p, D3D11_CLEAR_DEPTH, 1, 0);
-        context->OMSetRenderTargets(1, &rtv.p, dsv.p);
+        context->OMSetRenderTargets(1, &destination, dsv.p);
         context->OMSetDepthStencilState(depthState.p, 0);
         context->RSSetState(raster.p);
-        const D3D11_VIEWPORT viewport{0, 0, values.dimensions.x, values.dimensions.y, 0, 1};
+        const D3D11_VIEWPORT viewport{0, 0, frame.dimensions.x, frame.dimensions.y, 0, 1};
         context->RSSetViewports(1, &viewport);
         context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         const UINT stride = sizeof(Vertex), offset = 0;
         context->IASetVertexBuffers(0, 1, &vertices.p, &stride, &offset);
         context->IASetInputLayout(path == Path::analytic ? nullptr : layout.p);
-        context->VSSetConstantBuffers(0, 1, &constants.p);
-        context->GSSetConstantBuffers(0, 1, &constants.p);
-        context->PSSetConstantBuffers(0, 1, &constants.p);
+        context->VSSetConstantBuffers(0, 1, &uniforms);
+        context->GSSetConstantBuffers(0, 1, &uniforms);
+        context->PSSetConstantBuffers(0, 1, &uniforms);
         context->VSSetShader(path == Path::analytic   ? fullscreenVS.p
                              : path == Path::vertices ? warpedVS.p
+                             : path == Path::focus    ? focusVS.p
                                                       : ordinaryVS.p,
                              nullptr, 0);
         context->GSSetShader(path == Path::bounded ? boundsGS.p : nullptr, nullptr, 0);
@@ -516,9 +601,27 @@ class Fixture {
         if (path == Path::analytic)
             context->Draw(3, 0);
         else {
-            const UINT tiles = static_cast<UINT>(values.dimensions.w);
+            const UINT tiles = static_cast<UINT>(frame.dimensions.w);
             context->DrawInstanced(vertexCount, tiles * tiles, 0, 0);
         }
+    }
+    void drawQuad() {
+        draw(Path::ordinary, &outerValues, outerConstants.p);
+        draw(Path::focus, &focusValues, focusConstants.p);
+        context->OMSetRenderTargets(1, &outputRtv.p, nullptr);
+        const D3D11_VIEWPORT viewport{0, 0, float(width), float(height), 0, 1};
+        context->RSSetViewports(1, &viewport);
+        context->IASetInputLayout(nullptr);
+        context->VSSetShader(fullscreenVS.p, nullptr, 0);
+        context->GSSetShader(nullptr, nullptr, 0);
+        context->PSSetShader(composeQuadPS.p, nullptr, 0);
+        context->PSSetConstantBuffers(0, 1, &outerConstants.p);
+        ID3D11ShaderResourceView *textures[]{sourceView.p, focusView.p};
+        context->PSSetShaderResources(0, 2, textures);
+        context->PSSetSamplers(0, 1, &sampler.p);
+        context->Draw(3, 0);
+        ID3D11ShaderResourceView *empty[2]{};
+        context->PSSetShaderResources(0, 2, empty);
     }
     void reconstruct() {
         context->OMSetRenderTargets(1, &outputRtv.p, nullptr);
@@ -548,9 +651,9 @@ class Fixture {
         context->Unmap(colorRead.p, 0);
         return result;
     }
-    Image read() {
+    Image read(bool focus = false) {
         context->OMSetRenderTargets(0, nullptr, nullptr);
-        context->CopyResource(colorRead.p, color.p);
+        context->CopyResource(colorRead.p, focus ? focusTarget.p : color.p);
         context->CopyResource(depthRead.p, depth.p);
         Image image;
         image.rgba.resize(width * height * 4);
@@ -572,6 +675,29 @@ class Fixture {
                             [](float z) { return std::isfinite(z) && z >= 0 && z <= 1; }),
                 "Readback contains invalid original depth");
         return image;
+    }
+    QuadChecks validateQuad(const std::vector<Triangle> &triangles) {
+        const auto sizes = outerValues.quadDimensions, region = outerValues.focusRegion;
+        draw(Path::ordinary, &outerValues, outerConstants.p);
+        const auto outer = read();
+        draw(Path::focus, &focusValues, focusConstants.p);
+        const auto focus = read(true);
+        QuadChecks checks;
+        checks.outer = compare(outer,
+                               cpuReference(triangles, 0, 0, 0, static_cast<UINT>(sizes.x),
+                                            static_cast<UINT>(sizes.y)),
+                               static_cast<UINT>(sizes.x), static_cast<UINT>(sizes.y));
+        checks.focus =
+            compare(focus,
+                    cpuReference(triangles, 0, 0, 0, static_cast<UINT>(sizes.z),
+                                 static_cast<UINT>(sizes.w), region.x, region.y, region.z),
+                    static_cast<UINT>(sizes.z), static_cast<UINT>(sizes.w));
+        drawQuad();
+        const auto composed = readReconstruction();
+        checks.compositionMax =
+            maxDifference(composed, cpuComposeQuad(outer, focus, sizes, region));
+        checks.ordinaryRmse = rgbRmse(composed, cpuReference(triangles, 0, 0, 0).rgba);
+        return checks;
     }
     D3D11_QUERY_DATA_PIPELINE_STATISTICS statistics(Path path) {
         Com<ID3D11Query> query;
@@ -638,6 +764,12 @@ int main(int argc, char **argv) {
                   << "\",\"hardware\":" << (hardware ? "true" : "false") << ",\"width\":" << width
                   << ",\"height\":" << height << ",\"cases\":[\n";
         bool comma = false;
+        fixture.configure(0, 0, 0);
+        fixture.prepareQuad(true);
+        fixture.draw(Path::quad);
+        const auto quadIdentity = fixture.readReconstruction();
+        fixture.draw(Path::ordinary);
+        require(quadIdentity == fixture.read().rgba, "Full-focus quad identity is not byte-exact");
         const auto triangles = makeScene();
         for (const float k : {0.f, .1f, 4.f, 12.f})
             for (const auto gaze :
@@ -709,6 +841,14 @@ int main(int argc, char **argv) {
             fixture.configure(4, gaze[0], gaze[1], 1, 0, .55f);
             fixture.draw(Path::bounded);
             const auto source = fixture.read();
+            const UINT sourceWidth = static_cast<UINT>(std::round(width * .55f)),
+                       sourceHeight = static_cast<UINT>(std::round(height * .55f));
+            const auto sourceCheck = compare(
+                source, cpuReference(triangles, 4, gaze[0], gaze[1], sourceWidth, sourceHeight),
+                sourceWidth, sourceHeight);
+            require(sourceCheck.interiorWrong <= 2 && sourceCheck.colorMax <= 1 &&
+                        sourceCheck.depthMax < .00001,
+                    "Reduced nonlinear source differs from CPU reference");
             fixture.reconstruct();
             const auto reconstructed = fixture.readReconstruction();
             const unsigned maximum =
@@ -720,13 +860,45 @@ int main(int argc, char **argv) {
             reconstructionComma = true;
             std::cout << "{\"scale\":0.55,\"gaze\":[" << gaze[0] << ',' << gaze[1]
                       << "],\"cpuMaximumCodeDifference\":" << maximum
-                      << ",\"ordinaryColorRmse255\":" << error << '}';
+                      << ",\"ordinaryColorRmse255\":" << error << ",\"sourceCpuReference\":{";
+            printMetrics(sourceCheck);
+            std::cout << "}}";
             if (hardware && gaze[0] == 0) {
                 saveBmp(output / "hardware-reconstructed-55.bmp", Image{reconstructed, {}});
                 fixture.configure(0, 0, 0);
                 fixture.draw(Path::ordinary);
                 saveBmp(output / "hardware-ordinary.bmp", fixture.read());
             }
+        }
+        std::cout << "],\"quadChecks\":[";
+        bool quadComma = false;
+        for (const auto gaze :
+             std::array<std::array<float, 2>, 3>{{{0, 0}, {.8f, -.8f}, {-.7f, .6f}}}) {
+            fixture.configure(4, gaze[0], gaze[1]);
+            fixture.prepareQuad();
+            const auto checks = fixture.validateQuad(triangles);
+            const auto sizes = fixture.quadSizes();
+            for (const auto &metrics : {checks.outer, checks.focus})
+                require(metrics.interiorWrong <= 2 && metrics.colorMax <= 1 &&
+                            metrics.depthMax < .00001,
+                        "Quad source differs from CPU reference");
+            require(checks.compositionMax <= 2,
+                    "Quad composition differs from CPU bilinear reference");
+            if (quadComma)
+                std::cout << ',';
+            quadComma = true;
+            std::cout << "{\"gaze\":[" << gaze[0] << ',' << gaze[1] << "],\"sizes\":[" << sizes.x
+                      << ',' << sizes.y << ',' << sizes.z << ',' << sizes.w
+                      << "],\"sceneSamples\":" << sizes.x * sizes.y + sizes.z * sizes.w
+                      << ",\"outer\":{";
+            printMetrics(checks.outer);
+            std::cout << "},\"focus\":{";
+            printMetrics(checks.focus);
+            std::cout << "},\"compositionMaximumCodeDifference\":" << checks.compositionMax
+                      << ",\"ordinaryColorRmse255\":" << checks.ordinaryRmse << '}';
+            if (hardware && gaze[0] == 0)
+                saveBmp(output / "hardware-quad-matched.bmp",
+                        Image{fixture.readReconstruction(), {}});
         }
         fixture.configure(4, 0, 0, 4);
         const auto tiledStats = fixture.statistics(Path::bounded);
@@ -832,13 +1004,17 @@ int main(int argc, char **argv) {
             bool completeComma = false;
             for (const UINT tiles : {1u, 16u, 64u})
                 for (const float work : {0.f, 32.f, 128.f}) {
-                    std::array<std::vector<double>, 3> measured;
+                    std::array<std::vector<double>, 4> measured;
                     for (int iteration = 0; iteration < 11; iteration++)
-                        for (size_t j = 0; j < 3; j++) {
-                            const size_t index = (static_cast<size_t>(iteration) + j) % 3;
-                            fixture.configure(4, 0, 0, tiles, work, index == 2 ? .55f : 1.f);
-                            const double ms = fixture.time(
-                                index == 0 ? Path::ordinary : Path::bounded, index != 0);
+                        for (size_t j = 0; j < 4; j++) {
+                            const size_t index = (static_cast<size_t>(iteration) + j) % 4;
+                            fixture.configure(4, 0, 0, tiles, work, index >= 2 ? .55f : 1.f);
+                            if (index == 3)
+                                fixture.prepareQuad();
+                            const double ms = fixture.time(index == 0   ? Path::ordinary
+                                                           : index == 3 ? Path::quad
+                                                                        : Path::bounded,
+                                                           index == 1 || index == 2);
                             if (iteration >= 2)
                                 measured[index].push_back(ms);
                         }
@@ -847,9 +1023,10 @@ int main(int argc, char **argv) {
                     completeComma = true;
                     std::cout << "{\"inputTriangles\":" << 3 * tiles * tiles
                               << ",\"materialWork\":" << work << ",\"paths\":[";
-                    const std::array<const char *, 3> labels{
-                        "ordinary", "boundedFullPlusReconstruction", "bounded55PlusReconstruction"};
-                    for (size_t i = 0; i < 3; i++) {
+                    const std::array<const char *, 4> labels{
+                        "ordinary", "boundedFullPlusReconstruction", "bounded55PlusReconstruction",
+                        "matchedQuadPlusComposition"};
+                    for (size_t i = 0; i < 4; i++) {
                         auto &samples = measured[i];
                         std::sort(samples.begin(), samples.end());
                         if (i)
@@ -862,8 +1039,10 @@ int main(int argc, char **argv) {
                 }
         }
         std::cout << "],\"timingScope\":\"pipeline/scaling: source only; completePaths: source "
-                     "plus color reconstruction. Source allocations stay full size. One instanced "
-                     "draw per path, no engine traversal. 2 warmups, 9 rotated "
+                     "plus color reconstruction/composition. Source allocations stay full size. "
+                     "One instanced "
+                     "draw per scene pass (two scene passes for quad), no engine traversal. 2 "
+                     "warmups, 9 rotated "
                      "batches of 32. CPU creation/upload/readback excluded.\",\"passed\":true}\n";
         return 0;
     } catch (const std::exception &error) {

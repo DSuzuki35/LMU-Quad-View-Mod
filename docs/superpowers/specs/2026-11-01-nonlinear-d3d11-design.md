@@ -43,3 +43,11 @@ zero-warp/full-size reconstruction is byte-exact, export nonidentity outputs, an
 measure complete ordinary vs bounded+reconstruction paths at light/heavier shader
 costs and geometry counts. Add a hardware-only larger-output preset. Keep the
 source-only results separate; no reconstructed depth or matched-quality claim.
+
+Add an owned native quad comparator: a conventional low-resolution outer pass,
+a cropped conventional focus pass, and hard-boundary color composition. Match
+the nonlinear 55% sample budget and nominal center density with fraction 0.3,
+report actual integer dimensions, and include composition in timing. Prepare
+constant buffers outside timed draws. Verify full-focus identity, cropped source
+coverage/UV/depth against CPU samples, and composition against CPU bilinear
+sampling. The comparator has no guard-band blending or engine traversal cost.

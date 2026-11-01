@@ -1,6 +1,6 @@
 # Standalone nonlinear foveation lab
 
-This is the first implemented slice of the
+This lab implements sampling and owned-rasterizer slices of the
 [nonlinear/conformal research](../../docs/CONFORMAL-FOVEATION-RESEARCH.md).
 It uses an owned procedural scene and WebGL2. It does not load LMU, modify game
 files, install an XR layer, or use recorded game shaders. SPS remains separate.
@@ -45,7 +45,7 @@ between rectangle sectors. This is **not strictly conformal**: it does not
 preserve local angles everywhere.
 
 If source linear scale is `s`, its central linear density is
-`q = s*k/asinh(k)`. A square quad focus fraction `f` with density `q` consumes
+`q = s*k/asinh(k)`. A quad focus covering fraction `f` of each axis with density `q` consumes
 `(f*q)^2` of the full image's scene samples. Choose outer scale
 `sqrt(s^2-(f*q)^2)` to match total scene-sample budget. Impossible budgets are
 explicitly marked. Actual integer dimensions cause a small reported mismatch.
@@ -349,7 +349,54 @@ Representative RTX 5090 medians (ms):
 
 Only the expensive, less geometry-heavy cases won in this run. Work 128 is an
 artificial ALU loop, not a characterization of LMU's materials. Sampling quality
-is different, the native probe has no quad comparator yet, and sub-millisecond
+is different, and sub-millisecond
 fixture timings are sensitive to clocks/load. This is evidence to continue
 targeted research, not evidence of an LMU FPS gain. Correct reconstructed depth,
 temporal stability and a realistic material/pass model remain required gates.
+
+### Matched native quad comparison
+
+The native comparator now renders ordinary outer and cropped focus passes, then
+composes their colors with a hard boundary. Both paths use the same owned scene,
+material and output size. Quad matches the nonlinear nominal center density and
+scene-sample budget at fraction 0.3. At 2048x1536 its outer image is 923x692 and
+focus is 645x484: **950,896 samples vs 951,470 nonlinear**. This is a sampling
+budget match, not an equal-perceptual-quality guarantee. There is no blending or
+extra focus guard band. Source allocations remain full-sized for both methods.
+
+Constant buffers are prepared before timed batches. Quad timing includes two
+instanced scene draws plus composition; nonlinear includes one bounded scene
+draw plus reconstruction. Neither simulates LMU's CPU traversal or draw-call
+count. Full-focus identity is byte-exact on both backends. Three gaze positions
+pass CPU checks of outer/focus source coverage, attributes and original depth,
+plus independent CPU bilinear composition (at most two code values allowed).
+Native color-error reports use a single-sample CPU reference; the browser lab's
+four-sample quality reference is a separate measurement.
+
+Representative **complete path** RTX 5090 medians at 2048x1536, in milliseconds:
+
+| Input triangles | Material work | Ordinary | Nonlinear 55% | Matched quad |
+| --- | ---: | ---: | ---: | ---: |
+| 3 | 0 | 0.0060 | 0.0213 | 0.0139 |
+| 3 | 32 | 0.0203 | 0.0286 | 0.0208 |
+| 3 | 128 | 0.0777 | 0.0654 | 0.0497 |
+| 768 | 128 | 0.0860 | 0.0811 | 0.0408 |
+| 12,288 | 128 | 0.1014 | 0.1484 | 0.0508 |
+
+**The current bounded nonlinear prototype lost to matched quad in every native
+benchmark case tested.** Its occasional gain over ordinary rendering is not a
+reason to replace quad views. Bounds/intersection overhead, lost ordinary
+rasterization efficiencies and geometry amplification need more work; the
+moving-gaze test also exposes temporal variation. These are scoped synthetic
+results, not a verdict on every nonlinear renderer.
+
+The [recorded native summary](results/2026-11-01-native-summary.json) retains
+adapter/preset details, source-file hashes, correctness maxima and timing ranges.
+Full transient images/logs remain under ignored build output.
+
+For the product, keep quad views and the separate SPS 0.2.0 work as the main path.
+For research, the next useful gates are tighter GPU bounds / cheaper primitive
+evaluation, depth-aware reconstruction and temporal reprojection, followed by a
+repeat of matched-budget quality and complete-path measurements. Do not insert
+this fixture into LMU until it has a demonstrated advantage and a safe material,
+pass-state and history integration plan.
