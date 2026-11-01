@@ -625,14 +625,31 @@ int main(int argc,char** argv) {
         ID3D11Texture2D* noSample=nullptr;assert(SUCCEEDED(device->CreateTexture2D(&noSampleDesc,nullptr,&noSample)));
         begin();assert(!lmuqv::xr_copy_outer(0,noSample));finish();assert(submittedLayers==0&&acquireCount==0);noSample->Release();
     }
+    auto checkOuterTarget=[&](unsigned eye,bool available){
+        const auto target=lmuqv::xr_outer_target(eye);
+        assert(target.rtv==lmuqv::xr_outer_rtv(eye));
+        if(!available){assert(!target.rtv&&!target.width&&!target.height);return;}
+        assert(target.rtv);
+        ID3D11Resource* resource=nullptr;target.rtv->GetResource(&resource);
+        ID3D11Texture2D* texture=nullptr;
+        assert(SUCCEEDED(resource->QueryInterface(__uuidof(ID3D11Texture2D),reinterpret_cast<void**>(&texture))));
+        D3D11_TEXTURE2D_DESC desc{};texture->GetDesc(&desc);
+        assert(target.width==desc.Width&&target.height==desc.Height);
+        texture->Release();resource->Release();
+    };
+    checkOuterTarget(0,false);checkOuterTarget(1,false);checkOuterTarget(2,false);
     begin();assert(lmuqv::xr_copy_outer(0,source));assert(releaseCount==0);assert(lmuqv::xr_outer_rtv(0));
+    checkOuterTarget(0,true);checkOuterTarget(1,false);
     D3D11_RENDER_TARGET_VIEW_DESC outerView{};lmuqv::xr_outer_rtv(0)->GetDesc(&outerView);
     assert(outerView.Format==(typedSrgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_UNORM));
     assertCopiedPixels(textures[1]);
     finish();assert(submittedLayers==0&&releaseCount==1);
     assert(!lmuqv::xr_outer_rtv(0));
+    checkOuterTarget(0,false);
     frameCalls.clear();
-    begin();assert(lmuqv::xr_copy_outer(0,source));assert(lmuqv::xr_copy_outer(1,source));assert(releaseCount==1);finish();assert(submittedLayers==1&&submittedViews==4);
+    begin();assert(lmuqv::xr_copy_outer(0,source));assert(lmuqv::xr_copy_outer(1,source));assert(releaseCount==1);
+    checkOuterTarget(0,true);checkOuterTarget(1,true);
+    finish();assert(submittedLayers==1&&submittedViews==4);checkOuterTarget(0,false);checkOuterTarget(1,false);
     assert(frameCalls=="WBLE"); // LMU 5cb94b -> 5cb96b -> 5cba9c -> render -> 5cb6a2.
     runtimeShouldRender=false;begin();assert(!lmuqv::xr_copy_outer(0,source));finish();assert(submittedLayers==0);
     assert(acquireCount==3&&releaseCount==3);

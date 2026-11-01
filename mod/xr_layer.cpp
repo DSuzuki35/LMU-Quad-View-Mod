@@ -699,14 +699,22 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
     }
     // UI drawing uses the acquired RTVs. Runtime ownership resumes before submission.
     bool released=releaseOuters();
-    std::vector<const XrCompositionLayerBaseHeader*> layers;
-    std::vector<XrCompositionLayerProjection> projections;projections.reserve(info->layerCount);
-    std::vector<std::array<XrCompositionLayerProjectionView,4>> views;views.reserve(info->layerCount);
+    constexpr size_t inlineLayerCapacity = 16;
+    std::array<const XrCompositionLayerBaseHeader*, inlineLayerCapacity> stackLayers;
+    std::vector<const XrCompositionLayerBaseHeader*> largeLayers;
+    if (info->layerCount > stackLayers.size()) {
+        largeLayers.resize(info->layerCount);
+    }
+    auto** layers = largeLayers.empty() ? stackLayers.data() : largeLayers.data();
+    uint32_t layerCount = 0;
+    // Only one captured projection is accepted; storage outlives the downstream call.
+    XrCompositionLayerProjection convertedProjection{};
+    std::array<XrCompositionLayerProjectionView,4> convertedViews;
     bool captured=released&&s.frame&&s.shouldRender&&s.located&&s.captures[0]&&s.captures[1]&&s.locateTime==info->displayTime;
     unsigned submitted=0;
     for(uint32_t i=0;i<info->layerCount;++i){
         const auto* layer=info->layers[i];
-        if(!layer||layer->type!=XR_TYPE_COMPOSITION_LAYER_PROJECTION){if(layer)layers.push_back(layer);continue;}
+        if(!layer||layer->type!=XR_TYPE_COMPOSITION_LAYER_PROJECTION){if(layer)layers[layerCount++]=layer;continue;}
         auto* projection=reinterpret_cast<const XrCompositionLayerProjection*>(layer);
         if(projection->views&&(s.frames<10||s.frames%120==0))for(unsigned eye=0;eye<(std::min)(2u,projection->viewCount);++eye){
             const auto& sub=projection->views[eye].subImage;
@@ -724,7 +732,7 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
         }
         // One engine scene capture pair cannot represent a second projection layer.
         if(submitted)continue;
-        views.emplace_back();auto& v=views.back();
+        auto& v=convertedViews;
         for(unsigned eye=0;eye<2;++eye){
             v[eye]=structure<XrCompositionLayerProjectionView>(XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW);
             v[eye].pose=s.views[eye].pose;v[eye].fov=s.views[eye].fov;
@@ -732,10 +740,15 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
             v[eye].subImage.imageRect.extent={static_cast<int32_t>(s.outer[eye].width),static_cast<int32_t>(s.outer[eye].height)};
             v[eye+2]=projection->views[eye];v[eye+2].pose=s.views[eye+2].pose;v[eye+2].fov=s.views[eye+2].fov;
         }
-        projections.push_back(*projection);auto& p=projections.back();p.viewCount=4;p.views=v.data();
-        layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&p));++submitted;
+        convertedProjection = *projection;
+        convertedProjection.viewCount = 4;
+        convertedProjection.views = v.data();
+        layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&convertedProjection);
+        ++submitted;
     }
-    auto modified=*info;modified.layerCount=static_cast<uint32_t>(layers.size());modified.layers=layers.empty()?nullptr:layers.data();
+    auto modified = *info;
+    modified.layerCount = layerCount;
+    modified.layers = layerCount ? layers : nullptr;
     XrResult r;
     {lmuqv::ProfileScope submitProfile(lmuqv::ProfileSlot::provider_submit);r=next.EndFrame(session,&modified);}
     lmuqv::renderProfile.xr_frame_end(s.context);
@@ -849,12 +862,16 @@ void xr_scene_focus_complete(unsigned eye) {
     if(s.frames<10||s.frames%120==0||(s.pixelRequireScene&&!s.pixelDone&&s.sceneFocus[0]&&s.sceneFocus[1]))
         logf("scene_focus_complete frame=%llu eye=%u completed=%d/%d",static_cast<unsigned long long>(s.frames),eye,s.sceneFocus[0],s.sceneFocus[1]);
 }
-ID3D11RenderTargetView* xr_outer_rtv(unsigned eye) {
+OuterTarget xr_outer_target(unsigned eye) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    if(eye>1||!s.frame||!s.shouldRender||!s.captures[eye])return nullptr;
-    const auto& outer=s.outer[eye];
-    if(!outer.acquired||!outer.waited||outer.index>=outer.rtvs.size())return nullptr;
-    return outer.rtvs[outer.index];
+    if (eye > 1 || !s.frame || !s.shouldRender || !s.captures[eye]) return {};
+    const auto& outer = s.outer[eye];
+    if (!outer.acquired || !outer.waited || outer.index >= outer.rtvs.size()) return {};
+    if (!outer.rtvs[outer.index]) return {};
+    return {outer.rtvs[outer.index], outer.width, outer.height};
+}
+ID3D11RenderTargetView* xr_outer_rtv(unsigned eye) {
+    return xr_outer_target(eye).rtv;
 }
 HANDLE logFileHandle(){
     static HANDLE file=[](){

@@ -12,6 +12,11 @@ function Run-Test([string]$Name,[string[]]$Arguments=@()){
 }
 Push-Location $PSScriptRoot
 try {
+    . (Join-Path $PSScriptRoot '../tools/version.ps1')
+    $versionFiles = Write-LmuVersionFiles (Join-Path $build 'native-version')
+    $versionResource = Join-Path $build 'version.res'
+    & rc.exe /nologo "/fo$versionResource" $versionFiles.ResourcePath
+    if ($LASTEXITCODE -ne 0) { throw 'Native version resource compilation failed' }
     if($FocusLeaseOnly){
         Compile ($common+@('tests/focus_image_lease_test.cpp','d3d11.lib','d3dcompiler.lib',('/Fe'+(Join-Path $build 'focus_image_lease_test.exe'))))
         Run-Test 'focus_image_lease_test'
@@ -38,6 +43,7 @@ try {
     Compile @('/nologo','/TC','/O2','/MT','/c','vendor/minhook-1.3.4/src/hde/hde64.c',('/Fo'+(Join-Path $build 'mh_hde64.obj')))
     $hooks=@('buffer','hook','trampoline','hde64')|ForEach-Object{Join-Path $build ('mh_'+$_+'.obj')}
     $basic=@('math','focus_box','native_xr_views','gpu_timing','render_profile','swapchain_sampling','pipeline_stats','benchmark_control','vrs_scope_policy','nv_vrs','ui_d3d_state','focus_overlay','outer_resample','native_outer_texture','native_outer_bindings','stereo_instancing','stereo_audit_abi','stereo_audit','stereo_shader','stereo_draw_proof','native_upload_reuse','native_upload_batch','focus_image_lease')
+    $basic += 'frame_submission'
     foreach($test in $basic){
         $sources=@("tests/${test}_test.cpp")
         if($test -eq 'nv_vrs'){$sources+='nv_vrs.cpp'}
@@ -60,9 +66,10 @@ try {
     Run-Test 'xr_layer_tests' @('--runtime-settings','--profile-menu-frames')
     Run-Test 'xr_layer_tests' @('--runtime-settings','--diagnostics-off')
     Run-Test 'render_profile_test' @('--diagnostics-off')
+    Run-Test 'frame_submission_test' @('--profile')
     Run-Test 'stereo_audit_test' @('--diagnostics-off')
     Run-Test 'stereo_audit_test' @('--shader-export')
     Run-Test 'stereo_audit_test' @('--pair-proof')
-    Compile ($common+@('/LD','xr_layer.cpp','engine_bridge.cpp','nv_vrs.cpp','stereo_audit.cpp','stereo_shader.cpp','stereo_draw_proof.cpp')+$hooks+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+$LayerOutput)))
+    Compile ($common+@('/LD','xr_layer.cpp','engine_bridge.cpp','nv_vrs.cpp','stereo_audit.cpp','stereo_shader.cpp','stereo_draw_proof.cpp')+$hooks+@($versionResource,'d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+$LayerOutput)))
     Get-FileHash -LiteralPath $LayerOutput -Algorithm SHA256
 } finally {Pop-Location}

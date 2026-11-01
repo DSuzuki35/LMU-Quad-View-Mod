@@ -7,6 +7,10 @@ $LayerOutput = [IO.Path]::GetFullPath($LayerOutput)
 Push-Location $PSScriptRoot
 try {
     New-Item -ItemType Directory -Path 'build' -Force | Out-Null
+    . (Join-Path $PSScriptRoot '../tools/version.ps1')
+    $versionFiles = Write-LmuVersionFiles (Join-Path $PSScriptRoot 'build/native-version')
+    & windres $versionFiles.ResourcePath -O coff -o build/version.o
+    if ($LASTEXITCODE -ne 0) { throw 'Native version resource compilation failed' }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static tests/math_test.cpp -o build/math_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Math test compilation failed' }
     & .\build\math_test.exe
@@ -71,6 +75,12 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Focus image ownership compilation failed' }
     & .\build\focus_image_lease_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Focus image ownership tests failed' }
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/frame_submission_test.cpp -ld3d11 -ld3dcompiler -ldxguid -luser32 -o build/frame_submission_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Frame submission tests compilation failed' }
+    & .\build\frame_submission_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Frame submission tests failed' }
+    & .\build\frame_submission_test.exe --profile
+    if ($LASTEXITCODE -ne 0) { throw 'Frame submission profiling tests failed' }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/benchmark_engine_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/benchmark_engine_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Benchmark engine tests compilation failed' }
     & .\build\benchmark_engine_test.exe
@@ -122,7 +132,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Diagnostics-off XR tests failed' }
     & .\build\render_profile_test.exe --diagnostics-off
     if ($LASTEXITCODE -ne 0) { throw 'Diagnostics-off profiler tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -shared -I ../prototype/third_party xr_layer.cpp engine_bridge.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o $LayerOutput
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -shared -I ../prototype/third_party xr_layer.cpp engine_bridge.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o build/version.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o $LayerOutput
     if ($LASTEXITCODE -ne 0) { throw 'Layer compilation failed' }
     Get-FileHash -LiteralPath $LayerOutput -Algorithm SHA256 | Select-Object Hash
 } finally { Pop-Location }
