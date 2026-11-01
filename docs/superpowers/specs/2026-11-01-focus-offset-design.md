@@ -54,8 +54,8 @@ Publish reviewed changes and portable ZIP through the authorized GitHub release.
 
 ## Final UI refinements requested before publication
 
-Right-align the sidebar's LMU, QUAD VIEW and OPENXR RENDERING labels to one
-shared edge. Add approximately six logical pixels between numeric values and
+Left-align the sidebar's LMU, QUAD VIEW and OPENXR RENDERING labels to one
+shared visual edge, using consistent margins and text padding across font sizes. Add approximately six logical pixels between numeric values and
 spinner arrows, including percentage controls, smoothing and capture duration.
 Preserve native editing/spinner behavior and sufficient width for signed and
 maximum values across supported DPI layouts. Inspect the final rendered result.
