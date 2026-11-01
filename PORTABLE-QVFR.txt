@@ -24,6 +24,14 @@ settings. Existing other-application settings and unowned LMU keys are preserved
 Changing settings outside the launcher is possible, but our managed values are
 reapplied on Save/Launch. Restart LMU after changes.
 
+Version 0.1.1 adds Focus position in the launcher: horizontal/vertical offsets
+from -50 to +50 percent of the full projected view. Positive is right/up; negative
+is left/down. Both Fixed and Auto are supported; Auto retains gaze movement with
+the added offset. Reset offsets restores zero. These values are applied by the
+mod, not written into QVFR settings.cfg, and do not change box size or resolution.
+Large offsets can move part of the box outside the visible view. Save and restart
+LMU to apply; use the green outline to inspect placement.
+
 Build 2026.10.30.1: focus controls use equal-axis units after a measured FOV is
 available. 50/50 is approximately square near the center, using the shorter
 outer FOV tangent span as the reference for both dimensions. Saved old settings

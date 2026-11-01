@@ -4,6 +4,29 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
+## 0.1.1 - 2026-11-01
+
+### Added
+
+- Horizontal and vertical focus-region offsets for fixed and eye-tracked
+  foveation, available with Native OpenXR, QVFR and VectorXR.
+- Saved signed controls and Reset offsets. Positive values move right/up;
+  negative values move left/down. Units are percent of each eye's full projected
+  view span, from -50 to +50. Existing settings default to zero.
+- Equivalent CLI parameters and offset values in diagnostic run metadata.
+
+### Behavior and scope
+
+- Offsets follow the provider's current focus position without accumulating or
+  changing pose, projected box size, render resolution or GPU passes. Rendering,
+  the green outline and submitted composition use the same shifted focus FOV.
+- Zero preserves the provider placement exactly. Offsets are applied by the mod,
+  rather than written to provider profiles. Large offsets can move the region
+  beyond the outer-view edges. Save and restart LMU to apply changes.
+- Full native single-pass stereo is deferred to a 0.2.0 research target. The
+  separate SPS branch's new diagnostics and planning code are not included.
+  This release makes no new CPU/FPS improvement claim.
+
 ## 0.1.0 - 2026-11-01
 
 First numbered release after the provider and stereo research branches were merged.

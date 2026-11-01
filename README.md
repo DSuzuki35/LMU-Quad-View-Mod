@@ -5,7 +5,7 @@ A free Windows x64 / D3D11 mod that adds two outer and two focus views to
 Quad-Views-Foveated (QVFR) or VectorXR separately to provide quad views on a
 stereo runtime.
 
-**v0.1.0 is an experimental offline release.** Headset and runtime compatibility
+**v0.1.1 is an experimental offline release.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
 ## About this project
@@ -25,7 +25,7 @@ contributions are welcome. See [the contribution guide](CONTRIBUTING.md).
 
 ## Install and launch
 
-1. Download `LMU-Quad-View-Mod-0.1.0.zip` from [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases/tag/v0.1.0).
+1. Download `LMU-Quad-View-Mod-0.1.1.zip` from [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases/tag/v0.1.1).
 2. Extract the **complete ZIP** to a writable folder outside the LMU installation.
 3. Open **LMU-QuadView-Launcher.exe**. Keep its `.exe.config` file beside it.
 4. In **Setup**, select the LMU game folder. Ensure your headset's OpenXR runtime
@@ -54,6 +54,19 @@ for the launched process.
 Auto queries the provider's tracking capability before requesting tracked or
 fixed focus views; working gaze tracking depends on the provider. Fixed requests
 stationary focus views. Use the green outline to inspect focus placement.
+
+**Focus position** adds horizontal and vertical offsets for all three providers,
+in both Auto and Fixed modes. Positive horizontal moves right; positive vertical
+moves up. Negative values move left/down. Values range from -50% to +50% of the
+full view on each axis, measured in projection space. For example, +5% horizontal
+shifts the region right by 5% of that eye's full projected view width.
+
+In Auto, the offset is relative to the provider's current gaze position; eye
+tracking continues to move the region. The shift does not change its projected
+size or render resolution. It is not clamped to the outer-view edges, so large
+offsets can put part of the region outside the visible view. **Reset offsets**
+sets both to zero, restoring provider placement exactly. Save and restart LMU
+after changing offsets. Existing settings default to zero.
 
 QVFR exposes outer/inner resolution and independent focus width/height. Resolution
 percentages scale each dimension: 200% means twice the width and height, or four
@@ -92,6 +105,13 @@ by default. They require explicit opt-in and do not remove normal eye draws.
 See [CPU fast-path research](CPU-UPLOAD-FASTPATH.md),
 [upload reuse](CPU-UPLOAD-REUSE.md), [stereo research](PORTABLE-STEREO-RESEARCH.txt)
 and the [renderer handoff](INSTANCED-STEREO-HANDOFF.md) for their scope and limits.
+
+Full single-pass stereo is a **0.2.0 research target**, not part of 0.1.1 or a
+guaranteed release date. It still needs shared native preparation, correct
+per-eye intermediate buffers and render order, image/depth equivalence and
+matched CPU/GPU measurements. The [SPS research branch](https://github.com/DSuzuki35/LMU-Quad-View-Mod/tree/codex/sps-0.1.1)
+retains its historical name; its additional diagnostics are excluded from this
+offset release.
 
 Supported LMU executable SHA256:
 `66942337813B301B87D12EDFA330F33354A2A4B8CD9B048885CBF77EB6F940CF`.

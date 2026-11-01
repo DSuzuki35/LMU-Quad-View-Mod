@@ -15,6 +15,13 @@ in its app; QVFR-specific sliders are disabled while VectorXR is selected. Choos
 Fixed when gaze tracking is unavailable. Auto requests tracking only when the
 provider reports the required support. Restart LMU after changing launch settings.
 
+The launcher's Focus position controls remain available with VectorXR. They add
+horizontal/vertical offsets in Fixed and Auto without changing VectorXR's size
+or resolution. Positive means right/up, negative left/down; units are percent of
+the full projected view, from -50 to +50. Auto keeps following gaze. Reset offsets
+restores zero. Large offsets may place part of the box outside the visible view.
+Save and restart LMU to apply. Offsets are applied by the mod, not its provider.
+
 The launcher creates an explicit provider manifest for this game process using
 the original provider DLL path. It does not rewrite installed manifests or global
 OpenXR registration. Duplicate implicit providers and conflicting Toolkit layers
