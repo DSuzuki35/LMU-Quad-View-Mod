@@ -83,5 +83,5 @@ struct Fixture {
     }
     ~Fixture(){c->ClearState();drop(pairedPixel);drop(pairedCamera);drop(pixel);drop(extra);drop(camera);drop(indices);drop(vertices);drop(layout);drop(referencePs);drop(referenceVs);drop(pairedPs);drop(pairedVs);drop(gs);drop(raster);drop(depthState);for(auto*& p:eyeRt)drop(p);for(auto*& p:eyeDs)drop(p);drop(rt);drop(ds);drop(color);drop(depth);drop(c);drop(d);}
 };
-std::vector<uint8_t> file(const char* path){std::ifstream stream(path,std::ios::binary);assert(stream);return {std::istreambuf_iterator<char>(stream),std::istreambuf_iterator<char>()};}
+inline std::vector<uint8_t> file(const char* path){std::ifstream stream(path,std::ios::binary);assert(stream);return {std::istreambuf_iterator<char>(stream),std::istreambuf_iterator<char>()};}
 }

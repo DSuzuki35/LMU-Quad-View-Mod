@@ -4,7 +4,7 @@ if(!(Get-Command cl.exe -ErrorAction SilentlyContinue)){throw 'Run build-msvc.cm
 $LayerOutput=[IO.Path]::GetFullPath($LayerOutput)
 $build=Join-Path $PSScriptRoot 'build/msvc'
 New-Item -ItemType Directory -Path $build,([IO.Path]::GetDirectoryName($LayerOutput)) -Force|Out-Null
-$common=@('/nologo','/std:c++17','/O2','/EHsc','/MT','/Zc:__cplusplus','/D_CRT_SECURE_NO_WARNINGS','/I../prototype/third_party','/W4','/wd4191','user32.lib',('/Fo'+$build+'\'))
+$common=@('/nologo','/std:c++17','/O2','/EHsc','/MT','/Zc:__cplusplus','/D_CRT_SECURE_NO_WARNINGS','/I../prototype/third_party','/W4','/wd4191','user32.lib','dxguid.lib',('/Fo'+$build+'\'))
 function Compile([string[]]$Arguments){& cl.exe @Arguments;if($LASTEXITCODE -ne 0){throw 'C++ compilation failed'}}
 function Run-Test([string]$Name,[string[]]$Arguments=@()){
     & (Join-Path $build ($Name+'.exe')) @Arguments

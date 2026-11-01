@@ -2,7 +2,7 @@
 #include <d3d11shader.h>
 namespace {
 void checkSamplers(const void* code,size_t bytes,const lmuqv::StereoShaderVariant& variant){
-    ID3D11ShaderReflection* reflection=nullptr;assert(SUCCEEDED(D3DReflect(code,bytes,__uuidof(ID3D11ShaderReflection),reinterpret_cast<void**>(&reflection))));
+    ID3D11ShaderReflection* reflection=nullptr;assert(SUCCEEDED(D3DReflect(code,bytes,IID_ID3D11ShaderReflection,reinterpret_cast<void**>(&reflection))));
     D3D11_SHADER_DESC desc{};assert(SUCCEEDED(reflection->GetDesc(&desc)));uint32_t mask=0;
     for(UINT i=0;i<desc.BoundResources;++i){D3D11_SHADER_INPUT_BIND_DESC binding{};assert(SUCCEEDED(reflection->GetResourceBindingDesc(i,&binding)));
         if(binding.Type==D3D_SIT_SAMPLER){assert(binding.BindPoint<16&&binding.BindCount&&binding.BindCount<=16-binding.BindPoint);for(UINT j=0;j<binding.BindCount;++j)mask|=1u<<(binding.BindPoint+j);}}

@@ -167,7 +167,8 @@ struct StereoDrawProof::State {
             // Snapshot to a plain buffer, pack plain regions, then copy the
             // entire packed plain buffer into the equally sized paired CB.
             auto staging=buffer(device.p,desc.ByteWidth,0);deferred.p->CopyResource(staging.p,source);D3D11_BOX box{0,0,0,range.registers*16,1,1};deferred.p->CopySubresourceRegion(plain.p,0,(eye*variant.eyeStride+range.offset)*16,0,0,staging.p,0,&box);
-        }deferred.p->CopyResource(packed.p,plain.p);return packed;
+        }
+        deferred.p->CopyResource(packed.p,plain.p);return packed;
     }
     void paired(ID3D11DeviceContext* c){
         auto* dc=deferred.p;dc->ClearState();for(unsigned eye=0;eye<2;++eye)dc->CopySubresourceRegion(pairedDepth.p,eye,0,0,0,(eye?right:left).depthSeed.p,0,nullptr);

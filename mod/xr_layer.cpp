@@ -86,7 +86,7 @@ struct AppChain {
     bool trackingInvalid=false;
     uint64_t focusLease=0,leaseFrame=0;DWORD leaseOwner=0;
     bool releasePending=false;
-    XrSwapchainImageReleaseInfo pendingRelease{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+    XrSwapchainImageReleaseInfo pendingRelease{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,nullptr};
 };
 struct State {
     XrInstance instance{};

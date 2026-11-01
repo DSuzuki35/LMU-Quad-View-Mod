@@ -123,7 +123,7 @@ void remember_shader(ID3D11DeviceChild* child,const void* data,SIZE_T size,const
     if(programs.size()>=maxShaderPrograms||reflectionBytes>maxReflectionBytes-32768){++shaderDefinitionsDropped;return;}
     auto program=std::make_shared<Program>();auto& s=*program;s.stage=stage;s.sha=hash;s.reflection="null";
     ID3D11ShaderReflection* reflection=nullptr;
-    if(SUCCEEDED(D3DReflect(data,size,__uuidof(ID3D11ShaderReflection),reinterpret_cast<void**>(&reflection)))){
+    if(SUCCEEDED(D3DReflect(data,size,IID_ID3D11ShaderReflection,reinterpret_cast<void**>(&reflection)))){
         const std::unique_ptr<ID3D11ShaderReflection,void(*)(ID3D11ShaderReflection*)> release(reflection,[](ID3D11ShaderReflection* p){p->Release();});
         D3D11_SHADER_DESC d{};reflection->GetDesc(&d);std::ostringstream out;out.imbue(std::locale::classic());out<<"{\"inputs\":"<<d.InputParameters<<",\"outputs\":"<<d.OutputParameters<<",\"resources_total\":"<<d.BoundResources<<",\"constant_buffers\":[";bool first=true;
         for(UINT i=0;i<(std::min)(d.BoundResources,128u);++i){D3D11_SHADER_INPUT_BIND_DESC binding{};if(FAILED(reflection->GetResourceBindingDesc(i,&binding))||binding.Type!=D3D_SIT_CBUFFER)continue;
@@ -230,7 +230,8 @@ HRESULT STDMETHODCALLTYPE create_layout(ID3D11Device* d,const D3D11_INPUT_ELEMEN
         definition<<']';(*result)->SetPrivateData(layoutGuid,sizeof(l),&l);
         const auto id=tag(*result).id;const auto known=std::find_if(layouts.begin(),layouts.end(),[&](const LayoutDefinition& d){return d.id==id;});
         if(known==layouts.end()){if(layouts.size()<8192)layouts.push_back({id,definition.str()});else ++layoutDefinitionsDropped;}
-    }catch(...){enabled=false;emit("stereo_audit disabled: layout metadata allocation failed; rendering remains legacy");}return hr;
+    }catch(...){enabled=false;emit("stereo_audit disabled: layout metadata allocation failed; rendering remains legacy");}
+    return hr;
 }
 void STDMETHODCALLTYPE execute(ID3D11DeviceContext* c,ID3D11CommandList* list,BOOL restore){
     using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11CommandList*,BOOL);
