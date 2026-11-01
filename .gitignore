@@ -38,3 +38,4 @@ stereo-audit-*.json
 .ssh/
 .codex/
 .agents/
+.superpowers/

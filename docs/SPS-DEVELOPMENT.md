@@ -213,3 +213,38 @@ array slice into a nonzero single-sample mip/array subresource, verifies the
 resulting pixels and correlates the source with the native target identity.
 This closes the base-resolve observation gap; it neither validates native SPS
 with MSAA nor removes the other partial-coverage limitations.
+
+## Owned portable backend MSAA evidence (2026-11-01)
+
+The offscreen `stereo_instancing_test` passes on WARP (Microsoft Basic Render
+Driver) and NVIDIA GeForce RTX 5090 with 1x, 2x and 4x samples. Both multisample
+counts report one color and depth quality level. The test compares independent
+per-eye draws with one paired draw through both geometry-shader and vertex-array
+routing, across three instance/base-instance ranges, asymmetric projections,
+and full versus sample-zero-only masks. An owned compute shader reads every
+RGBA8 color and R32 depth sample from two-slice MSAA arrays into staging buffers.
+Checks require exact paired/reference color agreement, depth error at most
+1e-6, known near/far depths and foreground colors, clear background, different
+eyes, partially covered edge pixels, and clear color/depth in masked samples.
+The initial 2x allocation assertion failed against the old 1x fixture before
+multisample allocation was implemented. Unsupported required 2x is a failure;
+unsupported optional 4x or vertex-array routing is explicitly reported as skipped.
+This owned-fixture evidence does not extend the live private proof's MSAA support,
+establish native stereo scheduling, or make a performance or production SPS claim.
+
+## Live resolve observation while the headset was in standby (2026-11-01)
+
+The resolve diagnostic recorded two scene frames in an offline Monza practice
+session: 5,050 resource events, comprising 5,025 draws, 12 copy regions, 9 whole
+resource copies and 4 base resolves. There were no resource-event/use drops,
+truncation or abort. The runtime reported `shouldRender=0`; the capture contains
+outer-eye scopes only and **no focus scopes**. It cannot answer the outstanding
+focus-consumer question or validate visible headset output.
+
+The observed outer color/depth targets were 1578x746 with two samples. All four
+resolves used RGBA16_FLOAT (format 10), source/destination subresource zero, and
+the same observed source and destination resource identities. Each resolve was
+immediately followed in the recorded sequence by a draw with that destination
+bound as pixel-shader SRV slot zero. This demonstrates live interception and
+identity correlation for this path. It does not prove complete dependency
+coverage, native ownership or safe cross-eye scheduling.
