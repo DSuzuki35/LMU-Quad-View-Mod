@@ -65,6 +65,7 @@ bool nativeReadable(const void* p,size_t bytes){
 }
 lmuqv::StereoNativePassInfo nativeInfo(){return {nativeFixture.scene.data(),nativeFixture.shader.data(),0x51df1d,17,true,nativeReadable};}
 }
+#include "stereo_resource_trace_test.hpp"
 int main(int argc,char** argv){
     using namespace lmuqv;
     std::locale::global(std::locale(std::locale::classic(),new GroupedNumbers));
@@ -229,6 +230,6 @@ int main(int argc,char** argv){
     // Confirm capture hooks never changed the resulting image.
     auto readDesc=td;readDesc.BindFlags=0;readDesc.Usage=D3D11_USAGE_STAGING;readDesc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;ID3D11Texture2D* staging=nullptr;assert(SUCCEEDED(device->CreateTexture2D(&readDesc,nullptr,&staging)));
     context->CopyResource(staging,texture);D3D11_MAPPED_SUBRESOURCE map{};assert(SUCCEEDED(context->Map(staging,0,D3D11_MAP_READ,0,&map)));uint32_t pixel=0;std::memcpy(&pixel,static_cast<const char*>(map.pData)+4*map.RowPitch+4*4,4);assert(pixel==0xff00ff00u);context->Unmap(staging,0);drop(staging);
-    stereo_audit_stop();context->ClearState();for(auto*& shader:extra)drop(shader);drop(duplicate);drop(cb);drop(ib);drop(vb);drop(rtv);drop(texture);drop(layout);drop(ps);drop(vs);drop(context);drop(device);
+    stereo_audit_stop();resource_trace_test(directory);context->ClearState();for(auto*& shader:extra)drop(shader);drop(duplicate);drop(cb);drop(ib);drop(vb);drop(rtv);drop(texture);drop(layout);drop(ps);drop(vs);drop(context);drop(device);
     std::cout<<"Stereo draw audit "<<(hardware?"hardware":"WARP")<<" passed: early device capture, preserved layouts, >1024 programs, deduplicated/used-only definitions, opt-in shader export, transparent draws, reflection/SHA, CB updates, frame limits, held key, file saving, pixel readback and cross-thread deferred cleanup\n";
 }

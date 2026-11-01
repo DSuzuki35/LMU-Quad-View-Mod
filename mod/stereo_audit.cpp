@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "stereo_audit.hpp"
+#include "stereo_resource_trace.hpp"
 #include "native_stereo_packets.hpp"
 #include "stereo_instancing.hpp"
 #include "stereo_draw_proof.hpp"
@@ -111,7 +112,9 @@ uint64_t nativeGeneration = 0, auditSequence = 0;
 unsigned nativePacketCount = 0, nativeScopesDropped = 0,
          nativePreparationsDropped = 0;
 bool nativeDiagnosticsFailed = false;
+StereoResourceTrace resourceTrace;
 void reset_native_capture() {
+  resourceTrace.reset();
   ++nativeGeneration;
   auditSequence = 0;
   nativePacketCount = 0;
@@ -161,6 +164,25 @@ void emit(const char* s){if(logger)logger(s);}
 struct Suspend {bool prior=suspended;Suspend(){suspended=true;}~Suspend(){suspended=prior;}};
 template<class Fn,unsigned Index> Fn original(){return reinterpret_cast<Fn>(originals[Index]);}
 bool watched(ID3D11DeviceContext* c){return !suspended&&activeSlot>=0&&enabled.load(std::memory_order_relaxed)&&c==watchedContext.load(std::memory_order_relaxed);}
+uint64_t trace_resources(ID3D11DeviceContext* context, StereoResourceTrace::Event event,
+                         ID3D11Resource* source=nullptr, ID3D11Resource* destination=nullptr, const D3D11_BOX* box=nullptr) noexcept {
+    if(suspended||!enabled.load(std::memory_order_relaxed)||!capturing.load(std::memory_order_relaxed)||
+       GetCurrentThreadId()!=owner.load(std::memory_order_relaxed)||context!=watchedContext.load(std::memory_order_relaxed))return 0;
+    try {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
+        if(!enabled||!capturing||!resourceTrace.available())return 0;
+        Suspend pause;
+        if(box){event.hasBox=true;event.box=*box;}
+        event.sequence=++auditSequence;event.frame=completedFrames;event.slot=activeSlot;
+        resourceTrace.observe(event,context,capabilities.featureLevel,[](ID3D11Resource* resource){
+            return native_identity(nativeObjects,resource,maxNativeObjects);
+        },source,destination);
+        return event.sequence;
+    } catch(...) {resourceTrace.abort();return 0;}
+}
+StereoResourceTrace::Event resource_event(StereoResourceTrace::Operation operation) {
+    StereoResourceTrace::Event event;event.operation=operation;return event;
+}
 uint64_t mix(uint64_t h,uint64_t v){for(unsigned i=0;i<8;++i){h^=v&255;h*=1099511628211ull;v>>=8;}return h;}
 Tag tag(ID3D11DeviceChild* child,bool write=false){
     if(!child)return {};
@@ -493,9 +515,9 @@ void remember_shader(ID3D11DeviceChild* child,const void* data,SIZE_T size,const
     }
     programs.emplace(key,program);shaders.emplace(id,std::move(program));
 }
-Record snapshot(ID3D11DeviceContext* c,unsigned kind,const std::array<UINT,5>& args){
+Record snapshot(ID3D11DeviceContext* c,unsigned kind,const std::array<UINT,5>& args,uint64_t sequence){
     Suspend pause;Record r;r.slot=unsigned(activeSlot);r.kind=kind;r.group=group;r.bufferEpoch=bufferEpoch;std::copy(args.begin(),args.end(),r.args);
-    r.sequence=++auditSequence;r.nativeMesh=nativeMesh;r.nativeBindTicks=nativeBindTicks;r.activeQueries=unsigned(activeQueries.size());r.activeQueryMask=active_query_mask();
+    r.sequence=sequence?sequence:++auditSequence;r.nativeMesh=nativeMesh;r.nativeBindTicks=nativeBindTicks;r.activeQueries=unsigned(activeQueries.size());r.activeQueryMask=active_query_mask();
     ID3D11VertexShader* vs=nullptr;ID3D11PixelShader* ps=nullptr;ID3D11GeometryShader* gs=nullptr;ID3D11HullShader* hs=nullptr;ID3D11DomainShader* ds=nullptr;
     UINT count=0;c->VSGetShader(&vs,nullptr,&count);r.classes+=count;count=0;c->PSGetShader(&ps,nullptr,&count);r.classes+=count;
     count=0;c->GSGetShader(&gs,nullptr,&count);r.classes+=count;count=0;c->HSGetShader(&hs,nullptr,&count);r.classes+=count;count=0;c->DSGetShader(&ds,nullptr,&count);r.classes+=count;
@@ -533,15 +555,19 @@ void inspect_pair(ID3D11DeviceContext* c,const Record& r){
     pairProof.observe(c,r.slot%4==3,d,earlyDevice&&!(r.activeQueryMask&~timingQueryMask),bool(r.activeQueryMask&timingQueryMask));
 }
 template<class Call> void draw(ID3D11DeviceContext* c,unsigned kind,std::array<UINT,5> args,Call call){
+    const auto sequence=trace_resources(c,resource_event(StereoResourceTrace::Operation::draw));
     if(!watched(c)){call();return;}
     std::lock_guard<std::recursive_mutex> lock(mutex);
     if(!capturing||!enabled){call();return;}
     auto& p=passes[unsigned(activeSlot)];++p.calls;
     if(p.calls>maxDrawsPerPass){++p.dropped;Suspend pause;call();return;}
-    const auto before=ticks();auto record=snapshot(c,kind,args);
+    const auto before=ticks();Record record;
+    try {record=snapshot(c,kind,args,sequence);
     if(nativeFirstDraw&&nativeStarted){record.nativePrepareTicks=uint64_t(before-nativeStarted);nativeFirstDraw=false;}
-    const auto proofStart=ticks();inspect_pair(c,record);const auto ready=ticks();record.proofTicks=uint64_t(ready-proofStart);
-    {Suspend pause;call();}const auto after=ticks();record.snapshotTicks=uint64_t(ready-before);record.apiTicks=uint64_t(after-ready);p.snapshotTicks+=record.snapshotTicks;p.apiTicks+=record.apiTicks;records.push_back(record);
+    const auto proofStart=ticks();inspect_pair(c,record);record.proofTicks=uint64_t(ticks()-proofStart);
+    } catch(...) {nativeDiagnosticsFailed=true;resourceTrace.abort();Suspend pause;call();return;}
+    const auto ready=ticks();
+    {Suspend pause;call();}const auto after=ticks();record.snapshotTicks=uint64_t(ready-before);record.apiTicks=uint64_t(after-ready);p.snapshotTicks+=record.snapshotTicks;p.apiTicks+=record.apiTicks;try{records.push_back(record);}catch(...){++p.dropped;resourceTrace.abort();}
 }
 void STDMETHODCALLTYPE indexed(ID3D11DeviceContext* c,UINT n,UINT start,INT base){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,UINT,UINT,INT);draw(c,0,{n,start,UINT(base),0,0},[&]{original<Fn,0>()(c,n,start,base);});}
 void STDMETHODCALLTYPE plain(ID3D11DeviceContext* c,UINT n,UINT start){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,UINT,UINT);draw(c,1,{n,start,0,0,0},[&]{original<Fn,1>()(c,n,start);});}
@@ -554,16 +580,16 @@ void note(ID3D11DeviceContext* c,ID3D11Resource* resource,unsigned kind){
     std::lock_guard<std::recursive_mutex> lock(mutex);if(!capturing)return;
     if(resource)tag(resource,true);if(activeSlot>=0){auto& p=passes[unsigned(activeSlot)];if(kind==0)++p.maps;else if(kind==1)++p.unmaps;else if(kind==2)++p.updates;else if(kind==3)++p.copies;else ++p.dispatches;}
 }
-void STDMETHODCALLTYPE dispatch(ID3D11DeviceContext* c,UINT x,UINT y,UINT z){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,UINT,UINT,UINT);note(c,nullptr,4);original<Fn,7>()(c,x,y,z);}
-void STDMETHODCALLTYPE dispatch_indirect(ID3D11DeviceContext* c,ID3D11Buffer* args,UINT offset){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Buffer*,UINT);note(c,nullptr,4);original<Fn,8>()(c,args,offset);}
+void STDMETHODCALLTYPE dispatch(ID3D11DeviceContext* c,UINT x,UINT y,UINT z){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,UINT,UINT,UINT);trace_resources(c,resource_event(StereoResourceTrace::Operation::dispatch));note(c,nullptr,4);original<Fn,7>()(c,x,y,z);}
+void STDMETHODCALLTYPE dispatch_indirect(ID3D11DeviceContext* c,ID3D11Buffer* args,UINT offset){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Buffer*,UINT);trace_resources(c,resource_event(StereoResourceTrace::Operation::dispatchIndirect));note(c,nullptr,4);original<Fn,8>()(c,args,offset);}
 HRESULT STDMETHODCALLTYPE map(ID3D11DeviceContext* c,ID3D11Resource* resource,UINT sub,D3D11_MAP type,UINT flags,D3D11_MAPPED_SUBRESOURCE* result){
     using Fn=HRESULT(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,D3D11_MAP,UINT,D3D11_MAPPED_SUBRESOURCE*);
     const auto hr=original<Fn,9>()(c,resource,sub,type,flags,result);if(SUCCEEDED(hr)&&type!=D3D11_MAP_READ)note(c,resource,0);return hr;
 }
 void STDMETHODCALLTYPE unmap(ID3D11DeviceContext* c,ID3D11Resource* resource,UINT sub){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT);note(c,nullptr,1);original<Fn,10>()(c,resource,sub);}
 void STDMETHODCALLTYPE update(ID3D11DeviceContext* c,ID3D11Resource* resource,UINT sub,const D3D11_BOX* box,const void* data,UINT row,UINT depth){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,const D3D11_BOX*,const void*,UINT,UINT);original<Fn,11>()(c,resource,sub,box,data,row,depth);note(c,resource,2);}
-void STDMETHODCALLTYPE copy(ID3D11DeviceContext* c,ID3D11Resource* dst,ID3D11Resource* src){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,ID3D11Resource*);original<Fn,12>()(c,dst,src);note(c,dst,3);}
-void STDMETHODCALLTYPE copy_region(ID3D11DeviceContext* c,ID3D11Resource* dst,UINT sub,UINT x,UINT y,UINT z,ID3D11Resource* src,UINT srcSub,const D3D11_BOX* box){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,UINT,UINT,UINT,ID3D11Resource*,UINT,const D3D11_BOX*);original<Fn,13>()(c,dst,sub,x,y,z,src,srcSub,box);note(c,dst,3);}
+void STDMETHODCALLTYPE copy(ID3D11DeviceContext* c,ID3D11Resource* dst,ID3D11Resource* src){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,ID3D11Resource*);trace_resources(c,resource_event(StereoResourceTrace::Operation::copyResource),src,dst);original<Fn,12>()(c,dst,src);note(c,dst,3);}
+void STDMETHODCALLTYPE copy_region(ID3D11DeviceContext* c,ID3D11Resource* dst,UINT sub,UINT x,UINT y,UINT z,ID3D11Resource* src,UINT srcSub,const D3D11_BOX* box){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,UINT,UINT,UINT,ID3D11Resource*,UINT,const D3D11_BOX*);auto event=resource_event(StereoResourceTrace::Operation::copyRegion);event.sourceSubresource=srcSub;event.destinationSubresource=sub;event.destination={x,y,z};trace_resources(c,event,src,dst,box);original<Fn,13>()(c,dst,sub,x,y,z,src,srcSub,box);note(c,dst,3);}
 template<class T,unsigned I> HRESULT STDMETHODCALLTYPE create_shader(ID3D11Device* d,const void* data,SIZE_T bytes,ID3D11ClassLinkage* linkage,T** result){
     using Fn=HRESULT(STDMETHODCALLTYPE*)(ID3D11Device*,const void*,SIZE_T,ID3D11ClassLinkage*,T**);
     const auto hr=original<Fn,I>()(d,data,bytes,linkage,result);
@@ -658,7 +684,7 @@ void save_impl(const char* reason){
     std::unordered_map<const Program*,std::string> exported;unsigned exportFailures=0;
     if(captureBytecode)for(auto id:focusShaders){const auto found=shaders.find(id);if(found==shaders.end())continue;const auto* p=found->second.get();if(exported.find(p)!=exported.end())continue;
         std::string relative;if(!export_program(*p,relative)){relative.clear();++exportFailures;}exported.emplace(p,std::move(relative));}
-    std::ostringstream out;out.imbue(std::locale::classic());out<<"{\"schema\":1,\"rendering\":\"legacy\",\"reason\":"<<quoted(reason)<<",\"frequency\":"<<frequency<<",\"scene_frames\":"<<completedFrames<<",\"open_scopes_at_save\":"<<openScopes<<",\"capacity_per_pass\":"<<maxDrawsPerPass<<",\"shader_definitions_dropped\":"<<shaderDefinitionsDropped<<",\"layout_definitions_dropped\":"<<layoutDefinitionsDropped<<",\"metadata_cache\":{\"shader_aliases\":"<<shaders.size()<<",\"unique_programs\":"<<programs.size()<<",\"reflection_bytes\":"<<reflectionBytes<<",\"early_device\":"<<unsigned(earlyDevice)<<"},\"shader_export\":{\"enabled\":"<<unsigned(captureBytecode)<<",\"cached_bytes\":"<<bytecodeBytes<<",\"programs_dropped\":"<<bytecodeProgramsDropped<<",\"write_failures\":"<<exportFailures<<"},\"capabilities\":{\"feature_level\":"<<unsigned(capabilities.featureLevel)<<",\"vprt\":"<<unsigned(capabilities.vertexArrayIndex)<<",\"route\":"<<quoted(stereo_route_name(capabilities.route))<<"},\"tracking\":\"owner-thread observed writes; CB signatures are resource identities and versions, not content hashes; existing shaders may lack definitions; indirect arguments are not read; PS SRVs/samplers cover slots 0-15; other-stage SRVs, UAV writes and mapped contents are not observed\",\"layouts\":[";
+    std::ostringstream out;out.imbue(std::locale::classic());out<<"{\"schema\":1,\"rendering\":\"legacy\",\"reason\":"<<quoted(reason)<<",\"frequency\":"<<frequency<<",\"scene_frames\":"<<completedFrames<<",\"open_scopes_at_save\":"<<openScopes<<",\"capacity_per_pass\":"<<maxDrawsPerPass<<",\"shader_definitions_dropped\":"<<shaderDefinitionsDropped<<",\"layout_definitions_dropped\":"<<layoutDefinitionsDropped<<",\"metadata_cache\":{\"shader_aliases\":"<<shaders.size()<<",\"unique_programs\":"<<programs.size()<<",\"reflection_bytes\":"<<reflectionBytes<<",\"early_device\":"<<unsigned(earlyDevice)<<"},\"shader_export\":{\"enabled\":"<<unsigned(captureBytecode)<<",\"cached_bytes\":"<<bytecodeBytes<<",\"programs_dropped\":"<<bytecodeProgramsDropped<<",\"write_failures\":"<<exportFailures<<"},\"capabilities\":{\"feature_level\":"<<unsigned(capabilities.featureLevel)<<",\"vprt\":"<<unsigned(capabilities.vertexArrayIndex)<<",\"route\":"<<quoted(stereo_route_name(capabilities.route))<<"},\"tracking\":\"owner-thread observed writes; CB signatures are resource identities and versions, not content hashes; existing shaders may lack definitions; indirect arguments are not read; legacy draw signatures cover PS SRVs/samplers 0-15; resource_uses separately records potential bindings; mapped contents are not observed\",\"layouts\":[";
     bool firstLayout=true;for(const auto& l:layouts){if(!usedLayouts.count(l.id))continue;if(!firstLayout)out<<',';firstLayout=false;out<<"{\"id\":"<<l.id<<",\"elements\":"<<l.elements<<'}';}out<<"],\"shaders\":[";
     bool first=true;for(auto id:usedShaders){const auto found=shaders.find(id);if(found==shaders.end())continue;const auto& s=*found->second;if(!first)out<<',';first=false;out<<"{\"id\":"<<id<<",\"stage\":"<<quoted(s.stage.c_str())<<",\"sha256\":"<<quoted(s.sha.c_str())<<",\"reflection\":"<<s.reflection;
         const auto file=exported.find(&s);if(focusShaders.count(id)&&file!=exported.end()&&!file->second.empty())out<<",\"bytecode_file\":"<<quoted(file->second.c_str());out<<'}';}out<<"],\"passes\":[";
@@ -669,7 +695,7 @@ void save_impl(const char* reason){
         out<<"],\"layout\":"<<r.layout<<",\"layout_known\":"<<r.layoutKnown<<",\"instance_slots\":"<<r.instanceSlots<<",\"layout_steps\":"<<r.layoutSteps<<",\"vertex_signature\":"<<r.vertexSignature<<",\"index\":["<<r.index.id<<','<<r.index.version<<','<<r.indexFormat<<','<<r.indexOffset<<"],\"topology\":"<<r.topology<<",\"buffer_epoch\":"<<r.bufferEpoch<<",\"ps_srv_signature\":"<<r.pixelResources<<",\"ps_sampler_signature\":"<<r.pixelSamplers<<",\"predicate\":["<<r.predicate<<','<<r.predicateValue<<"],\"cb\":[";
         for(unsigned i=0;i<r.constants.size();++i){if(i)out<<',';out<<'['<<r.constants[i].id<<','<<r.constants[i].version<<']';}
         out<<"],\"target_signature\":"<<r.targetSignature<<",\"rt\":["<<r.rtWidth<<','<<r.rtHeight<<','<<r.rtFormat<<','<<r.rtSamples<<','<<r.rtCount<<"],\"blend\":"<<r.blend<<",\"class_instances\":"<<r.classes<<",\"api_ticks\":"<<r.apiTicks<<",\"snapshot_ticks\":"<<r.snapshotTicks<<",\"native_mesh\":"<<r.nativeMesh<<",\"native_prepare_ticks\":"<<r.nativeBindTicks<<",\"native_to_draw_ticks\":"<<r.nativePrepareTicks<<",\"active_queries\":"<<r.activeQueries<<",\"active_query_mask\":"<<r.activeQueryMask<<",\"proof_ticks\":"<<r.proofTicks<<'}';}
-    out<<']';write_native_capture(out);const auto& proof=pairProof.result();
+    out<<']';write_native_capture(out);resourceTrace.write(out);const auto& proof=pairProof.result();
     out<<",\"stereo_pair_proof\":{\"requested\":"<<unsigned(proofRequested)<<",\"status\":"<<quoted(proof.status.c_str())<<",\"reason\":"<<quoted(proof.reason.c_str())<<",\"route\":"<<quoted(proof.route.c_str());
     out<<",\"key\":"<<proof.key<<",\"observed\":"<<proof.observed<<",\"query_skips\":"<<proof.querySkips<<",\"timing_query_overlaps\":"<<proof.timingQueryOverlaps<<",\"opaque_candidates\":"<<proofCandidates<<",\"shader_rejections\":"<<proofShaderRejected;
     out<<",\"eligible_draws\":["<<proofEligible[0]<<','<<proofEligible[1]<<"],\"used_sampler_masks\":["<<proof.samplerSlots[0]<<','<<proof.samplerSlots[1]<<"],\"width\":"<<proof.width<<",\"height\":"<<proof.height<<",\"reference_depth_format\":"<<proof.depthFormat<<",\"native_cpu_preparation_shared\":false";

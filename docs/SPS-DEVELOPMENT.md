@@ -126,3 +126,45 @@ packet list wholesale. The next investigation must correlate bound intermediate
 resources with subsequent reads/writes, establish their first consumers, and
 identify a native scheduling point that preserves both eyes' inputs and targets.
 Only then can a paired draw replace native work. Raw game captures stay local.
+
+### Follow-up: conditional special draw path
+
+Inspection of the pinned renderer establishes that the extra draw path tests
+both caller flags bit 1 (`flags & 2`) and mesh bit `0x400000`. The caller bit is
+decoded at RVAs `0x51f0c3` through `0x51f0e1`, then checked before the mesh bit at
+`0x51f58f` through `0x51f5a0`. The ordinary path separately tests caller bit 0.
+All four captured focus scopes have caller flags 1; their preparations have no
+supplied high bit and no reset request, consistent with taking the ordinary path.
+
+Consequently, excluding every mesh with `0x400000` was an intentionally strict
+initial filter, not a demonstrated requirement for this observed pass. Excluding
+mesh callbacks, dynamic-preparation flags and shader callbacks instead leaves
+311 observations per eye in frame 1 and 310 in frame 2. These are candidates for
+further investigation only: other preparation, visibility, state, resource and
+ordering requirements still apply. Do not generalize this result to caller flags
+2/3 or turn it into a production skip rule.
+
+## Resource-use trace
+
+The next diagnostic adds `resource_uses` to the same local F8 JSON. Events share
+the native target resource IDs and submission sequence, including selected-context
+calls between native scene scopes (`slot: -1`). It observes all 128 SRV slots in
+each graphics/compute stage, bound color/depth/UAV targets, compute dispatches,
+and the existing CopyResource/CopySubresourceRegion hooks. Copy-region coordinates
+and subresources are preserved in the observations.
+
+Bindings describe potential access, including draws that execute no work. Depth
+view read-only flags refine the potential-access label; they do not prove that a
+depth test ran. No resource contents are read back by this trace, and no reference
+survives its immediate snapshot. Events and resource-use entries have explicit
+limits, with truncation and exception-abort status in JSON.
+
+Coverage is deliberately reported as partial. Clears, resolves, mip generation,
+maps/updates, Context1 variants, IA/constant-buffer/stream-output dependencies,
+indirect argument contents, other contexts/threads and calls outside the capture
+remain unobserved by this trace. Runtime method variants can also bypass installed
+entry-point hooks: this occurred in WARP tests after context state changes. A
+fresh-device fixture verifies the installed path, not universal interception.
+Resource identities can alias reused addresses and do not establish lifetime or
+content equivalence. Neither an empty trace nor a first observed read establishes
+the absence of earlier consumers. `scheduling_eligible` remains false.
