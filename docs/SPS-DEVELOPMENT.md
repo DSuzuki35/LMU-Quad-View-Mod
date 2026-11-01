@@ -380,3 +380,26 @@ It owns its inputs and distinguishes returned flags from stored flags. This
 models one native calculation, not the whole visibility decision. Comparison
 against the original invocation is the next diagnostic step; the model is not
 used to alter native rendering.
+
+## First original-invocation classifier capture (2026-11-01)
+
+The reviewed diagnostic now observes the original classifier call, preserving
+its arguments, return value and floating-point environment. It copies bounded
+inputs before and after the call and evaluates the owned model during export.
+The native test suite passed; review also found and corrected a failure-status
+race with concurrent capture shutdown. A targeted allocation-failure regression
+failed before that correction and passed afterward.
+
+The first two-frame offline Monza capture confirmed the hook operated, but
+produced **no available numeric comparisons**. Its 2,048 recorded attempts
+comprised 1,024 non-main-view refusals and 1,024 six-plane tests outside the
+initial model's zero-to-four-plane domain. Another 7,152 attempts exceeded the
+per-slot diagnostic cap. The headset was in standby, so only outer slots ran.
+The recorded MXCSR value was `0x1fbf`: default control bits with sticky status
+flags set, which the diagnostic preserves.
+
+This is evidence about missing coverage, not agreement with the game. The next
+step is to select the expected main view before consuming the record budget
+and extend the model to the observed six-plane path. That path includes a
+special-plane rejection that returns different flags from those stored on the
+candidate, plus a secondary distance test. Native rendering remains unchanged.
