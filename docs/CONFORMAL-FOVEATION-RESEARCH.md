@@ -7,7 +7,7 @@ Branch: `codex/conformal-foveated-research`.
 This document investigates allocating more eye-texture samples near gaze and
 progressively fewer toward the periphery, then reconstructing an ordinary eye
 image. It changes no renderer, launcher, runtime, game installation, or settings.
-The proposed full D3D11 experiment below has **not** been implemented.
+The proposed full D3D11 experiment below is **only partially implemented**.
 An initial [standalone WebGL2 sampling fixture](../prototype/nonlinear-foveation/README.md)
 now implements the invertible mapping, direct nonuniform ray-scene sampling,
 color reconstruction and matched-budget quad-style comparison, with CPU/GPU
@@ -20,6 +20,10 @@ A moving-gaze test now reports spatial error separately from frame-to-frame
 error changes. In the current owned scene, nonlinear sampling has more temporal
 variation than the quad comparator despite slightly lower spatial RMS. This
 reinforces the need to test stability, not just sample counts and still images.
+A native offscreen D3D11 probe now computes coarse bounds in a geometry shader,
+with original-depth fragment intersection, GPU/independent CPU comparisons,
+WARP and RTX 5090 checks, and source-only statistics/timings. It does not yet
+implement the proposed full native reconstruction/comparison pipeline.
 Concurrent single-pass stereo (SPS) work is separate and is not included here.
 
 ## Finding and evidence status
@@ -170,7 +174,7 @@ saccade-aware temporal antialiasing; smooth spatial falloff alone does not solve
 these issues. Its published results do not determine suitable LMU thresholds.
 [NVIDIA Research][temporal]
 
-## First bounded offline experiment (proposal, not implemented)
+## Full bounded offline experiment (proposal; partial results above)
 
 Build a standalone D3D11 executable using owned geometry and shaders. No LMU
 process, hooks, game shader capture, OpenXR session or provider configuration is
@@ -209,8 +213,9 @@ LMU compatibility, eye-tracker latency, headset comfort, or a game-frame speedup
 
 ## Capability probe plan
 
-No new hardware probe was run for this documentation change. The developer's
-reported RTX 5090 is the target, not a support guarantee. Use a standalone device
+The native source-rasterization probe ran on the reported RTX 5090, but the
+additional NVAPI, MSAA and capability probes below remain outstanding. A fixture
+result is not a support guarantee for another path. Use a standalone device
 and report the actual adapter/driver; never take ownership of a live game's NVAPI
 state for discovery.
 
@@ -232,7 +237,9 @@ every vendor extension. No branch of the probe plan changes driver profiles.
 
 ## Acceptance and stop gates
 
-The following are proposed engineering gates, not previously achieved results.
+The following are full-pipeline engineering gates. The mapping, owned-source
+coverage and temporal diagnostics now have scoped results in the lab README;
+full native reconstruction, quality/performance and LMU integration gates remain.
 
 - **Mapping:** identity roundtrip works; no NaN, foldover, missing corner or
   unexplained out-of-domain sampling at tested gaze/FOV extremes. Use a proposed

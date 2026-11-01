@@ -243,3 +243,53 @@ output/reference movement. GPU checks had no browser exceptions and exact
 trajectory returns. A temporal filter might reduce this noise, but would need
 gaze-aware reprojection, depth/disocclusion rejection and tests for blur/ghosting
 before any claim of improved quality.
+
+## Native D3D11 source-rasterization probe
+
+`native.cpp` / `native.hlsl` move coarse primitive bounds to a geometry shader,
+avoiding the JavaScript per-primitive calculation. This is a separate offscreen
+executable. It uses no game assets, OpenXR session, injection or NVAPI state.
+Build with a Windows x64 MinGW-w64 C++17 toolchain (tested with LLVM-MinGW):
+
+```powershell
+./prototype/nonlinear-foveation/build-native.ps1
+# Or: ./prototype/nonlinear-foveation/build-native.ps1 -Compiler C:/path/to/g++.exe
+```
+
+The script runs WARP correctness first, then hardware on D3D11's default adapter.
+It records the actual adapter, JSON results and BMP source images in ignored
+`mod/build/nonlinear/native/`. It does not fall back silently from hardware to WARP.
+The compiler/runtime DLLs, if needed by a different toolchain, must be available
+on PATH. No executable is installed or copied into LMU.
+
+Geometry is clipped once on the CPU when creating this fixed scene. A geometry
+shader computes conservative interval bounds and emits a rectangle strip; the
+pixel shader reconstructs original sample coverage, attributes and D32/LESS
+depth. An independent double-precision CPU reference checks the HLSL path, in
+addition to the full-screen GPU reference and ordinary hardware identity case.
+The expected-failure vertex-only path has 49,032 wrong interior pixels at
+strength 4/center gaze, versus zero for the bounded path in the tested cases.
+
+On 2026-11-01, all 12 gaze/strength combinations passed on Microsoft WARP and
+NVIDIA GeForce RTX 5090. Bounded/reference GPU source colors and depths matched
+in the hardware run. Against the independent CPU reference, hardware had zero
+wrong interior surfaces, a maximum one-code-value RGB difference, and maximum
+depth error below 0.0000018. The CPU comparison permits one UNORM8 code value,
+not exact byte equality: native floating arithmetic and quantization can differ
+at rounding boundaries. D3D11 explicitly permits conversion tolerance.
+[D3D11 specification, float-to-UNORM](https://microsoft.github.io/DirectX-Specs/d3d/archive/D3D11_3_FunctionalSpec.htm#3.2.3.6%20FLOAT%20-%3E%20UNORM)
+
+The hardware pipeline reported 3 GS invocations, 6 emitted triangles and 909,120
+pixel-shader invocations for bounded rendering, versus 214,164 pixel-shader
+invocations for ordinary rendering. Invocations include work that rejects a
+fragment; they are not the number of expensive material evaluations or visible
+pixels. Source-only medians were roughly 0.0012 ms ordinary and 0.0053 ms bounded,
+using two warmups and nine rotated batches of 32. **No reconstruction is included
+in these native timings.** They demonstrate source-stage overhead in a tiny
+light-material scene, not a complete rendering speedup.
+
+The native probe does not implement arbitrary GPU clipping, game materials,
+MSAA, transparency, texture derivatives, output depth reconstruction or history.
+The [geometry shader API](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-geometry-shader)
+supports the required mechanism; the tested owned pipeline does not establish
+that LMU's existing shader interfaces can be converted safely.

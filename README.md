@@ -89,6 +89,10 @@ claimed. See the [measured results and comparison procedure](docs/PERFORMANCE.md
 
 Experimental upload batching/reuse and private paired-draw checks remain disabled
 by default. They require explicit opt-in and do not remove normal eye draws.
+This research branch also contains a [standalone nonlinear foveation lab](prototype/nonlinear-foveation/README.md)
+with browser sampling/mesh experiments and an offscreen D3D11 probe. It is
+experimental contributor research, not an LMU rendering mode or part of a release.
+
 See [CPU fast-path research](CPU-UPLOAD-FASTPATH.md),
 [upload reuse](CPU-UPLOAD-REUSE.md), [stereo research](PORTABLE-STEREO-RESEARCH.txt)
 and the [renderer handoff](INSTANCED-STEREO-HANDOFF.md) for their scope and limits.
