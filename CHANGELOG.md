@@ -15,6 +15,11 @@ Versions before 1.0 remain experimental and may change compatibility or settings
   view span, from -50 to +50. Existing settings default to zero.
 - Equivalent CLI parameters and offset values in diagnostic run metadata.
 
+### Improved
+
+- Sidebar branding shares a consistent left edge across font sizes.
+- Numeric controls leave more space between the value and spinner arrows.
+
 ### Behavior and scope
 
 - Offsets follow the provider's current focus position without accumulating or
