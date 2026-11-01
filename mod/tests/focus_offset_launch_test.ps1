@@ -17,6 +17,9 @@ try {
         if($result.Info.Environment['LMU_QV_FOCUS_OFFSET_X_PERCENT'] -ne '-12.5' -or $result.Info.Environment['LMU_QV_FOCUS_OFFSET_Y_PERCENT'] -ne '50') {throw 'CLI signed invariant offset environment missing'}
         if($result.Run.FocusOffsetXPercent -ne -12.5 -or $result.Run.FocusOffsetYPercent -ne 50) {throw 'CLI offset metadata missing'}
     }
+    $small=& $fixture -Mode quad -UseRuntimeSettings -FocusOffsetXPercent 0.00001 -FocusOffsetYPercent -0.000025
+    if($small.Info.Environment['LMU_QV_FOCUS_OFFSET_X_PERCENT'] -ne '1E-05' -or $small.Info.Environment['LMU_QV_FOCUS_OFFSET_Y_PERCENT'] -ne '-2.5E-05') {throw 'CLI small offset scientific output changed'}
+    if($small.Run.FocusOffsetXPercent -ne 0.00001 -or $small.Run.FocusOffsetYPercent -ne -0.000025) {throw 'CLI small offset metadata lost precision'}
     $default=& $fixture -Mode quad
     if($default.Info.Environment['LMU_QV_FOCUS_OFFSET_X_PERCENT'] -ne '0') {throw 'CLI stale inherited offset survived defaults'}
     foreach($case in @(@{Mode='trace';FocusOffsetXPercent=1},@{Mode='stereo-timing';FocusOffsetYPercent=-1},@{Mode='quad';FocusOffsetXPercent=[double]::NaN},@{Mode='quad';FocusOffsetYPercent=[double]::PositiveInfinity},@{Mode='quad';FocusOffsetXPercent=50.01},@{Mode='quad';FocusOffsetYPercent=-50.01})) {

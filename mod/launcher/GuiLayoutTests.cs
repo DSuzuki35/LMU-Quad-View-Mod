@@ -16,6 +16,7 @@ class GuiLayoutTests {
     static extern bool AreDpiAwarenessContextsEqual(IntPtr first,IntPtr second);
     [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr window);
     [DllImport("user32.dll",EntryPoint="GetWindowLongW")] static extern int GetWindowLong(IntPtr window,int index);
+    [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window,int message,IntPtr wParam,IntPtr lParam);
     static void Check(bool good,string message) { if(!good) throw new InvalidOperationException(message); }
     static List<Control> Descendants(Control root) {
         var controls=new List<Control>();controls.Add(root);
@@ -75,6 +76,35 @@ class GuiLayoutTests {
     static void Screenshot(Form form,string path) {
         using(var bitmap=new Bitmap(form.Width,form.Height)) { form.DrawToBitmap(bitmap,new Rectangle(Point.Empty,form.Size));bitmap.Save(path,ImageFormat.Png); }
     }
+    static void NumericSpacing(Control page) {
+        foreach(var control in Descendants(page)) {
+            var number=control as NumericUpDown;if(number==null||!number.Visible)continue;
+            TextBox edit=null;foreach(Control child in number.Controls)if(child is TextBox)edit=(TextBox)child;
+            Check(edit!=null&&edit.IsHandleCreated,"Native numeric edit missing: "+number.AccessibleName);
+            int right=(int)((SendMessage(edit.Handle,0xD4,IntPtr.Zero,IntPtr.Zero).ToInt64()>>16)&65535);
+            Check(right>=Math.Round(6*number.DeviceDpi/96.0),"Numeric value touches spinner arrows: "+number.AccessibleName+" margin="+right+" dpi="+number.DeviceDpi+" font="+number.Font.SizeInPoints);
+            foreach(var value in new[]{number.Minimum,number.Maximum}) {
+                var text=value.ToString("F"+number.DecimalPlaces,System.Globalization.CultureInfo.CurrentCulture);
+                int width=TextRenderer.MeasureText(text,number.Font,Size.Empty,TextFormatFlags.NoPadding|TextFormatFlags.SingleLine).Width;
+                Check(width<=edit.ClientSize.Width-right,"Signed/max/decimal numeric text is clipped: "+number.AccessibleName+" "+text);
+            }
+            decimal saved=number.Value;number.Value=number.Minimum;number.UpButton();
+            Check(number.Value==Math.Min(number.Maximum,number.Minimum+number.Increment),"Native numeric increment changed");
+            number.DownButton();Check(number.Value==number.Minimum,"Native numeric decrement changed");
+            decimal typed=Math.Min(number.Maximum,number.Minimum+number.Increment);
+            edit.Text=typed.ToString(System.Globalization.CultureInfo.CurrentCulture);
+            typeof(NumericUpDown).GetMethod("ValidateEditText",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(number,null);
+            Check(number.Value==typed,"Native numeric text editing changed");number.Value=saved;
+        }
+    }
+    static void BrandAlignment(Form form) {
+        var title=(Label)Named(form,"BrandTitle");
+        foreach(var name in new[]{"BrandTitle","BrandSubtitle","BrandRenderer"}) {
+            var label=(Label)Named(form,name);TextFits(label);FullyVisible(label);
+            Check(label.TextAlign==ContentAlignment.MiddleLeft,"Brand is not left aligned: "+name);
+            Check(label.Left==title.Left&&label.Right==title.Right&&label.Margin==title.Margin&&label.Padding==title.Padding,"Brand labels do not share bounds/margins/padding: "+name);
+        }
+    }
     static void Page(Form form,string pageName,string navigation,string output,string stem) {
         ((Button)Named(form,navigation)).PerformClick();Settle(form);
         var page=(DarkScrollPage)Named(form,pageName);
@@ -88,6 +118,7 @@ class GuiLayoutTests {
             var provider=(ComboBox)Named(form,"ProviderSelector");
             foreach(var item in provider.Items)Check(TextRenderer.MeasureText(item.ToString(),provider.Font).Width+SystemInformation.VerticalScrollBarWidth<provider.Width,"Provider name is clipped");
         }
+        NumericSpacing(page);BrandAlignment(form);
         NoNativeScrollBars(form);
         var freeNotice=Named(form,"FreeNotice");
         foreach(var line in freeNotice.Text.Split('\n'))Check(TextRenderer.MeasureText(line,freeNotice.Font).Width<=freeNotice.Width,"Optional donation notice is clipped");

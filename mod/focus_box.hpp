@@ -22,7 +22,7 @@ inline FocusOffset parse_focus_offset(const char* text) {
     FocusOffset offset;
     if(!text||!*text)return offset;
     const char* end=text+std::strlen(text);
-    auto parsed=std::from_chars(text,end,offset.percent,std::chars_format::fixed);
+    auto parsed=std::from_chars(text,end,offset.percent,std::chars_format::general);
     if(parsed.ec!=std::errc{}||parsed.ptr!=end||!std::isfinite(offset.percent)||offset.percent<-50||offset.percent>50){
         offset.percent=0;offset.valid=false;
     }

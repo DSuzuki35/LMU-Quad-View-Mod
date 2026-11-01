@@ -14,10 +14,10 @@ int main() {
         auto box=lmuqv::parse_focus_box(text);assert(!box.valid&&box.percent==100);
     }
     assert(lmuqv::parse_focus_offset(nullptr).percent==0);
-    for(auto text:{"-50","-12.5","0","0.25","50"}){
+    for(auto text:{"-50","-12.5","0","0.25","50","1e1","1E-05","-2.5e-05"}){
         auto offset=lmuqv::parse_focus_offset(text);assert(offset.valid&&offset.percent==std::strtod(text,nullptr));
     }
-    for(auto text:{"NaN","inf","-50.1","50.1","12junk","1e1"," 5"}){
+    for(auto text:{"NaN","inf","-50.1","50.1","12junk","1e9999","-1e9999","51e0","1e-5junk"," 5"}){
         auto offset=lmuqv::parse_focus_offset(text);assert(!offset.valid&&offset.percent==0);
     }
     const XrFovf outer{float(std::atan(-2.)),float(std::atan(1.)),float(std::atan(1.5)),float(std::atan(-.5))};
