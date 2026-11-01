@@ -141,6 +141,21 @@ a capture that cannot collect two scene frames, provided XR frames continue.
 At most 4,096 draws per view per sampled frame are retained; overflow is reported.
 The master diagnostics checkbox overrides the saved audit-on preference.
 
+For unattended development captures, current source builds also accept a local
+request file. With diagnostics and stereo draw audit enabled, wait until LMU has
+initialized, then run this from the extracted package directory in PowerShell:
+
+    Set-Content -LiteralPath .\logs\stereo-audit.request -Value capture
+
+The audit checks this fixed file's last-write timestamp at most twice per second
+while idle. Its contents are ignored. A new timestamp starts the same bounded
+two-scene-frame capture; the JSON records trigger=file. An unchanged timestamp
+does not repeat, and a marker already present at initialization is ignored until
+changed. A request made during capture waits until that capture finishes; it
+does not stop it early. Missing files or failed attribute reads do not trigger.
+This interface does no file polling when the audit is disabled. It remains a
+heavy compatibility diagnostic, not a performance measurement.
+
 CAPTURE CONTENTS AND LIMITATIONS
 
 The JSON includes draw types/arguments, native render-group IDs, shader IDs and

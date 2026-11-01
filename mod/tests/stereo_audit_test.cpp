@@ -23,6 +23,49 @@ ID3DBlob* compile(const char* source,const char* target){ID3DBlob *code=nullptr,
 std::vector<std::filesystem::path> files(const std::filesystem::path& path){std::vector<std::filesystem::path> result;for(const auto& file:std::filesystem::directory_iterator(path))if(file.path().extension()==".json")result.push_back(file.path());return result;}
 std::string read(const std::filesystem::path& p){std::ifstream f(p);return {std::istreambuf_iterator<char>(f),std::istreambuf_iterator<char>()};}
 unsigned count(const std::string& s,const char* needle){unsigned n=0;size_t p=0;while((p=s.find(needle,p))!=std::string::npos){++n;p+=std::strlen(needle);}return n;}
+// Set explicit distinct timestamps rather than depending on filesystem clock
+// resolution. Contents are deliberately irrelevant to the request protocol.
+void touchRequest(const std::filesystem::path& marker,uint64_t timestamp){
+    const auto handle=CreateFileW(marker.c_str(),FILE_WRITE_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    assert(handle!=INVALID_HANDLE_VALUE);const FILETIME time{DWORD(timestamp),DWORD(timestamp>>32)};
+    assert(SetFileTime(handle,nullptr,nullptr,&time));CloseHandle(handle);
+}
+void request_file_test(const std::filesystem::path& root){
+    using namespace lmuqv;
+    ID3D11Device* device=nullptr;ID3D11DeviceContext* context=nullptr;
+    assert(SUCCEEDED(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,nullptr,&context)));
+    auto draw=[&]{context->Draw(0,0);};
+    const auto directory=root/L"request-trigger";assert(std::filesystem::create_directory(directory));
+    const auto marker=directory/L"stereo-audit.request";touchRequest(marker,100);
+    assert(stereo_audit_configure(context,true,directory.c_str(),log));
+    stereo_audit_frame(false);Sleep(510);stereo_audit_frame(false);
+    auto idle=stereo_audit_begin(StereoAuditPass::focus0);assert(!idle.entered&&files(directory).empty());
+    touchRequest(marker,200);Sleep(510);
+    std::thread other([]{stereo_audit_frame(false);});other.join();
+    idle=stereo_audit_begin(StereoAuditPass::focus0);assert(!idle.entered); // wrong thread cannot consume request
+    stereo_audit_frame(false);
+    auto first=stereo_audit_begin(StereoAuditPass::focus0);assert(first.entered);draw();stereo_audit_end(first);stereo_audit_frame_end();
+    touchRequest(marker,300);Sleep(510);stereo_audit_frame(false); // pending request must not stop frame two
+    auto second=stereo_audit_begin(StereoAuditPass::focus0);assert(second.entered);draw();stereo_audit_end(second);stereo_audit_frame_end();
+    assert(files(directory).size()==1);auto data=read(files(directory)[0]);
+    assert(data.find("\"trigger\":\"file\"")!=std::string::npos&&data.find("\"reason\":\"frames\"")!=std::string::npos);
+    assert(data.find("\"scene_frames\":2")!=std::string::npos&&count(data,"\"kind\":")==2);
+    assert(contains("stereo_audit start trigger=file"));
+    stereo_audit_frame(false); // request changed during capture is consumed only after it completes
+    for(unsigned frame=0;frame<2;++frame){auto token=stereo_audit_begin(StereoAuditPass::focus0);assert(token.entered);draw();stereo_audit_end(token);stereo_audit_frame_end();}
+    assert(files(directory).size()==2);Sleep(510);stereo_audit_frame(false);
+    idle=stereo_audit_begin(StereoAuditPass::focus0);assert(!idle.entered); // unchanged cannot repeat
+    assert(std::filesystem::remove(marker));Sleep(510);stereo_audit_frame(false);
+    touchRequest(marker,300);Sleep(510);stereo_audit_frame(false);
+    idle=stereo_audit_begin(StereoAuditPass::focus0);assert(!idle.entered); // absence cannot replay
+    touchRequest(marker,400);Sleep(510);stereo_audit_frame(false);
+    auto stopped=stereo_audit_begin(StereoAuditPass::focus0);assert(stopped.entered);draw();stereo_audit_end(stopped);
+    stereo_audit_frame(true);assert(files(directory).size()==3); // hotkey still explicitly stops file capture
+    bool hotkeyStop=false;for(const auto& file:files(directory)){data=read(file);if(data.find("\"reason\":\"hotkey\"")!=std::string::npos){assert(data.find("\"trigger\":\"file\"")!=std::string::npos);hotkeyStop=true;}}
+    assert(hotkeyStop);stereo_audit_stop();
+    assert(stereo_audit_configure(context,true,directory.c_str(),log));Sleep(510);stereo_audit_frame(false);
+    idle=stereo_audit_begin(StereoAuditPass::focus0);assert(!idle.entered&&files(directory).size()==3);stereo_audit_stop();drop(context);drop(device);
+}
 struct NativeFixture {
     alignas(8) std::array<unsigned char,0xdc8> scene{};
     alignas(8) std::array<unsigned char,0x508> bucket{};
@@ -313,6 +356,7 @@ int main(int argc,char** argv){
     auto readDesc=td;readDesc.BindFlags=0;readDesc.Usage=D3D11_USAGE_STAGING;readDesc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;ID3D11Texture2D* staging=nullptr;assert(SUCCEEDED(device->CreateTexture2D(&readDesc,nullptr,&staging)));
     context->CopyResource(staging,texture);D3D11_MAPPED_SUBRESOURCE map{};assert(SUCCEEDED(context->Map(staging,0,D3D11_MAP_READ,0,&map)));uint32_t pixel=0;std::memcpy(&pixel,static_cast<const char*>(map.pData)+4*map.RowPitch+4*4,4);assert(pixel==0xff00ff00u);context->Unmap(staging,0);drop(staging);
     stereo_audit_stop();
+    request_file_test(directory);
     // Keep the resource trace fixture's original absent-geometry setup and
     // deterministic resource IDs. Source containment is exercised above.
     NativeFixture::put(nativeFixture.mesh,0x80,uint64_t(0));

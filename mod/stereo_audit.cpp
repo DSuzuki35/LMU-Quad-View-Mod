@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "stereo_audit.hpp"
+#include "stereo_audit_trigger.hpp"
 #include "stereo_resource_trace.hpp"
 #include "native_stereo_packets.hpp"
 #include "native_stereo_camera.hpp"
@@ -159,6 +160,7 @@ uint32_t native_identity(std::unordered_map<const void *, uint32_t> &identities,
 std::atomic<ID3D11DeviceContext*> watchedContext{nullptr};std::atomic<ID3D11Device*> watchedDevice{nullptr};
 std::atomic<bool> capturing{false};bool keyWasDown=false,sawScene=false,deferredStop=false;
 long long started=0,frequency=0;std::filesystem::path directory;
+StereoAuditTrigger requestTrigger;const char* captureTrigger="hotkey";
 void(*logger)(const char*)=nullptr;
 StereoCapabilities capabilities;
 std::array<Pass,framesWanted*4> passes{};std::vector<Record> records;
@@ -851,7 +853,7 @@ void save_impl(const char* reason){
     std::unordered_map<const Program*,std::string> exported;unsigned exportFailures=0;
     if(captureBytecode)for(auto id:focusShaders){const auto found=shaders.find(id);if(found==shaders.end())continue;const auto* p=found->second.get();if(exported.find(p)!=exported.end())continue;
         std::string relative;if(!export_program(*p,relative)){relative.clear();++exportFailures;}exported.emplace(p,std::move(relative));}
-    std::ostringstream out;out.imbue(std::locale::classic());out<<"{\"schema\":1,\"rendering\":\"legacy\",\"reason\":"<<quoted(reason)<<",\"frequency\":"<<frequency<<",\"scene_frames\":"<<completedFrames<<",\"open_scopes_at_save\":"<<openScopes<<",\"capacity_per_pass\":"<<maxDrawsPerPass<<",\"shader_definitions_dropped\":"<<shaderDefinitionsDropped<<",\"layout_definitions_dropped\":"<<layoutDefinitionsDropped<<",\"metadata_cache\":{\"shader_aliases\":"<<shaders.size()<<",\"unique_programs\":"<<programs.size()<<",\"reflection_bytes\":"<<reflectionBytes<<",\"early_device\":"<<unsigned(earlyDevice)<<"},\"shader_export\":{\"enabled\":"<<unsigned(captureBytecode)<<",\"cached_bytes\":"<<bytecodeBytes<<",\"programs_dropped\":"<<bytecodeProgramsDropped<<",\"write_failures\":"<<exportFailures<<"},\"capabilities\":{\"feature_level\":"<<unsigned(capabilities.featureLevel)<<",\"vprt\":"<<unsigned(capabilities.vertexArrayIndex)<<",\"route\":"<<quoted(stereo_route_name(capabilities.route))<<"},\"tracking\":\"owner-thread observed writes; CB signatures are resource identities and versions, not content hashes; existing shaders may lack definitions; indirect arguments are not read; legacy draw signatures cover PS SRVs/samplers 0-15; resource_uses separately records potential bindings; mapped contents are not observed\",\"layouts\":[";
+    std::ostringstream out;out.imbue(std::locale::classic());out<<"{\"schema\":1,\"rendering\":\"legacy\",\"reason\":"<<quoted(reason)<<",\"trigger\":"<<quoted(captureTrigger)<<",\"frequency\":"<<frequency<<",\"scene_frames\":"<<completedFrames<<",\"open_scopes_at_save\":"<<openScopes<<",\"capacity_per_pass\":"<<maxDrawsPerPass<<",\"shader_definitions_dropped\":"<<shaderDefinitionsDropped<<",\"layout_definitions_dropped\":"<<layoutDefinitionsDropped<<",\"metadata_cache\":{\"shader_aliases\":"<<shaders.size()<<",\"unique_programs\":"<<programs.size()<<",\"reflection_bytes\":"<<reflectionBytes<<",\"early_device\":"<<unsigned(earlyDevice)<<"},\"shader_export\":{\"enabled\":"<<unsigned(captureBytecode)<<",\"cached_bytes\":"<<bytecodeBytes<<",\"programs_dropped\":"<<bytecodeProgramsDropped<<",\"write_failures\":"<<exportFailures<<"},\"capabilities\":{\"feature_level\":"<<unsigned(capabilities.featureLevel)<<",\"vprt\":"<<unsigned(capabilities.vertexArrayIndex)<<",\"route\":"<<quoted(stereo_route_name(capabilities.route))<<"},\"tracking\":\"owner-thread observed writes; CB signatures are resource identities and versions, not content hashes; existing shaders may lack definitions; indirect arguments are not read; legacy draw signatures cover PS SRVs/samplers 0-15; resource_uses separately records potential bindings; mapped contents are not observed\",\"layouts\":[";
     bool firstLayout=true;for(const auto& l:layouts){if(!usedLayouts.count(l.id))continue;if(!firstLayout)out<<',';firstLayout=false;out<<"{\"id\":"<<l.id<<",\"elements\":"<<l.elements<<'}';}out<<"],\"shaders\":[";
     bool first=true;for(auto id:usedShaders){const auto found=shaders.find(id);if(found==shaders.end())continue;const auto& s=*found->second;if(!first)out<<',';first=false;out<<"{\"id\":"<<id<<",\"stage\":"<<quoted(s.stage.c_str())<<",\"sha256\":"<<quoted(s.sha.c_str())<<",\"reflection\":"<<s.reflection;
         const auto file=exported.find(&s);if(focusShaders.count(id)&&file!=exported.end()&&!file->second.empty())out<<",\"bytecode_file\":"<<quoted(file->second.c_str());out<<'}';}out<<"],\"passes\":[";
@@ -879,6 +881,7 @@ void save_impl(const char* reason){
 }
 void save(const char* reason){try{save_impl(reason);}catch(...){capturing=false;emit("stereo_audit save failed: serialization allocation error; rendering remains legacy");}}
 void cleanup_methods(){
+    requestTrigger.reset();
     watchedContext=nullptr;watchedDevice=nullptr;for(unsigned i=0;i<installed;++i)MH_DisableHook(targets[i]);for(unsigned i=0;i<installed;++i)MH_RemoveHook(targets[i]);installed=0;drop(selected);drop(device);deferredStop=false;
     shaders.clear();programs.clear();layouts.clear();records.clear();earlyDevice=false;
     pairProof.reset();activeQueries.clear();reset_native_capture();
@@ -910,7 +913,7 @@ bool stereo_audit_configure(ID3D11DeviceContext* context,bool enable,const wchar
     if(enabled&&context==selected&&output&&directory==std::filesystem::path(output)){
         logger=log;emit("stereo_audit session confirmed existing device; preserving early shader/layout definitions");return true;
     }
-    enabled=false;save("reconfigure");logger=log;
+    enabled=false;requestTrigger.reset();save("reconfigure");logger=log;
     if(openScopes){deferredStop=true;return false;}cleanup_methods();
     std::error_code error;directory=output?output:L"";
     if(!context||context->GetType()!=D3D11_DEVICE_CONTEXT_IMMEDIATE||!directory.is_absolute()||!std::filesystem::is_directory(directory,error)||error){emit("stereo_audit unavailable: immediate context and existing absolute output directory required");return false;}
@@ -925,17 +928,20 @@ bool stereo_audit_configure(ID3D11DeviceContext* context,bool enable,const wchar
     for(unsigned i=0;i<totalHooks;++i){targets[i]=(i<contextCount||i>=21?contextTable:deviceTable)[indices[i]];for(unsigned j=0;j<i;++j)if(targets[j]==targets[i]){emit("stereo_audit unavailable: aliased method targets");cleanup_methods();return false;}}
     for(unsigned i=0;i<totalHooks;++i){if(MH_CreateHook(targets[i],detours[i],&originals[i])!=MH_OK){emit("stereo_audit unavailable: method hook creation failed");cleanup_methods();return false;}++installed;}
     for(unsigned i=0;i<totalHooks;++i)if(MH_EnableHook(targets[i])!=MH_OK){emit("stereo_audit unavailable: method hook activation failed");cleanup_methods();return false;}
-    watchedContext=selected;watchedDevice=device;enabled=true;emit("stereo_audit armed hotkey=Ctrl+Alt+F8 scene_frames=2 max_draws_per_pass=4096; heavy diagnostic capture, not a performance benchmark; rendering remains legacy");return true;
+    requestTrigger.configure(true,directory);
+    watchedContext=selected;watchedDevice=device;enabled=true;emit("stereo_audit armed hotkey=Ctrl+Alt+F8 request=stereo-audit.request scene_frames=2 max_draws_per_pass=4096; heavy diagnostic capture, not a performance benchmark; rendering remains legacy");return true;
 }
 void stereo_audit_frame(bool keyDown){
     if(!enabled)return;std::lock_guard<std::recursive_mutex> lock(mutex);if(!enabled)return;
     if(!owner)owner=GetCurrentThreadId();if(owner!=GetCurrentThreadId()||openScopes)return;
-    const bool pressed=keyDown&&!keyWasDown;keyWasDown=keyDown;if(!pressed)return;
-    if(capturing){save("hotkey");return;}
+    const bool pressed=keyDown&&!keyWasDown;keyWasDown=keyDown;
+    if(capturing){if(pressed)save("hotkey");return;}
+    const bool requested=requestTrigger.poll();if(!pressed&&!requested)return;
     try{records.clear();records.reserve(framesWanted*4*maxDrawsPerPass);}catch(...){enabled=false;emit("stereo_audit disabled: capture allocation failed; rendering remains legacy");return;}
+    captureTrigger=pressed?"hotkey":"file";
     passes={};completedFrames=0;sawScene=false;started=ticks();reset_native_capture();proofCandidates=proofShaderRejected=0;proofEligible={};capturing=true;
     if(proofRequested)try{pairProof.begin();}catch(...){proofRequested=false;emit("stereo_pair_proof unavailable: allocation failed; ordinary audit retained");}
-    emit("stereo_audit start; collecting two scene frames, no game draw suppression or stereo conversion");
+    emit(pressed?"stereo_audit start trigger=hotkey; collecting two scene frames, no game draw suppression or stereo conversion":"stereo_audit start trigger=file; collecting two scene frames, no game draw suppression or stereo conversion");
 }
 StereoAuditToken stereo_audit_begin(StereoAuditPass pass){
     if(!enabled||unsigned(pass)>=4||suspended)return {};
@@ -1164,7 +1170,7 @@ void stereo_audit_frame_end(){
     if(ticks()-started>10*frequency)save("timeout");
 }
 void stereo_audit_stop(){
-    std::lock_guard<std::recursive_mutex> lock(mutex);enabled=false;save("session_end");
+    std::lock_guard<std::recursive_mutex> lock(mutex);enabled=false;requestTrigger.reset();save("session_end");
     if(openScopes){deferredStop=true;emit("stereo_audit cleanup deferred until active render scope exits");return;}cleanup();
 }
 }
