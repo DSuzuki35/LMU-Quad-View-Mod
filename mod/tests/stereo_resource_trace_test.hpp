@@ -111,6 +111,38 @@ void resource_trace_test(
     std::ostream prefixOutput(&prefixBuffer);denseTrace.write(prefixOutput);
     assert(prefixBuffer.prefix.find("\"uses_dropped\":512")!=std::string::npos&&prefixBuffer.prefix.find("\"events_dropped\":1")!=std::string::npos&&prefixBuffer.prefix.find("\"truncated\":true")!=std::string::npos);
     denseTrace.reset();assert(denseTrace.available());context->ClearState();
+    // A multisampled native target resolves after its scene scope. Nonzero
+    // source array slice and destination mip/slice catch forwarding mistakes.
+    D3D11_TEXTURE2D_DESC msDesc{};msDesc.Width=msDesc.Height=8;msDesc.MipLevels=1;msDesc.ArraySize=2;
+    msDesc.SampleDesc.Count=2;msDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;msDesc.BindFlags=D3D11_BIND_RENDER_TARGET;
+    UINT quality=0;assert(SUCCEEDED(device->CheckMultisampleQualityLevels(msDesc.Format,2,&quality))&&quality);
+    ID3D11Texture2D *multisampled=nullptr,*resolved=nullptr,*resolveStaging=nullptr;
+    assert(SUCCEEDED(device->CreateTexture2D(&msDesc,nullptr,&multisampled)));
+    ID3D11RenderTargetView *msViews[2]{};
+    for(unsigned slice=0;slice<2;++slice){D3D11_RENDER_TARGET_VIEW_DESC view{};view.Format=msDesc.Format;view.ViewDimension=D3D11_RTV_DIMENSION_TEXTURE2DMSARRAY;
+        view.Texture2DMSArray.FirstArraySlice=slice;view.Texture2DMSArray.ArraySize=1;assert(SUCCEEDED(device->CreateRenderTargetView(multisampled,&view,&msViews[slice])));}
+    const FLOAT red[]{1,0,0,1},green[]{0,1,0,1};context->ClearRenderTargetView(msViews[0],red);context->ClearRenderTargetView(msViews[1],green);
+    auto resolveDesc=msDesc;resolveDesc.Width=resolveDesc.Height=16;resolveDesc.MipLevels=2;resolveDesc.SampleDesc.Count=1;
+    assert(SUCCEEDED(device->CreateTexture2D(&resolveDesc,nullptr,&resolved)));
+    stereo_audit_frame(false);stereo_audit_frame(true);
+    {StereoAuditScope scope(StereoAuditPass::focus0);StereoAuditGroup group(31);context->OMSetRenderTargets(1,&msViews[1],nullptr);
+        const auto token=stereo_audit_native_pass_begin(nativeInfo());assert(token.entered);stereo_audit_native_pass_end(token);}
+    context->OMSetRenderTargets(0,nullptr,nullptr);
+    context->ResolveSubresource(resolved,3,multisampled,1,DXGI_FORMAT_R8G8B8A8_UNORM);
+    stereo_audit_frame_end();stereo_audit_frame(false);stereo_audit_frame(true);
+    std::string resolveJson;for(const auto& file:files(directory)){const auto data=read(file);if(data.find("\"samples\":2")!=std::string::npos)resolveJson=data;}
+    assert(resolveJson.find("\"operation\":\"resolve_subresource\"")!=std::string::npos);
+    assert(resolveJson.find("\"view\":3,\"resource\":4")!=std::string::npos);
+    assert(resolveJson.find("\"sequence\":3,\"frame\":0,\"slot\":-1,\"operation\":\"resolve_subresource\"")!=std::string::npos);
+    assert(resolveJson.find("\"source_subresource\":1,\"destination_subresource\":3,\"format\":28")!=std::string::npos);
+    assert(resolveJson.find("\"resource\":4,\"stage\":\"resolve\",\"binding\":\"source\",\"slot\":0,\"access\":\"potential_read\"")!=std::string::npos);
+    assert(resolveJson.find("\"resource\":5,\"stage\":\"resolve\",\"binding\":\"destination\",\"slot\":0,\"access\":\"potential_write\"")!=std::string::npos);
+    assert(count(resolveJson,"\"operation\":")==1);
+    resolveDesc.BindFlags=0;resolveDesc.Usage=D3D11_USAGE_STAGING;resolveDesc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    assert(SUCCEEDED(device->CreateTexture2D(&resolveDesc,nullptr,&resolveStaging)));context->CopyResource(resolveStaging,resolved);
+    assert(SUCCEEDED(context->Map(resolveStaging,3,D3D11_MAP_READ,0,&mapped)));
+    std::memcpy(&pixel,static_cast<char*>(mapped.pData)+4*mapped.RowPitch+4*sizeof(UINT),sizeof(pixel));assert(pixel==0xff00ff00u);context->Unmap(resolveStaging,3);
+    for(auto*& view:msViews)drop(view);drop(multisampled);drop(resolved);drop(resolveStaging);
     // New capture resets IDs, events and sequence. Empty submissions reach the
     // event bound without taking resource references or overflowing storage.
     stereo_audit_frame(false);stereo_audit_frame(true);

@@ -152,7 +152,7 @@ thread_local int activeSlot=-1,group=-1;thread_local bool suspended=false;
 thread_local uint32_t nativeMesh=0;thread_local long long nativeStarted=0;
 thread_local uint64_t nativeBindTicks=0;thread_local bool nativeFirstDraw=false;
 // Context methods followed by device shader/input-layout creation methods.
-constexpr unsigned contextCount=14,totalHooks=24;
+constexpr unsigned contextCount=14,totalHooks=25;
 constexpr auto indices=stereo_audit_vtable;
 std::array<void*,totalHooks> targets{},originals{};
 std::array<void*,2> factoryTargets{},factoryOriginals{};
@@ -590,6 +590,15 @@ void STDMETHODCALLTYPE unmap(ID3D11DeviceContext* c,ID3D11Resource* resource,UIN
 void STDMETHODCALLTYPE update(ID3D11DeviceContext* c,ID3D11Resource* resource,UINT sub,const D3D11_BOX* box,const void* data,UINT row,UINT depth){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,const D3D11_BOX*,const void*,UINT,UINT);original<Fn,11>()(c,resource,sub,box,data,row,depth);note(c,resource,2);}
 void STDMETHODCALLTYPE copy(ID3D11DeviceContext* c,ID3D11Resource* dst,ID3D11Resource* src){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,ID3D11Resource*);trace_resources(c,resource_event(StereoResourceTrace::Operation::copyResource),src,dst);original<Fn,12>()(c,dst,src);note(c,dst,3);}
 void STDMETHODCALLTYPE copy_region(ID3D11DeviceContext* c,ID3D11Resource* dst,UINT sub,UINT x,UINT y,UINT z,ID3D11Resource* src,UINT srcSub,const D3D11_BOX* box){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,UINT,UINT,UINT,ID3D11Resource*,UINT,const D3D11_BOX*);auto event=resource_event(StereoResourceTrace::Operation::copyRegion);event.sourceSubresource=srcSub;event.destinationSubresource=sub;event.destination={x,y,z};trace_resources(c,event,src,dst,box);original<Fn,13>()(c,dst,sub,x,y,z,src,srcSub,box);note(c,dst,3);}
+void STDMETHODCALLTYPE resolve_subresource(ID3D11DeviceContext* context, ID3D11Resource* destination,
+        UINT destinationSubresource, ID3D11Resource* source, UINT sourceSubresource, DXGI_FORMAT format) {
+    using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,ID3D11Resource*,UINT,DXGI_FORMAT);
+    auto event=resource_event(StereoResourceTrace::Operation::resolve);
+    event.sourceSubresource=sourceSubresource;event.destinationSubresource=destinationSubresource;event.format=unsigned(format);
+    trace_resources(context,event,source,destination);
+    original<Fn,24>()(context,destination,destinationSubresource,source,sourceSubresource,format);
+    note(context,destination,3);
+}
 template<class T,unsigned I> HRESULT STDMETHODCALLTYPE create_shader(ID3D11Device* d,const void* data,SIZE_T bytes,ID3D11ClassLinkage* linkage,T** result){
     using Fn=HRESULT(STDMETHODCALLTYPE*)(ID3D11Device*,const void*,SIZE_T,ID3D11ClassLinkage*,T**);
     const auto hr=original<Fn,I>()(d,data,bytes,linkage,result);
@@ -626,7 +635,7 @@ void STDMETHODCALLTYPE end_query(ID3D11DeviceContext* c,ID3D11Asynchronous* quer
 }
 const std::array<void*,totalHooks> detours{
     reinterpret_cast<void*>(&indexed),reinterpret_cast<void*>(&plain),reinterpret_cast<void*>(&indexed_instanced),reinterpret_cast<void*>(&instanced),reinterpret_cast<void*>(&automatic),reinterpret_cast<void*>(&indirect<5>),reinterpret_cast<void*>(&indirect<6>),reinterpret_cast<void*>(&dispatch),reinterpret_cast<void*>(&dispatch_indirect),reinterpret_cast<void*>(&map),reinterpret_cast<void*>(&unmap),reinterpret_cast<void*>(&update),reinterpret_cast<void*>(&copy),reinterpret_cast<void*>(&copy_region),
-    reinterpret_cast<void*>(&create_shader<ID3D11VertexShader,14>),reinterpret_cast<void*>(&create_shader<ID3D11PixelShader,15>),reinterpret_cast<void*>(&create_shader<ID3D11GeometryShader,16>),reinterpret_cast<void*>(&create_shader<ID3D11HullShader,17>),reinterpret_cast<void*>(&create_shader<ID3D11DomainShader,18>),reinterpret_cast<void*>(&create_shader<ID3D11ComputeShader,19>),reinterpret_cast<void*>(&create_layout),reinterpret_cast<void*>(&execute),reinterpret_cast<void*>(&begin_query),reinterpret_cast<void*>(&end_query)};
+    reinterpret_cast<void*>(&create_shader<ID3D11VertexShader,14>),reinterpret_cast<void*>(&create_shader<ID3D11PixelShader,15>),reinterpret_cast<void*>(&create_shader<ID3D11GeometryShader,16>),reinterpret_cast<void*>(&create_shader<ID3D11HullShader,17>),reinterpret_cast<void*>(&create_shader<ID3D11DomainShader,18>),reinterpret_cast<void*>(&create_shader<ID3D11ComputeShader,19>),reinterpret_cast<void*>(&create_layout),reinterpret_cast<void*>(&execute),reinterpret_cast<void*>(&begin_query),reinterpret_cast<void*>(&end_query),reinterpret_cast<void*>(&resolve_subresource)};
 bool main_caller(const void* caller){
     HMODULE module=nullptr;
     return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(caller),&module)&&module==GetModuleHandleW(nullptr);

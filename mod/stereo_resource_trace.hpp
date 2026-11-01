@@ -13,7 +13,7 @@ class StereoResourceTrace {
 public:
     static constexpr size_t eventLimit=32768, useLimit=524288;
     static constexpr size_t usesPerEventLimit=5*D3D11_COMMONSHADER_INPUT_RESOURCE_SLOT_COUNT+8+1+64;
-    enum class Operation {draw, dispatch, dispatchIndirect, copyResource, copyRegion};
+    enum class Operation {draw, dispatch, dispatchIndirect, copyResource, copyRegion, resolve};
     struct Use {
         uint32_t resource=0;
         const char* stage="copy";
@@ -29,7 +29,7 @@ public:
         Operation operation=Operation::draw;
         size_t firstUse=0,useCount=0;
         bool truncated=false,hasBox=false;
-        unsigned sourceSubresource=0,destinationSubresource=0;
+        unsigned sourceSubresource=0,destinationSubresource=0,format=0;
         std::array<UINT,3> destination{};
         D3D11_BOX box{};
     };
@@ -94,9 +94,10 @@ public:
             ID3D11Resource* source=nullptr,ID3D11Resource* destination=nullptr) noexcept {
         const auto initial=uses_.size();event.firstUse=initial;
         try {
-            if(event.operation==Operation::copyResource||event.operation==Operation::copyRegion){
-                add(event,source,"copy","source",0,"potential_read",identity);
-                add(event,destination,"copy","destination",0,"potential_write",identity);
+            if(event.operation==Operation::copyResource||event.operation==Operation::copyRegion||event.operation==Operation::resolve){
+                const char* stage=event.operation==Operation::resolve?"resolve":"copy";
+                add(event,source,stage,"source",0,"potential_read",identity);
+                add(event,destination,stage,"destination",0,"potential_write",identity);
             } else if(event.operation==Operation::draw) {
                 for(unsigned stage=0;stage<5;++stage)srvs(event,context,stage,identity);
                 References<ID3D11RenderTargetView,8> targets;
@@ -128,13 +129,13 @@ public:
         } catch(...) {uses_.resize(initial);aborted_=true;}
     }
     void write(std::ostream& out) const {
-        out<<",\"resource_uses\":{\"coverage\":\"partial\",\"scheduling_eligible\":false,\"observation\":\"Submission-order potential accesses, not proof of execution or first actual consumer. Native target identity namespace; address reuse may alias lifetimes; no contents or ownership preserved.\",\"unobserved\":\"Clears, resolves, mip generation, updates/maps, Context1 variants, indirect argument contents, IA/CB/SO resources, deferred/foreign contexts, runtime method implementation variants and non-owner threads; commands outside capture.\",\"srv_slots_per_stage\":128,\"uav_slots\":\"64 on FL11.1+, 8 on FL11.0 (CS 1 below); OM only FL11+\",\"event_limit\":"<<eventLimit
+        out<<",\"resource_uses\":{\"coverage\":\"partial\",\"scheduling_eligible\":false,\"observation\":\"Submission-order potential accesses, not proof of execution or first actual consumer. Native target identity namespace; address reuse may alias lifetimes; no contents or ownership preserved.\",\"unobserved\":\"Clears, mip generation, updates/maps, Context1 and extended resolve API variants, indirect argument contents, IA/CB/SO resources, deferred/foreign contexts, runtime method implementation variants and non-owner threads; commands outside capture.\",\"srv_slots_per_stage\":128,\"uav_slots\":\"64 on FL11.1+, 8 on FL11.0 (CS 1 below); OM only FL11+\",\"event_limit\":"<<eventLimit
            <<",\"use_limit\":"<<useLimit<<",\"uses_per_event_limit\":"<<usesPerEventLimit
            <<",\"events_dropped\":"<<eventsDropped_<<",\"uses_dropped\":"<<usesDropped_
            <<",\"truncated\":"<<((eventsDropped_||usesDropped_)?"true":"false")
            <<",\"aborted\":"<<(aborted_?"true":"false")
            <<",\"abort_reason\":"<<(aborted_?"\"diagnostic exception or allocation failure\"":"null")<<",\"events\":[";
-        constexpr const char* operations[]{"draw","dispatch","dispatch_indirect","copy_resource","copy_region"};
+        constexpr const char* operations[]{"draw","dispatch","dispatch_indirect","copy_resource","copy_region","resolve_subresource"};
         bool first=true;
         for(const auto& event:events_){
             if(!first)out<<',';first=false;
@@ -144,6 +145,8 @@ public:
                    <<",\"destination_xyz\":["<<event.destination[0]<<','<<event.destination[1]<<','<<event.destination[2]<<"],\"source_box\":";
                 if(event.hasBox)out<<'['<<event.box.left<<','<<event.box.top<<','<<event.box.front<<','<<event.box.right<<','<<event.box.bottom<<','<<event.box.back<<']';else out<<"null";
             }
+            if(event.operation==Operation::resolve)
+                out<<",\"source_subresource\":"<<event.sourceSubresource<<",\"destination_subresource\":"<<event.destinationSubresource<<",\"format\":"<<event.format;
             out<<",\"uses\":[";
             for(size_t i=0;i<event.useCount;++i){if(i)out<<',';const auto& use=uses_[event.firstUse+i];
                 out<<"{\"resource\":"<<use.resource<<",\"stage\":\""<<use.stage<<"\",\"binding\":\""<<use.binding<<"\",\"slot\":"<<use.slot<<",\"access\":\""<<use.access<<"\"";

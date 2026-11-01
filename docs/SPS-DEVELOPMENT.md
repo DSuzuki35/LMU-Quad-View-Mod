@@ -150,8 +150,8 @@ The next diagnostic adds `resource_uses` to the same local F8 JSON. Events share
 the native target resource IDs and submission sequence, including selected-context
 calls between native scene scopes (`slot: -1`). It observes all 128 SRV slots in
 each graphics/compute stage, bound color/depth/UAV targets, compute dispatches,
-and the existing CopyResource/CopySubresourceRegion hooks. Copy-region coordinates
-and subresources are preserved in the observations.
+and CopyResource/CopySubresourceRegion/ResolveSubresource calls. Copy-region
+coordinates and resolve formats/subresources are preserved in the observations.
 
 Bindings describe potential access, including draws that execute no work. Depth
 view read-only flags refine the potential-access label; they do not prove that a
@@ -159,7 +159,7 @@ depth test ran. No resource contents are read back by this trace, and no referen
 survives its immediate snapshot. Events and resource-use entries have explicit
 limits, with truncation and exception-abort status in JSON.
 
-Coverage is deliberately reported as partial. Clears, resolves, mip generation,
+Coverage is deliberately reported as partial. Clears, extended resolve APIs, mip generation,
 maps/updates, Context1 variants, IA/constant-buffer/stream-output dependencies,
 indirect argument contents, other contexts/threads and calls outside the capture
 remain unobserved by this trace. Runtime method variants can also bypass installed
@@ -168,3 +168,48 @@ fresh-device fixture verifies the installed path, not universal interception.
 Resource identities can alias reused addresses and do not establish lifetime or
 content equivalence. Neither an empty trace nor a first observed read establishes
 the absence of earlier consumers. `scheduling_eligible` remains false.
+
+## Second capture: resource trace and MSAA (2026-11-01)
+
+The resource-trace build at `84ff761` recorded two scene frames, 6,657 legacy draw records and
+6,711 resource events (6,676 draws, 20 copy regions, 11 whole-resource copies and
+4 dispatches), with no resource-event/use drops, truncation or abort. The extra
+19 draw events were outside the legacy scene scopes. Coverage remains partial.
+
+This run used 5208x2458 RGBA16_FLOAT focus color with two samples and D32_FLOAT
+depth, unlike the previous single-sample run. Settings/scene differences mean
+the counts are not an A/B performance comparison. Each sampled focus pair had
+44 meshes in the left eye and 60 in the right: 44 shared identities and 16
+right-only identities. Left-eye visibility cannot substitute for both eyes.
+
+In each focus scope, the first subsequent observed draw after opaque group 31
+was group 32 with the same color/depth resources still bound. In frame 1 the
+left group-31 end sequence was 5350 and group-32 draw was 5353; on the right the
+corresponding values were 7950 and 7953. This is a concrete later potential
+read/write dependency before the other eye's focus work, so simply deferring
+group 31 and letting later groups proceed is not a valid scheduler.
+
+There were no observed SRV/copy-source reads of those multisampled intermediate
+resources. Base ResolveSubresource was not hooked in this build, so this is a
+missing observation, not evidence that post-processing never consumes them.
+Add and test resolve source/destination/subresource/format records to follow the
+multisampled-to-single-sample transition. Preserve the user's MSAA settings.
+The existing private stereo proof is limited to single-sample targets; this
+run also establishes a separate MSAA validation requirement before production
+SPS can support this configuration.
+
+The expanded read-only native code capture now covers the complete body of the
+derived preparation helper at `0x565260` through its return at `0x5658e2`.
+It selects transform-owner state, consumes the view's derived matrix at `+0x3A0`,
+can calculate additional per-view values, writes several native constant ranges,
+and updates shared renderer caches. Identical mesh identity therefore still does
+not justify skipping the second eye's preparation. Called helpers and their full
+effects remain separate work; having this function's complete bytes is not a
+complete model of native state.
+
+The follow-up diagnostic now hooks base ResolveSubresource, with its context
+vtable index checked against the SDK. The WARP regression resolves an MSAA2
+array slice into a nonzero single-sample mip/array subresource, verifies the
+resulting pixels and correlates the source with the native target identity.
+This closes the base-resolve observation gap; it neither validates native SPS
+with MSAA nor removes the other partial-coverage limitations.
