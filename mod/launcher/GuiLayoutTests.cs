@@ -109,6 +109,12 @@ class GuiLayoutTests {
         Check(content.Bottom<=viewport.ClientSize.Height+1,pageName+" last content is unreachable at scroll bottom");
         foreach(var name in new[]{"SaveButton","LaunchButton","CoffeeButton"})FullyVisible(Named(form,name));
         NoNativeScrollBars(form);
+        if(pageName=="RenderingPage") {
+            var reset=Named(form,"ResetFocusOffsets");reset.Focus();Settle(form);FullyVisible(reset);TextFits(reset);
+            foreach(var name in new[]{"FocusOffsetXPercent","FocusOffsetYPercent"}) {
+                var control=Named(form,name);control.Focus();Settle(form);FullyVisible(control);
+            }
+        }
         Screenshot(form,Path.Combine(output,stem+"-"+pageName+"-bottom.png"));
         Console.WriteLine(stem+" "+pageName+": text/ancestor bounds, footer reachability, dark scrolling PASS; scroll="+scroll.Maximum);
     }
@@ -120,6 +126,17 @@ class GuiLayoutTests {
             Directory.CreateDirectory(output);
             using(var form=new Launcher()) {
                 var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+                foreach(var providerName in new[]{"Native","QVFR","VectorXR"})foreach(var foveation in new[]{"fixed","auto"}) {
+                    var offsets=new LauncherSettings {Backend=providerName,FoveationMode=foveation,FocusOffsetXPercent=-12.5m,FocusOffsetYPercent=50};
+                    typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{offsets});
+                    var x=(PercentSetting)Named(form,"FocusOffsetXPercent");var y=(PercentSetting)Named(form,"FocusOffsetYPercent");
+                    Check(x.Enabled&&y.Enabled&&x.Value==-12.5m&&y.Value==50,"Offsets disabled or lost for "+providerName+" "+foveation);
+                    var saved=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
+                    Check(saved.FocusOffsetXPercent==-12.5m&&saved.FocusOffsetYPercent==50,"Offset GUI roundtrip failed");
+                    typeof(Button).GetMethod("OnClick",flags).Invoke(Named(form,"ResetFocusOffsets"),new object[]{EventArgs.Empty});
+                    saved=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
+                    Check(saved.FocusOffsetXPercent==0&&saved.FocusOffsetYPercent==0,"Reset did not clear both offsets");
+                }
                 var original=new LauncherSettings {Backend="QVFR",OuterPercent=10,InnerPercent=208,FocusWidthPercent=23,FocusHeightPercent=50,FocusAspectRatio=2.19283709218806m};
                 typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{original});
                 var width=(PercentSetting)typeof(Launcher).GetField("focusWidth",flags).GetValue(form);

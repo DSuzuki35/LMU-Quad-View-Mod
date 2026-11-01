@@ -17,6 +17,36 @@ inline FocusBox parse_focus_box(const char* text) {
     }
     return box;
 }
+struct FocusOffset { double percent=0;bool valid=true; };
+inline FocusOffset parse_focus_offset(const char* text) {
+    FocusOffset offset;
+    if(!text||!*text)return offset;
+    const char* end=text+std::strlen(text);
+    auto parsed=std::from_chars(text,end,offset.percent,std::chars_format::fixed);
+    if(parsed.ec!=std::errc{}||parsed.ptr!=end||!std::isfinite(offset.percent)||offset.percent<-50||offset.percent>50){
+        offset.percent=0;offset.valid=false;
+    }
+    return offset;
+}
+inline bool offset_focus_fov(XrFovf& focus,const XrFovf& outer,double horizontal,double vertical) {
+    auto validPercent=[](double p){return std::isfinite(p)&&p>=-50&&p<=50;};
+    if(!validPercent(horizontal)||!validPercent(vertical))return false;
+    if(horizontal==0&&vertical==0)return true; // Preserve default behavior and every input bit.
+    auto valid=[](const XrFovf& fov){
+        constexpr double halfPi=1.57079632679489661923;
+        for(float angle:{fov.angleLeft,fov.angleRight,fov.angleUp,fov.angleDown})
+            if(!std::isfinite(angle)||angle<=-halfPi||angle>=halfPi)return false;
+        return fov.angleLeft<fov.angleRight&&fov.angleDown<fov.angleUp;
+    };
+    if(!valid(focus)||!valid(outer))return false;
+    const double dx=(std::tan(double(outer.angleRight))-std::tan(double(outer.angleLeft)))*horizontal/100;
+    const double dy=(std::tan(double(outer.angleUp))-std::tan(double(outer.angleDown)))*vertical/100;
+    XrFovf shifted=focus;
+    if(horizontal!=0){shifted.angleLeft=float(std::atan(std::tan(double(focus.angleLeft))+dx));shifted.angleRight=float(std::atan(std::tan(double(focus.angleRight))+dx));}
+    if(vertical!=0){shifted.angleUp=float(std::atan(std::tan(double(focus.angleUp))+dy));shifted.angleDown=float(std::atan(std::tan(double(focus.angleDown))+dy));}
+    if(!valid(shifted))return false;
+    focus=shifted;return true;
+}
 struct FocusBoxSize { FocusBox width,height; };
 inline FocusBoxSize parse_focus_box_size(const char* width,const char* height,const char* legacy) {
     return {parse_focus_box(width&&*width?width:legacy),parse_focus_box(height&&*height?height:legacy)};

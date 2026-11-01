@@ -25,6 +25,8 @@ param(
     [ValidateRange(25,200)][double]$FocusBoxPercent=100,
     [ValidateRange(25,200)][double]$FocusWidthPercent=100,
     [ValidateRange(25,200)][double]$FocusHeightPercent=100,
+    [ValidateRange(-50,50)][double]$FocusOffsetXPercent=0,
+    [ValidateRange(-50,50)][double]$FocusOffsetYPercent=0,
     [string]$GameDirectory = 'D:\SteamLibrary\steamapps\common\Le Mans Ultimate'
 )
 $ErrorActionPreference = 'Stop'
@@ -49,6 +51,10 @@ if (!$UseRuntimeSettings -and $NativeOuterResolution -and $OuterPixelsPercent -g
 if (!$PSBoundParameters.ContainsKey('FocusWidthPercent')) { $FocusWidthPercent=$FocusBoxPercent }
 if (!$PSBoundParameters.ContainsKey('FocusHeightPercent')) { $FocusHeightPercent=$FocusBoxPercent }
 if ($Mode -ne 'quad' -and ($FocusWidthPercent -ne 100 -or $FocusHeightPercent -ne 100)) { throw 'Focus box size requires quad mode' }
+foreach($offset in @($FocusOffsetXPercent,$FocusOffsetYPercent)) {
+    if([double]::IsNaN($offset) -or [double]::IsInfinity($offset) -or $offset -lt -50 -or $offset -gt 50) {throw 'Focus offsets must be finite numbers between -50 and +50 percent'}
+}
+if($Mode -ne 'quad' -and ($FocusOffsetXPercent -ne 0 -or $FocusOffsetYPercent -ne 0)) {throw 'Focus offsets require quad mode'}
 $gameExecutable = Join-Path $GameDirectory 'Le Mans Ultimate.exe'
 $expectedHash = '66942337813B301B87D12EDFA330F33354A2A4B8CD9B048885CBF77EB6F940CF'
 if ((Get-FileHash -LiteralPath $gameExecutable -Algorithm SHA256).Hash -ne $expectedHash) {
@@ -80,6 +86,8 @@ if ($CaptureViews) {
     $captureTrigger = Join-Path $captureDirectory 'capture.request'
 }
 $info = [System.Diagnostics.ProcessStartInfo]::new()
+# Clear inherited mod controls before writing this launch's complete configuration.
+foreach($key in @($info.Environment.Keys)) { if($key.StartsWith('LMU_QV_', [StringComparison]::OrdinalIgnoreCase)) {$info.Environment.Remove($key)|Out-Null} }
 $info.FileName = $gameExecutable
 $info.Arguments = '+XR'
 $info.WorkingDirectory = $GameDirectory
@@ -116,6 +124,8 @@ $info.Environment['LMU_QV_FOCUS_PIXELS_PERCENT'] = $FocusPixelsPercent.ToString(
 $info.Environment['LMU_QV_FOCUS_BOX_PERCENT'] = $FocusBoxPercent.ToString([Globalization.CultureInfo]::InvariantCulture)
 $info.Environment['LMU_QV_FOCUS_WIDTH_PERCENT'] = $FocusWidthPercent.ToString([Globalization.CultureInfo]::InvariantCulture)
 $info.Environment['LMU_QV_FOCUS_HEIGHT_PERCENT'] = $FocusHeightPercent.ToString([Globalization.CultureInfo]::InvariantCulture)
+$info.Environment['LMU_QV_FOCUS_OFFSET_X_PERCENT'] = $FocusOffsetXPercent.ToString([Globalization.CultureInfo]::InvariantCulture)
+$info.Environment['LMU_QV_FOCUS_OFFSET_Y_PERCENT'] = $FocusOffsetYPercent.ToString([Globalization.CultureInfo]::InvariantCulture)
 # Direct executable is the officially supported offline launch without EAC.
 $gameProcess = [System.Diagnostics.Process]::Start($info)
 $run = [pscustomobject]@{
@@ -140,6 +150,7 @@ $run = [pscustomobject]@{
     OuterPixelsPercent=$OuterPixelsPercent;FocusPixelsPercent=$FocusPixelsPercent
     FocusBoxPercent=$FocusBoxPercent
     FocusWidthPercent=$FocusWidthPercent;FocusHeightPercent=$FocusHeightPercent
+    FocusOffsetXPercent=$FocusOffsetXPercent;FocusOffsetYPercent=$FocusOffsetYPercent
     StartedUTC=[DateTime]::UtcNow.ToString('o')
 }
 if(!$DisableDiagnostics){$run | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $logDirectory "$Mode-$stamp-run.json") -Encoding utf8}

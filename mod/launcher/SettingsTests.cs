@@ -11,6 +11,8 @@ class SettingsTests
     {
         string folder=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"settings-test-"+Guid.NewGuid().ToString("N")); Directory.CreateDirectory(folder);
         var s=new LauncherSettings { Backend="QVFR", OuterPercent=10,InnerPercent=200,FocusWidthPercent=33,FocusHeightPercent=25 };
+        Require(typeof(LauncherSettings).GetProperty("FocusOffsetXPercent")!=null,"Horizontal offset setting missing");
+        Require(typeof(LauncherSettings).GetProperty("FocusOffsetYPercent")!=null,"Vertical offset setting missing");
         string old="# custom\n[exe:DCS.exe]\nfocus_multiplier=1.7\n";
         Thread.CurrentThread.CurrentCulture=CultureInfo.GetCultureInfo("de-DE");
         string text=QvfrSettings.ProfileText(old,s);
@@ -34,7 +36,13 @@ class SettingsTests
         s.FocusHeightPercent=9; Rejected(delegate{QvfrSettings.Validate(s);}); s.FocusHeightPercent=25;
         s.OuterBlur=4; Rejected(delegate{QvfrSettings.Validate(s);}); s.OuterBlur=1.25m;
         s.FocusAspectRatio=2.19283709218806m;s.RenderProfiling=true;s.RenderProfileSeconds=300;s.DiagnosticsEnabled=false;s.StereoDrawAudit=true;s.StereoShaderCapture=true;s.StereoPairProof=true;s.CpuUploadReuse=true;
+        s.FocusOffsetXPercent=-50;s.FocusOffsetYPercent=12.5m;
         string xml=Path.Combine(folder,"launcher-settings.xml"); QvfrSettings.Save(xml,s); var loaded=QvfrSettings.Load(xml);
+        Require(loaded.FocusOffsetXPercent==-50&&loaded.FocusOffsetYPercent==12.5m,"Offsets did not roundtrip invariantly");
+        s.FocusOffsetXPercent=-50.1m;Rejected(delegate{QvfrSettings.Validate(s);});s.FocusOffsetXPercent=50;
+        s.FocusOffsetYPercent=50.1m;Rejected(delegate{QvfrSettings.Validate(s);});s.FocusOffsetYPercent=-50;
+        QvfrSettings.Validate(s);s.FocusOffsetXPercent=-50;s.FocusOffsetYPercent=12.5m;
+        Require(QvfrSettings.ProfileText(old,s)==text,"Offsets leaked into provider profile");
         Require(loaded.RenderProfiling,"Profiling setting did not roundtrip");
         Require(!loaded.DiagnosticsEnabled&&new LauncherSettings().DiagnosticsEnabled,"Diagnostics off setting/default lost");
         Require(loaded.StereoDrawAudit&&!new LauncherSettings().StereoDrawAudit,"Stereo audit preference/default lost");
@@ -52,6 +60,7 @@ class SettingsTests
         Require(!loaded.StereoDrawAudit,"Existing settings must not enable draw auditing");
         Require(!loaded.StereoShaderCapture,"Existing settings must not enable shader capture");
         Require(!loaded.StereoPairProof&&!loaded.CpuUploadReuse&&!loaded.CpuUploadBatch,"Existing settings must not enable prototype options");
+        Require(loaded.FocusOffsetXPercent==0&&loaded.FocusOffsetYPercent==0,"Old settings must default offsets to zero");
         Require(loaded.FocusAspectRatio==0,"Old settings invent headset geometry");
         s.Backend="VectorXR";s.VectorXrManifest=@"E:\VectorXR\layer.json";s.QuadViewsManifest=@"E:\QVFR\layer.json";
         QvfrSettings.Save(xml,s);loaded=QvfrSettings.Load(xml);

@@ -172,6 +172,8 @@ namespace LmuQuadViewLauncher {
             environment["LMU_QV_PROFILE_SECONDS"]=settings.RenderProfileSeconds.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_VECTORXR_DIRECT_INPUTS"]=settings.Backend=="VectorXR"?"1":"0";
             environment["LMU_QV_OUTER_BLUR"]=settings.OuterBlur.ToString(CultureInfo.InvariantCulture);
+            environment["LMU_QV_FOCUS_OFFSET_X_PERCENT"]=settings.FocusOffsetXPercent.ToString(CultureInfo.InvariantCulture);
+            environment["LMU_QV_FOCUS_OFFSET_Y_PERCENT"]=settings.FocusOffsetYPercent.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_NATIVE_OUTER"]=settings.NativeOuterResolution?"1":"0";
             environment["LMU_QV_PIXEL_STATS"]="0";environment["LMU_QV_VRS_EXCLUSIVE"]="0";environment["LMU_QV_OUTER_SHADING_RATE"]="2";
             foreach(var key in new[]{"CAPTURE_DIR","CAPTURE_TRIGGER","GPU_TIMING_TRIGGER","BENCH_CONTROL"}) environment["LMU_QV_"+key]="";
@@ -215,15 +217,19 @@ namespace LmuQuadViewLauncher {
             if(settings.DiagnosticsEnabled)Directory.CreateDirectory(logDirectory);
             var log=System.IO.Path.Combine(logDirectory,"quad-"+stamp+".log");
             var info=MakeStartInfo(root,settings,plan,log);
-            if(settings.DiagnosticsEnabled)WriteJson(MetadataPath(info),new {Status="prepared",Pid=(int?)null,Mode="quad",Backend=settings.Backend,FoveationMode=settings.FoveationMode,
+            if(settings.DiagnosticsEnabled)WriteJson(MetadataPath(info),PreparedMetadata(root,settings,plan,info,log));
+            return info;
+        }
+        internal static object PreparedMetadata(string root,LauncherSettings settings,LayerPlan plan,ProcessStartInfo info,string log) {
+            return new {Status="prepared",Pid=(int?)null,Mode="quad",Backend=settings.Backend,FoveationMode=settings.FoveationMode,
                 Exe=info.FileName,ExeSHA256=SupportedExecutableHash,LayerSHA256=HashFile(System.IO.Path.Combine(root,@"build\lmu_quadview.dll")),
                 ProviderManifest=plan.ProviderPath,ProviderName=plan.ProviderName,ProviderSHA256=plan.Library==null?null:HashFile(plan.Library),
                 ExplicitManifest=plan.ExplicitManifest,EnabledLayers=plan.Layers,DisabledImplicitSwitches=plan.DisableVariables,Log=log,
                 DebugFocus=settings.DebugFocus,RenderProfiling=settings.RenderProfiling,StereoDrawAudit=settings.StereoDrawAudit,StereoShaderCapture=settings.StereoShaderCapture,StereoPairProof=settings.StereoPairProof,CpuUploadReuse=settings.CpuUploadReuse,CpuUploadBatch=settings.CpuUploadBatch,RenderProfileSeconds=settings.RenderProfileSeconds,NativeOuterResolution=settings.NativeOuterResolution,UseRuntimeSettings=true,
                 VectorXrDirectInputs=settings.Backend=="VectorXR",OuterBlur=settings.OuterBlur,
+                FocusOffsetXPercent=settings.FocusOffsetXPercent,FocusOffsetYPercent=settings.FocusOffsetYPercent,
                 OuterPercent=settings.OuterPercent,InnerPercent=settings.InnerPercent,FocusWidthPercent=settings.FocusWidthPercent,FocusHeightPercent=settings.FocusHeightPercent,
-                PreparedUTC=DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture)});
-            return info;
+                PreparedUTC=DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture)};
         }
         public static int Launch(string root,LauncherSettings settings) {
             var info=Prepare(root,settings);

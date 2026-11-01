@@ -30,6 +30,8 @@ namespace LmuQuadViewLauncher
         public decimal InnerPercent { get; set; }
         public decimal FocusWidthPercent { get; set; }
         public decimal FocusHeightPercent { get; set; }
+        public decimal FocusOffsetXPercent { get; set; }
+        public decimal FocusOffsetYPercent { get; set; }
         // Provider percentages retain their old meaning; this is UI calibration only.
         public decimal FocusAspectRatio { get; set; }
         public LauncherSettings()
@@ -49,6 +51,7 @@ namespace LmuQuadViewLauncher
         public static void Validate(LauncherSettings s)
         {
             if (s == null) throw new ArgumentNullException("settings");
+            if(s.FocusOffsetXPercent < -50 || s.FocusOffsetXPercent > 50 || s.FocusOffsetYPercent < -50 || s.FocusOffsetYPercent > 50) throw new ArgumentException("Focus offsets must be between -50 and +50 percent.");
             if(s.RenderProfileSeconds<30||s.RenderProfileSeconds>300)throw new ArgumentException("Capture length must be between 30 and 300 seconds.");
             if(s.FocusAspectRatio!=0&&(s.FocusAspectRatio<0.1m||s.FocusAspectRatio>10m)) throw new ArgumentException("Invalid measured focus aspect ratio.");
             if (String.IsNullOrWhiteSpace(s.GameDirectory)) throw new ArgumentException("Select the LMU game folder.");
@@ -89,6 +92,8 @@ namespace LmuQuadViewLauncher
             s.InnerPercent = Decimal.Parse(Value(x, "InnerPercent", "100"), CultureInfo.InvariantCulture);
             s.FocusWidthPercent = Decimal.Parse(Value(x, "FocusWidthPercent", "50"), CultureInfo.InvariantCulture);
             s.FocusHeightPercent = Decimal.Parse(Value(x, "FocusHeightPercent", "50"), CultureInfo.InvariantCulture);
+            s.FocusOffsetXPercent = Decimal.Parse(Value(x, "FocusOffsetXPercent", "0"), CultureInfo.InvariantCulture);
+            s.FocusOffsetYPercent = Decimal.Parse(Value(x, "FocusOffsetYPercent", "0"), CultureInfo.InvariantCulture);
             s.FocusAspectRatio = Decimal.Parse(Value(x, "FocusAspectRatio", "0"), CultureInfo.InvariantCulture);
             Validate(s); return s;
         }
@@ -110,6 +115,7 @@ namespace LmuQuadViewLauncher
                 new XElement("OuterBlur", s.OuterBlur),
                 new XElement("OuterPercent", s.OuterPercent), new XElement("InnerPercent", s.InnerPercent),
                 new XElement("FocusWidthPercent", s.FocusWidthPercent), new XElement("FocusHeightPercent", s.FocusHeightPercent),
+                new XElement("FocusOffsetXPercent", s.FocusOffsetXPercent), new XElement("FocusOffsetYPercent", s.FocusOffsetYPercent),
                 new XElement("FocusAspectRatio", s.FocusAspectRatio));
             WriteAtomic(path, xml.ToString(), false);
         }

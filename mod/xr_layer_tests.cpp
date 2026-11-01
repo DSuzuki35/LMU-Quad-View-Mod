@@ -52,8 +52,10 @@ bool profileOnCloseRequested=false,profileCloseOtherThread=false,profileMenuFram
 unsigned sampledAttempts=0,sampledAccepted=0;
 double focusBoxPercent=100;
 double focusHeightPercent=100;
+double focusOffsetX=0,focusOffsetY=0;
+bool invalidFocusOffsetRequested=false;
 bool asymmetricFocusRequested=false;
-bool invalidFocusBoxRequested=false,invalidFocusFov=false;
+bool invalidFocusBoxRequested=false,invalidFocusFov=false,invalidOuterFov=false;
 bool debugPhaseRequested=false,debugRuntime=false;
 unsigned fixtureDimension=32;
 bool scaledRequested=false;
@@ -97,16 +99,18 @@ void assertFov(const XrFovf& fov,float left,float right,float up,float down) {
 }
 // Catch angle-space scaling, moving the gaze center, double application, and
 // submitting a different FOV from the one used by the engine.
-void assertFocusFov(const XrFovf& actual,float left,float right,float up,float down) {
+void assertFocusFov(const XrFovf& actual,float left,float right,float up,float down,unsigned eye=0) {
     const XrFovf original{left,right,up,down};
-    if(focusBoxPercent==100&&focusHeightPercent==100){assert(std::memcmp(&actual,&original,sizeof(original))==0);return;}
+    if(focusBoxPercent==100&&focusHeightPercent==100&&focusOffsetX==0&&focusOffsetY==0){assert(std::memcmp(&actual,&original,sizeof(original))==0);return;}
     const double l=std::tan(double(left)),r=std::tan(double(right));
     const double u=std::tan(double(up)),d=std::tan(double(down));
     const double al=std::tan(double(actual.angleLeft)),ar=std::tan(double(actual.angleRight));
     const double au=std::tan(double(actual.angleUp)),ad=std::tan(double(actual.angleDown));
     assert(std::abs((ar-al)/(r-l)-focusBoxPercent/100)<1e-6);
     assert(std::abs((au-ad)/(u-d)-focusHeightPercent/100)<1e-6);
-    assert(std::abs((al+ar)-(l+r))<1e-6&&std::abs((au+ad)-(u+d))<1e-6);
+    const double dx=(std::tan(double(eye?1.0f:0.9f))-std::tan(double(eye?-0.85f:-1.1f)))*focusOffsetX/100;
+    const double dy=(std::tan(double(eye?0.75f:0.8f))-std::tan(double(eye?-0.85f:-0.7f)))*focusOffsetY/100;
+    assert(std::abs((al+ar)-(l+r)-2*dx)<1e-6&&std::abs((au+ad)-(u+d)-2*dy)<1e-6);
 }
 void outputSizeTests(){
     auto standard=lmuqv::parse_output_sizes(nullptr,nullptr);assert(standard.valid&&standard.outerPercent==100&&standard.focusPercent==100);
@@ -241,16 +245,18 @@ XrResult XRAPI_CALL release(XrSwapchain chain,const XrSwapchainImageReleaseInfo*
             const unsigned fraction=ordinal==1?(runtimeTime==701?4:6):(runtimeTime==701?6:2);
             x=debugDesc.Width*fraction/16+1;
         }
+        if(ordinal==1||ordinal==2)x+=unsigned(debugDesc.Width*focusOffsetX/100);
         auto border=texturePixel(textures[ordinal],x,debugDesc.Height/2);
         assert(((border>>8)&255)==255&&((border>>16)&255)==0&&(border&255)>80); // Must be painted before runtime Release.
         unsigned interior=debugDesc.Width/2;
         if(ordinal==1&&runtimeTime==702)interior=debugDesc.Width*5/8;
         if(ordinal==2)interior=debugDesc.Width*(runtimeTime==701?5:3)/8;
+        if(ordinal==1||ordinal==2)interior+=unsigned(debugDesc.Width*focusOffsetX/100);
         assert(texturePixel(textures[ordinal],interior,debugDesc.Height/2)==0x7f0a2040u);
         if(runtimeSettings&&(ordinal==1||ordinal==2)){
             // Runtime vertical tangent extent is +/- .5; outer extent is +/- 1.
             // 2.3% inset lands in row 16/29/33 at heights 64/112/128.
-            const unsigned topRow=debugDesc.Height==64?16:debugDesc.Height==112?29:33;
+            const unsigned topRow=(debugDesc.Height==64?16:debugDesc.Height==112?29:33)+unsigned(debugDesc.Height*(-focusOffsetY)/100);
             auto top=texturePixel(textures[ordinal],interior,topRow);
             assert(((top>>8)&255)==255&&((top>>16)&255)==0&&(top&255)>80);
         }
@@ -307,14 +313,14 @@ XrResult XRAPI_CALL endFrame(XrSession,const XrFrameEndInfo* in) {
                 assert(std::memcmp(&p->views[eye].pose,&renderedMovingViews[eye].pose,sizeof(XrPosef))==0);
             }
             assertFov(p->views[0].fov,-1.1f,0.9f,0.8f,-0.7f);
-            assertFov(p->views[1].fov,-0.9f,1.1f,0.75f,-0.85f);
+            assertFov(p->views[1].fov,-0.85f,1.0f,0.75f,-0.85f);
             if(in->displayTime==501){
                 assertFocusFov(p->views[2].fov,-0.30f,0.20f,0.25f,-0.15f);
-                assertFocusFov(p->views[3].fov,-0.15f,0.35f,0.20f,-0.30f);
+                assertFocusFov(p->views[3].fov,-0.15f,0.35f,0.20f,-0.30f,1);
             }else{
                 assert(in->displayTime==502);
                 assertFocusFov(p->views[2].fov,-0.05f,0.45f,0.35f,-0.10f);
-                assertFocusFov(p->views[3].fov,-0.40f,0.10f,0.15f,-0.35f);
+                assertFocusFov(p->views[3].fov,-0.40f,0.10f,0.15f,-0.35f,1);
             }
             ++movingFocusSubmissions;
         }
@@ -358,7 +364,7 @@ XrResult XRAPI_CALL locate(XrSession, const XrViewLocateInfo* in, XrViewState* s
     for (unsigned i=0; i!=cap; ++i) {out[i].pose.position.x = float(i+10);out[i].pose.orientation.w=1;out[i].fov={-.4f,.4f,.4f,-.4f};}
     if(movingFocusTest){
         // Simulated per-frame focus movement, independently asymmetric for the two eyes.
-        out[0].fov={-1.1f,0.9f,0.8f,-0.7f};out[1].fov={-0.9f,1.1f,0.75f,-0.85f};
+        out[0].fov={-1.1f,0.9f,0.8f,-0.7f};out[1].fov={-0.85f,1.0f,0.75f,-0.85f};
         if(in->displayTime==501){out[2].fov={-0.30f,0.20f,0.25f,-0.15f};out[3].fov={-0.15f,0.35f,0.20f,-0.30f};}
         else if(in->displayTime==502){out[2].fov={-0.05f,0.45f,0.35f,-0.10f};out[3].fov={-0.40f,0.10f,0.15f,-0.35f};}
         else {assert(in->displayTime==503);out[2].fov={-0.50f,0.10f,0.40f,-0.20f};out[3].fov={-0.10f,0.50f,0.30f,-0.10f};}
@@ -371,6 +377,7 @@ XrResult XRAPI_CALL locate(XrSession, const XrViewLocateInfo* in, XrViewState* s
         if(in->displayTime==701){out[2].fov={-h,h,h,-h};out[3].fov={std::atan(-.25f),std::atan(.75f),h,-h};}
         else{assert(in->displayTime==702);out[2].fov={std::atan(-.25f),std::atan(.75f),h,-h};out[3].fov={std::atan(-.75f),std::atan(.25f),h,-h};}
     }
+    if(invalidOuterFov)out[1].fov.angleDown=out[1].fov.angleUp;
     if(invalidFocusFov)out[3].fov.angleLeft=out[3].fov.angleRight;
     return XR_SUCCESS;
 }
@@ -434,6 +441,8 @@ int main(int argc,char** argv) {
         srgbRuntime|=!std::strcmp(argv[arg],"--srgb");statsRequested|=!std::strcmp(argv[arg],"--stats");sceneStatsRequested|=!std::strcmp(argv[arg],"--scene-stats");
         captureRequested|=!std::strcmp(argv[arg],"--capture");captureMissing|=!std::strcmp(argv[arg],"--capture-no-trigger");captureInvalid|=!std::strcmp(argv[arg],"--capture-invalid");
         debugPhaseRequested|=!std::strcmp(argv[arg],"--debug-focus");
+        if(!std::strcmp(argv[arg],"--focus-offset")){focusOffsetX=12.5;focusOffsetY=-6.25;}
+        invalidFocusOffsetRequested|=!std::strcmp(argv[arg],"--invalid-focus-offset");
         if(!std::strcmp(argv[arg],"--focus-box"))focusBoxPercent=50;
         if(!std::strcmp(argv[arg],"--focus-box-large"))focusBoxPercent=200;
         invalidFocusBoxRequested|=!std::strcmp(argv[arg],"--invalid-focus-box");
@@ -467,6 +476,8 @@ int main(int argc,char** argv) {
     SetEnvironmentVariableA("LMU_QV_OUTER_PIXELS_PERCENT",invalidSizesRequested?"NaN":scaledRequested?"10":nullptr);
     SetEnvironmentVariableA("LMU_QV_FOCUS_PIXELS_PERCENT",invalidSizesRequested||scaledRequested?"200":nullptr);
     if(invalidFocusBoxRequested)focusBoxPercent=100;
+    SetEnvironmentVariableA("LMU_QV_FOCUS_OFFSET_X_PERCENT",invalidFocusOffsetRequested?"NaN":focusOffsetX?"12.5":nullptr);
+    SetEnvironmentVariableA("LMU_QV_FOCUS_OFFSET_Y_PERCENT",invalidFocusOffsetRequested?"999":focusOffsetY?"-6.25":nullptr);
     SetEnvironmentVariableA("LMU_QV_FOCUS_BOX_PERCENT",invalidFocusBoxRequested?"NaN":focusBoxPercent==50?"50":focusBoxPercent==200?"200":nullptr);
     focusHeightPercent=focusBoxPercent;
     if(asymmetricFocusRequested){focusBoxPercent=50;focusHeightPercent=150;}
@@ -733,6 +744,11 @@ int main(int argc,char** argv) {
     // No second frame is read, even when later complete captures remain available.
     begin();assert(lmuqv::xr_copy_outer(0,source)&&lmuqv::xr_copy_outer(1,source));finish();
     auto statsLog=currentLog();size_t statsCount=0,statsPos=0;
+    if(invalidFocusOffsetRequested){
+        const auto log=currentLog();
+        assert(log.find("Invalid horizontal focus offset; using safe default 0")!=std::string::npos);
+        assert(log.find("Invalid vertical focus offset; using safe default 0")!=std::string::npos);
+    }
     if(invalidFocusBoxRequested){
         assert(statsLog.find("Invalid focus width percentage; using safe default 100")!=std::string::npos);
         assert(statsLog.find("Invalid focus height percentage; using safe default 100")!=std::string::npos);
@@ -778,21 +794,28 @@ int main(int argc,char** argv) {
         assert(locateViews(session,&li,&state,2,&count,located.views)==XR_SUCCESS&&count==2);
         assert(located.guard==0x1122334455667788ull);
         assertFov(located.views[0].fov,-1.1f,0.9f,0.8f,-0.7f);
-        assertFov(located.views[1].fov,-0.9f,1.1f,0.75f,-0.85f);
+        assertFov(located.views[1].fov,-0.85f,1.0f,0.75f,-0.85f);
         assert(lmuqv::xr_frame_views(cached));
+        XrView repeated[4]{};
+        assert(locateViews(session,&li,&state,2,&count,located.views)==XR_SUCCESS);
+        assert(lmuqv::xr_frame_views(repeated));
+        for(unsigned eye=0;eye<4;++eye){
+            assert(std::memcmp(&cached[eye].fov,&repeated[eye].fov,sizeof(XrFovf))==0);
+            assert(std::memcmp(&cached[eye].pose,&repeated[eye].pose,sizeof(XrPosef))==0);
+        }
         std::memcpy(renderedMovingViews,cached,sizeof(cached));
         assert(cached[2].pose.position.x==12&&cached[3].pose.position.x==13&&cached[2].pose.orientation.w==1&&cached[3].pose.orientation.w==1);
         assertFov(cached[0].fov,-1.1f,0.9f,0.8f,-0.7f);
-        assertFov(cached[1].fov,-0.9f,1.1f,0.75f,-0.85f);
+        assertFov(cached[1].fov,-0.85f,1.0f,0.75f,-0.85f);
         if(frameTime==501){
             assertFocusFov(cached[2].fov,-0.30f,0.20f,0.25f,-0.15f);
-            assertFocusFov(cached[3].fov,-0.15f,0.35f,0.20f,-0.30f);
+            assertFocusFov(cached[3].fov,-0.15f,0.35f,0.20f,-0.30f,1);
         }else if(frameTime==502){
             assertFocusFov(cached[2].fov,-0.05f,0.45f,0.35f,-0.10f);
-            assertFocusFov(cached[3].fov,-0.40f,0.10f,0.15f,-0.35f);
+            assertFocusFov(cached[3].fov,-0.40f,0.10f,0.15f,-0.35f,1);
         }else{
             assertFocusFov(cached[2].fov,-0.50f,0.10f,0.40f,-0.20f);
-            assertFocusFov(cached[3].fov,-0.10f,0.50f,0.30f,-0.10f);
+            assertFocusFov(cached[3].fov,-0.10f,0.50f,0.30f,-0.10f,1);
         }
         assert(lmuqv::xr_copy_outer(0,source)&&lmuqv::xr_copy_outer(1,source));
         if(frameTime==502){
@@ -800,7 +823,7 @@ int main(int argc,char** argv) {
             assert(reinterpret_cast<PFN_xrWaitFrame>(load("xrWaitFrame"))(session,nullptr,&next)==XR_SUCCESS&&next.predictedDisplayTime==503);
             assert(lmuqv::xr_frame_views(cached)); // Future Wait must preserve frame502's current focus FOVs.
             assertFocusFov(cached[2].fov,-0.05f,0.45f,0.35f,-0.10f);
-            assertFocusFov(cached[3].fov,-0.40f,0.10f,0.15f,-0.35f);
+            assertFocusFov(cached[3].fov,-0.40f,0.10f,0.15f,-0.35f,1);
         }
         // A fresh frame503 cache may never be submitted with the old frame502 timestamp.
         end.displayTime=frameTime==503?502:frameTime;finish();
@@ -808,12 +831,18 @@ int main(int argc,char** argv) {
     }
     assert(movingFocusSubmissions==2&&acquireCount==successfulReleases);
     movingFocusTest=false;runtimeTime=123;li.displayTime=123;end.displayTime=123;
-    if(focusBoxPercent!=100){
+    if(focusBoxPercent!=100||focusOffsetX!=0||focusOffsetY!=0){
         begin();invalidFocusFov=true;
         assert(locateViews(session,&li,&state,2,&count,located.views)==XR_ERROR_RUNTIME_FAILURE);
         XrView cached[4]{};assert(!lmuqv::xr_frame_views(cached));
         assert(!lmuqv::xr_copy_outer(0,source));
         finish();assert(submittedLayers==0);invalidFocusFov=false;
+        if(focusOffsetX!=0||focusOffsetY!=0){
+            begin();invalidOuterFov=true;
+            assert(locateViews(session,&li,&state,2,&count,located.views)==XR_ERROR_RUNTIME_FAILURE);
+            assert(!lmuqv::xr_frame_views(cached)&&!lmuqv::xr_copy_outer(0,source));
+            finish();assert(submittedLayers==0);invalidOuterFov=false;
+        }
     }
     if(runtimeSettings){
         for(unsigned eye=0;eye<2;++eye){
