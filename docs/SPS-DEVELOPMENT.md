@@ -403,3 +403,35 @@ step is to select the expected main view before consuming the record budget
 and extend the model to the observed six-plane path. That path includes a
 special-plane rejection that returns different flags from those stored on the
 candidate, plus a secondary distance test. Native rendering remains unchanged.
+
+## Six-plane original-invocation comparison (2026-11-01)
+
+The owned model now covers zero through six planes, including the special-plane
+and secondary-distance checks. The capture selects the expected main view before
+consuming its record budget. Independent review passed, as did the full native
+build and 1,014 analytic checks at each of the unoptimized and optimized settings.
+
+A subsequent two-frame offline Monza capture with mbucchia QVFR produced
+**2,048 available comparisons with zero returned-flag or stored-flag mismatches**.
+Each frame supplied 512 comparisons for each outer eye. All sampled calls used
+six planes and view mode 1; all used default MXCSR controls with sticky status
+flags (`0x1fbf`). Before/after input reads plus the stored-flag read reached at
+most 412 bytes per invocation, below the explicit 448-byte limit.
+
+The capture excluded 4,686 other-view calls without spending the main-view
+budget. Another 1,964 main-view calls exceeded the per-slot cap, so it correctly
+reported incomplete classifier coverage. There were no missing expected-view
+identities or refused numeric comparisons. All 53 left and 54 right captured
+packets per frame had a candidate with an available comparison; this does not
+prove that every candidate or visibility decision was observed.
+
+The headset was in standby, so only the outer path was exercised. This sample
+also did not exercise a native return value different from the stored flags;
+that distinction remains covered by analytic fixtures. No open scopes remained
+at export and the native-pass audit did not abort. LMU was closed normally after
+collecting the inputs.
+
+These results support the sampled classifier calculations, not complete source
+traversal, object lifetime, paired scheduling or image equivalence. Native calls
+and draws remain unchanged. Native SPS and release 0.1.1 are still unfinished;
+there is no new performance claim from these diagnostics.

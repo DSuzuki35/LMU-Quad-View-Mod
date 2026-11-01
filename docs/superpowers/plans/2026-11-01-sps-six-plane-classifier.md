@@ -22,5 +22,5 @@
 ### Task 2: Review and live differential evidence
 
 - [x] Independent scoped review and resolution of blocking findings.
-- [ ] Separate verified diagnostic package; offline Monza capture; report available/refused/mismatch counts, both outer eyes, caps and all limitations. Close game when inputs collected.
-- [ ] Document and push reviewed prerequisite. Continue native SPS only with actual evidence; conformal prototype remains on hold.
+- [x] Separate verified diagnostic package; offline Monza capture; report available/refused/mismatch counts, both outer eyes, caps and all limitations. Close game when inputs collected.
+- [x] Document and push reviewed prerequisite. Continue native SPS only with actual evidence; conformal prototype remains on hold.
