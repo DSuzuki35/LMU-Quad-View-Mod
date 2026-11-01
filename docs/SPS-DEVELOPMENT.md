@@ -435,3 +435,25 @@ These results support the sampled classifier calculations, not complete source
 traversal, object lifetime, paired scheduling or image equivalence. Native calls
 and draws remain unchanged. Native SPS and release 0.1.1 are still unfinished;
 there is no new performance claim from these diagnostics.
+
+## Owned owner traversal planner (2026-11-01)
+
+`native_stereo_owner_plan.hpp` models owner admission from an entirely owned tree
+supplied before either eye's filtering. It performs a complete left DFS followed
+by a complete right DFS on shared copied scalar state, retaining ordered owner
+admissions, unfiltered opaque source IDs and symbolic state transitions. This
+preserves right-only subtrees and cross-eye mutation order without native reads,
+calls or writes. Attachments bypass pending/current assignment and refresh work;
+the owner flag and all-bits global/view mask gates still apply.
+
+The planner accepts 1..4096 nodes and at most 65536 unique source references,
+validates the whole tree and refuses unsupported null-attachment refresh/special
+flags even in rejected branches. Traversal uses bounded iterative storage, and
+refusals or allocation failures publish no partial plan. Analytic tests run at
+O0 and O2, including maximum depth and allocation-failure coverage.
+
+Its immutable-tree contract excludes intervening candidate/consumer mutations
+and is not established for LMU integration. Owner admission does not establish
+candidate visibility, drawable ownership or native scheduling. Every result
+reports `renderingEligible=false`; there is no runtime producer or switch.
+VERSION remains 0.1.0, and native SPS and release 0.1.1 remain unfinished.

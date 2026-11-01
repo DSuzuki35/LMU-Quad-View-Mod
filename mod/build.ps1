@@ -47,6 +47,12 @@ try {
         & ".\build\${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests failed" }
     }
+    foreach ($optimization in @('O0','O2')) {
+        & g++ -std=c++17 "-$optimization" -Wall -Wextra -Wpedantic -Werror -static tests/native_stereo_owner_plan_test.cpp -o "build/native_stereo_owner_plan_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native owner plan $optimization compilation failed" }
+        & ".\build\native_stereo_owner_plan_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native owner plan $optimization tests failed" }
+    }
     & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Werror -static tests/native_stereo_classify_test.cpp -o build/native_stereo_classify_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native classifier model compilation failed' }
     & .\build\native_stereo_classify_test.exe
