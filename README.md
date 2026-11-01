@@ -8,6 +8,21 @@ stereo runtime.
 **v0.1.0 is an experimental offline release.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
+## About this project
+
+I built this project in my spare time with substantial help from AI. I'm an
+engineer with a good understanding of technology, but I'm not a software engineer
+and I don't claim to be one.
+
+It started as an experiment: could this be done, and could I make it work? It
+gradually became something that reduces GPU load so much on my own setup that
+I want to make it work reliably and keep optimizing it. Those results are my
+motivation, not a promise of the same improvement on every system.
+
+If AI-assisted code isn't your thing, you're welcome to skip this project.
+If you'd like to help improve it, thoughtful bug reports, testing and code
+contributions are welcome. See [the contribution guide](CONTRIBUTING.md).
+
 ## Install and launch
 
 1. Download `LMU-Quad-View-Mod-0.1.0.zip` from [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases/tag/v0.1.0).

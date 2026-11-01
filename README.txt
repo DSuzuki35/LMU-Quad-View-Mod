@@ -4,6 +4,15 @@ Free experimental Windows x64 / D3D11 quad-view integration for Le Mans Ultimate
 Always free; donations are completely optional. Use offline. No Studio397
 endorsement or anti-cheat approval is claimed.
 
+ABOUT THIS PROJECT
+I built this in my spare time with substantial help from AI. I'm an engineer
+with a good understanding of technology, but I'm not a software engineer and
+don't claim to be one. It began as an experiment to see whether this could be
+done and whether I could make it work. The GPU-load reduction on my own setup
+motivated me to make it reliable and keep optimizing it; results can vary.
+If AI-assisted code isn't your thing, you're welcome to skip this project.
+Bug reports, testing and code contributions are welcome.
+
 INSTALL
 Extract the WHOLE ZIP to a writable folder outside LMU. Open
 LMU-QuadView-Launcher.exe and keep its .exe.config file beside it.
