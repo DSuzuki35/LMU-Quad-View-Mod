@@ -120,11 +120,7 @@ struct BoundOutput {
     nointerpolation float2 uc : TEXCOORD5;
     nointerpolation float id : TEXCOORD6;
 };
-[maxvertexcount(4)] void BoundsGS(triangle MeshOutput input[3],
-                                  inout TriangleStream<BoundOutput> stream) {
-    float2 a = input[0].position.xy / input[0].position.w;
-    float2 b = input[1].position.xy / input[1].position.w;
-    float2 c = input[2].position.xy / input[2].position.w;
+float4 conservativeRectangle(float2 a, float2 b, float2 c) {
     float2 lo = min(a, min(b, c)), hi = max(a, max(b, c));
     float minimumRadius = radius(clamp(config.xy, lo, hi));
     float maximumRadius = max(max(radius(lo), radius(hi)),
@@ -136,6 +132,13 @@ struct BoundOutput {
     float2 p2 = (hi - config.xy) * lower, p3 = (hi - config.xy) * upper;
     float2 outLo = max(-1, config.xy + min(min(p0, p1), min(p2, p3)) - 2 / dimensions.xy);
     float2 outHi = min(1, config.xy + max(max(p0, p1), max(p2, p3)) + 2 / dimensions.xy);
+    return float4(outLo, outHi);
+}
+[maxvertexcount(4)]
+void BoundsGS(triangle MeshOutput input[3], inout TriangleStream<BoundOutput> stream) {
+    float4 rectangle = conservativeRectangle(input[0].position.xy / input[0].position.w,
+                                            input[1].position.xy / input[1].position.w,
+                                            input[2].position.xy / input[2].position.w);
     BoundOutput o;
     o.a = input[0].position;
     o.b = input[1].position;
@@ -146,11 +149,12 @@ struct BoundOutput {
     o.id = input[0].id;
     const float2 corners[4] = {float2(0, 0), float2(1, 0), float2(0, 1), float2(1, 1)};
     [unroll] for (int i = 0; i < 4; i++) {
-        o.position = float4(lerp(outLo, outHi, corners[i]), .5, 1);
+        o.position = float4(lerp(rectangle.xy, rectangle.zw, corners[i]), .5, 1);
         stream.Append(o);
     }
     stream.RestartStrip();
-} struct PixelOutput {
+}
+struct PixelOutput {
     float4 color : SV_Target;
     float depth : SV_Depth;
 };
@@ -172,6 +176,67 @@ PixelOutput BoundedPS(BoundOutput v) {
     PixelOutput o;
     o.color = material(uv, v.id);
     o.depth = z;
+    return o;
+}
+struct PlaneOutput {
+    float4 position : SV_Position;
+    nointerpolation float2 origin : TEXCOORD0;
+    nointerpolation float2 baryB : TEXCOORD1;
+    nointerpolation float2 baryC : TEXCOORD2;
+    nointerpolation float3 depthPlane : TEXCOORD3;
+    nointerpolation float3 uPlane : TEXCOORD4;
+    nointerpolation float3 vPlane : TEXCOORD5;
+    nointerpolation float3 reciprocalW : TEXCOORD6;
+    nointerpolation float id : TEXCOORD7;
+};
+float3 attributePlane(float a, float b, float c, float2 gradientB, float2 gradientC) {
+    return float3(gradientB * (b - a) + gradientC * (c - a), a);
+}
+[maxvertexcount(4)]
+void PlanesGS(triangle MeshOutput input[3], inout TriangleStream<PlaneOutput> stream) {
+    float3 inverseW = 1 / float3(input[0].position.w, input[1].position.w, input[2].position.w);
+    float2 a = input[0].position.xy * inverseW.x;
+    float2 b = input[1].position.xy * inverseW.y;
+    float2 c = input[2].position.xy * inverseW.z;
+    float determinant = cross2(b - a, c - a);
+    if (abs(determinant) < 1e-8)
+        return;
+    PlaneOutput o;
+    // Anchor planes at vertex A. Global-coordinate constants suffer cancellation
+    // for small triangles far from NDC zero; that failed the dense depth gate.
+    // Perspective attributes are ratios of (attribute/W) and (1/W) planes.
+    o.origin = a;
+    o.baryB = float2(c.y - a.y, a.x - c.x) / determinant;
+    o.baryC = float2(a.y - b.y, b.x - a.x) / determinant;
+    o.depthPlane =
+        attributePlane(input[0].position.z * inverseW.x, input[1].position.z * inverseW.y,
+                       input[2].position.z * inverseW.z, o.baryB, o.baryC);
+    o.uPlane = attributePlane(input[0].uv.x * inverseW.x, input[1].uv.x * inverseW.y,
+                             input[2].uv.x * inverseW.z, o.baryB, o.baryC);
+    o.vPlane = attributePlane(input[0].uv.y * inverseW.x, input[1].uv.y * inverseW.y,
+                             input[2].uv.y * inverseW.z, o.baryB, o.baryC);
+    o.reciprocalW = attributePlane(inverseW.x, inverseW.y, inverseW.z, o.baryB, o.baryC);
+    o.id = input[0].id;
+    float4 rectangle = conservativeRectangle(a, b, c);
+    const float2 corners[4] = {float2(0, 0), float2(1, 0), float2(0, 1), float2(1, 1)};
+    [unroll] for (int i = 0; i < 4; i++) {
+        o.position = float4(lerp(rectangle.xy, rectangle.zw, corners[i]), .5, 1);
+        stream.Append(o);
+    }
+    stream.RestartStrip();
+}
+PixelOutput PlanesPS(PlaneOutput v) {
+    float3 p = float3(warp(sampleNdc(v.position), true) - v.origin, 1);
+    float lb = dot(v.baryB, p.xy), lc = dot(v.baryC, p.xy);
+    if (lb < 0 || lc < 0 || 1 - lb - lc < 0)
+        discard;
+    float depth = dot(v.depthPlane, p), reciprocalW = dot(v.reciprocalW, p);
+    if (depth < 0 || depth > 1 || reciprocalW <= 0)
+        discard;
+    float2 uv = float2(dot(v.uPlane, p), dot(v.vPlane, p)) / reciprocalW;
+    PixelOutput o;
+    o.color = material(uv, v.id);
+    o.depth = depth;
     return o;
 }
 float4 FullscreenVS(uint vertex : SV_VertexID) : SV_Position {

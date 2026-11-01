@@ -51,3 +51,18 @@ report actual integer dimensions, and include composition in timing. Prepare
 constant buffers outside timed draws. Verify full-focus identity, cropped source
 coverage/UV/depth against CPU samples, and composition against CPU bilinear
 sampling. The comparator has no guard-band blending or engine traversal cost.
+
+Isolated optimization variant: precompute barycentric, depth and perspective
+attribute planes once in the geometry shader. Keep the original bounded path as
+a comparison. The pixel shader then evaluates dot products and one reciprocal
+instead of recalculating triangle divisions. Gate coverage/color/depth against
+the independent CPU reference, including tiled geometry, before comparing full
+path timings. Preserve the same bounds, source dimensions and reconstruction.
+
+Outcome: global-coordinate planes failed dense depth precision; anchor all planes
+at vertex A instead. Keep the unchanged 1e-5 depth and one-code interior color
+gates. Add 12,288-triangle direct-path comparisons, reduced-source CPU checks and
+CPU reconstruction checks. WARP and both hardware sizes pass. Medium-shading
+cases improve modestly, but matched quad remains faster in all native fixtures.
+Retain both implementations as research controls, with recorded source hashes
+and timing ranges. This does not meet the gate for LMU integration.

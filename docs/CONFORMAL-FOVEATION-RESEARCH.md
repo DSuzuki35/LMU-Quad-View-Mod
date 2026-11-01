@@ -29,6 +29,10 @@ comparator now includes outer/focus rendering and composition. Nonlinear wins
 over ordinary rendering only in selected expensive-shading fixtures and loses to
 this quad comparator in every tested native case. Native reconstructed depth,
 temporal history, full quality validation and LMU integration remain unimplemented.
+A precomputed primitive-plane variant passes the same source/depth gates and
+reduces some fragment arithmetic, with modest gains in medium-shading fixtures.
+It still loses to matched quad in every native case; the lab README records both
+the successful precision fix and the cases without a speedup.
 Concurrent single-pass stereo (SPS) work is separate and is not included here.
 
 ## Finding and evidence status
@@ -38,7 +42,8 @@ replacement for LMU.** A suitable renderer could use one nonuniform render per e
 instead of a context and focus render per eye. A smoother distribution can reduce
 overlapping work and abrupt quality transitions. Whether it wins in LMU depends
 on geometry processing, shading, reconstruction, postprocessing, and CPU traversal
-costs together. No LMU speedup or RTX 5090 support result is established here.
+costs together. No LMU speedup or support for the proposed NVAPI Modified-W route
+is established here; the generic owned D3D11 fixture was tested on an RTX 5090.
 
 Evidence labels used below:
 
@@ -244,7 +249,7 @@ every vendor extension. No branch of the probe plan changes driver profiles.
 
 The following are full-pipeline engineering gates. The mapping, owned-source
 coverage and temporal diagnostics now have scoped results in the lab README;
-full native reconstruction, quality/performance and LMU integration gates remain.
+native depth reconstruction, full quality/performance and LMU integration gates remain.
 
 - **Mapping:** identity roundtrip works; no NaN, foldover, missing corner or
   unexplained out-of-domain sampling at tested gaze/FOV extremes. Use a proposed

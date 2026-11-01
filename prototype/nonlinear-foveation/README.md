@@ -394,6 +394,43 @@ The [recorded native summary](results/2026-11-01-native-summary.json) retains
 adapter/preset details, source-file hashes, correctness maxima and timing ranges.
 Full transient images/logs remain under ignored build output.
 
+### Precomputed primitive attributes
+
+The optional `precomputedPlanes` / `planes55PlusReconstruction` path computes
+barycentric gradients, depth and perspective-attribute planes in the geometry
+shader. Fragments evaluate those planes instead of repeating triangle setup.
+The original bounded path remains as a control, with identical bounds and
+reconstruction. All plane coordinates are relative to vertex A: a first version
+using global-coordinate constants failed the dense depth gate through floating
+point cancellation (maximum depth error 0.0000584). The gate was not relaxed.
+
+The relative-coordinate version passes the independent CPU source checks,
+including 48-triangle tiled scenes and reduced source sizes at three gaze
+positions. Its reconstructed colors pass the CPU bilinear check. Two additional
+12,288-triangle cases compare against direct primitive evaluation, including
+strength 12 and extreme gaze. On the 2048x1536 hardware run these had no interior
+surface mismatches, maximum depth error below 0.0000038 and maximum interior
+color difference of one UNORM8 code. A few edge coverage pixels differ; this is
+not a claim of byte-exact rasterization at edges. WARP passes the same gates.
+
+Representative complete-path RTX 5090 medians, in milliseconds:
+
+| Input triangles | Material work | Original nonlinear | Precomputed planes | Matched quad |
+| --- | ---: | ---: | ---: | ---: |
+| 3 | 32 | 0.02855 | 0.02726 | 0.02071 |
+| 768 | 32 | 0.03538 | 0.03294 | 0.01905 |
+| 12,288 | 32 | 0.05639 | 0.05281 | 0.02648 |
+| 12,288 | 128 | 0.14793 | 0.15453 | 0.05089 |
+
+The work-32 cases improved by about 4.5–6.9%; light-shader differences were below
+1%. The densest work-128 case was slower in this run, with overlapping timing
+ranges. **This optimization does not change the conclusion: matched quad still
+wins all nine complete-path cases.** It reduces some per-fragment arithmetic but
+does not remove rectangle overdraw, geometry amplification or explicit depth
+writes. See the [separate recorded results](results/2026-11-01-native-planes-summary.json)
+for source hashes, all correctness checks and timing ranges. The earlier baseline
+summary remains intact for comparison.
+
 For the product, keep quad views and the separate SPS 0.2.0 work as the main path.
 For research, the next useful gates are tighter GPU bounds / cheaper primitive
 evaluation, depth-aware reconstruction and temporal reprojection, followed by a

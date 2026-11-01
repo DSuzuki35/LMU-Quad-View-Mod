@@ -342,13 +342,14 @@ struct QuadChecks {
     unsigned compositionMax = 0;
     double ordinaryRmse = 0;
 };
-enum class Path { ordinary, vertices, bounded, analytic, focus, quad };
+enum class Path { ordinary, vertices, bounded, analytic, focus, quad, planes };
 class Fixture {
     Com<ID3D11Device> device;
     Com<ID3D11DeviceContext> context;
     Com<ID3D11VertexShader> ordinaryVS, warpedVS, fullscreenVS, focusVS;
-    Com<ID3D11GeometryShader> boundsGS;
-    Com<ID3D11PixelShader> ordinaryPS, boundedPS, analyticPS, reconstructPS, composeQuadPS;
+    Com<ID3D11GeometryShader> boundsGS, planesGS;
+    Com<ID3D11PixelShader> ordinaryPS, boundedPS, analyticPS, reconstructPS, composeQuadPS,
+        planesPS;
     Com<ID3D11Buffer> vertices, constants, outerConstants, focusConstants;
     Com<ID3D11InputLayout> layout;
     Com<ID3D11Texture2D> color, depth, colorRead, depthRead, outputColor, focusTarget;
@@ -431,12 +432,13 @@ class Fixture {
                       "CreateInputLayout");
             }
         }
-        for (const auto &entry : std::array<std::pair<const char *, Com<ID3D11PixelShader> *>, 5>{
+        for (const auto &entry : std::array<std::pair<const char *, Com<ID3D11PixelShader> *>, 6>{
                  {{"OrdinaryPS", &ordinaryPS},
                   {"BoundedPS", &boundedPS},
                   {"AnalyticPS", &analyticPS},
                   {"ReconstructPS", &reconstructPS},
-                  {"ComposeQuadPS", &composeQuadPS}}}) {
+                  {"ComposeQuadPS", &composeQuadPS},
+                  {"PlanesPS", &planesPS}}}) {
             Com<ID3DBlob> code;
             compile(entry.first, "ps_5_0", code);
             check(device->CreatePixelShader(code->GetBufferPointer(), code->GetBufferSize(),
@@ -449,6 +451,13 @@ class Fixture {
             check(device->CreateGeometryShader(code->GetBufferPointer(), code->GetBufferSize(),
                                                nullptr, &boundsGS.p),
                   "CreateGeometryShader");
+        }
+        {
+            Com<ID3DBlob> code;
+            compile("PlanesGS", "gs_5_0", code);
+            check(device->CreateGeometryShader(code->GetBufferPointer(), code->GetBufferSize(),
+                                               nullptr, &planesGS.p),
+                  "Create plane GS");
         }
         const auto triangles = makeScene();
         std::vector<Vertex> data;
@@ -593,9 +602,13 @@ class Fixture {
                              : path == Path::focus    ? focusVS.p
                                                       : ordinaryVS.p,
                              nullptr, 0);
-        context->GSSetShader(path == Path::bounded ? boundsGS.p : nullptr, nullptr, 0);
+        context->GSSetShader(path == Path::bounded  ? boundsGS.p
+                             : path == Path::planes ? planesGS.p
+                                                    : nullptr,
+                             nullptr, 0);
         context->PSSetShader(path == Path::analytic  ? analyticPS.p
                              : path == Path::bounded ? boundedPS.p
+                             : path == Path::planes  ? planesPS.p
                                                      : ordinaryPS.p,
                              nullptr, 0);
         if (path == Path::analytic)
@@ -784,6 +797,11 @@ int main(int argc, char **argv) {
                             metrics.depthMax < .00001,
                         "Bounded native path failed coverage/color/depth gate");
                 const auto independent = cpuReference(triangles, k, gaze[0], gaze[1]);
+                fixture.draw(Path::planes);
+                const auto planeCheck = compare(fixture.read(), independent);
+                require(planeCheck.interiorWrong <= 2 && planeCheck.colorMax <= 1 &&
+                            planeCheck.depthMax < .00001,
+                        "Precomputed plane variant differs from CPU reference");
                 const auto cpu = compare(bounded, independent);
                 // A double CPU calculation and a native UNORM8 write may land
                 // on opposite sides of a quantization boundary. Gate the MAX
@@ -802,6 +820,9 @@ int main(int argc, char **argv) {
                 printMetrics(metrics);
                 std::cout << ",\"cpuReference\":{";
                 printMetrics(cpu);
+                std::cout << '}';
+                std::cout << ",\"precomputedPlanes\":{";
+                printMetrics(planeCheck);
                 std::cout << '}';
                 if (k == 0) {
                     fixture.draw(Path::bounded);
@@ -854,6 +875,20 @@ int main(int argc, char **argv) {
             const unsigned maximum =
                 maxDifference(reconstructed, cpuReconstruct(source, 4, gaze[0], gaze[1], .55f));
             require(maximum <= 2, "Native reconstruction differs from CPU bilinear reference");
+            fixture.draw(Path::planes);
+            const auto planeSource = fixture.read();
+            const auto planeSourceCheck =
+                compare(planeSource,
+                        cpuReference(triangles, 4, gaze[0], gaze[1], sourceWidth, sourceHeight),
+                        sourceWidth, sourceHeight);
+            require(planeSourceCheck.interiorWrong <= 2 && planeSourceCheck.colorMax <= 1 &&
+                        planeSourceCheck.depthMax < .00001,
+                    "Reduced plane source differs from CPU reference");
+            fixture.reconstruct();
+            const unsigned planeMaximum =
+                maxDifference(fixture.readReconstruction(),
+                              cpuReconstruct(planeSource, 4, gaze[0], gaze[1], .55f));
+            require(planeMaximum <= 2, "Plane reconstruction differs from CPU bilinear reference");
             const double error = rgbRmse(reconstructed, cpuReference(triangles, 0, 0, 0).rgba);
             if (reconstructionComma)
                 std::cout << ',';
@@ -862,6 +897,9 @@ int main(int argc, char **argv) {
                       << "],\"cpuMaximumCodeDifference\":" << maximum
                       << ",\"ordinaryColorRmse255\":" << error << ",\"sourceCpuReference\":{";
             printMetrics(sourceCheck);
+            std::cout << "},\"planeCpuMaximumCodeDifference\":" << planeMaximum
+                      << ",\"planeSourceCpuReference\":{";
+            printMetrics(planeSourceCheck);
             std::cout << "}}";
             if (hardware && gaze[0] == 0) {
                 saveBmp(output / "hardware-reconstructed-55.bmp", Image{reconstructed, {}});
@@ -911,7 +949,13 @@ int main(int argc, char **argv) {
             fixture.configure(k, .8f, -.8f, 4);
             fixture.draw(Path::bounded);
             const auto image = fixture.read();
-            const auto cpu = compare(image, cpuReference(tiled, k, .8f, -.8f));
+            const auto expected = cpuReference(tiled, k, .8f, -.8f);
+            const auto cpu = compare(image, expected);
+            fixture.draw(Path::planes);
+            const auto planeCheck = compare(fixture.read(), expected);
+            require(planeCheck.interiorWrong <= 2 && planeCheck.colorMax <= 1 &&
+                        planeCheck.depthMax < .00001,
+                    "Tiled plane variant differs from CPU reference");
             require(cpu.interiorWrong <= 2 && cpu.colorMax <= 1 && cpu.depthMax < .00001,
                     "Tiled nonlinear rendering differs from CPU reference");
             if (tileComma)
@@ -919,7 +963,9 @@ int main(int argc, char **argv) {
             tileComma = true;
             std::cout << "{\"strength\":" << k << ",\"tiles\":4,";
             printMetrics(cpu);
-            std::cout << '}';
+            std::cout << ",\"precomputedPlanes\":{";
+            printMetrics(planeCheck);
+            std::cout << "}}";
             if (k == 0) {
                 fixture.draw(Path::ordinary);
                 const auto identity = compare(image, fixture.read());
@@ -930,13 +976,37 @@ int main(int argc, char **argv) {
             if (k == 4 && hardware)
                 saveBmp(output / "hardware-tiled-bounded.bmp", image);
         }
+        std::cout << "],\"densePlaneChecks\":[";
+        bool denseComma = false;
+        for (const auto settings :
+             std::array<std::array<float, 5>, 2>{{{4, 0, 0, 32, .55f}, {12, .8f, -.8f, 0, 1}}}) {
+            fixture.configure(settings[0], settings[1], settings[2], 64, settings[3], settings[4]);
+            fixture.draw(Path::bounded);
+            const auto reference = fixture.read();
+            fixture.draw(Path::planes);
+            const auto metrics = compare(fixture.read(), reference,
+                                         static_cast<UINT>(std::round(width * settings[4])),
+                                         static_cast<UINT>(std::round(height * settings[4])));
+            if (metrics.interiorWrong > 2 || metrics.colorMax > 1 || metrics.depthMax >= .00001)
+                std::cerr << "Dense planes: wrong=" << metrics.interiorWrong
+                          << " color=" << metrics.colorMax << " depth=" << metrics.depthMax << '\n';
+            require(metrics.interiorWrong <= 2 && metrics.colorMax <= 1 &&
+                        metrics.depthMax < .00001,
+                    "Dense plane variant differs from direct primitive evaluation");
+            if (denseComma)
+                std::cout << ',';
+            denseComma = true;
+            std::cout << "{\"strength\":" << settings[0] << ",\"scale\":" << settings[4] << ',';
+            printMetrics(metrics);
+            std::cout << '}';
+        }
         std::cout << "],\"pipeline\":[";
         fixture.configure(4, 0, 0);
-        const std::array<Path, 4> paths{Path::ordinary, Path::vertices, Path::bounded,
+        const std::array<Path, 5> paths{Path::ordinary, Path::vertices, Path::bounded, Path::planes,
                                         Path::analytic};
-        const std::array<const char *, 4> names{"ordinary", "warpedVertices", "boundedGS",
-                                                "analytic"};
-        std::array<std::vector<double>, 4> times;
+        const std::array<const char *, 5> names{"ordinary", "warpedVertices", "boundedGS",
+                                                "precomputedPlanes", "analytic"};
+        std::array<std::vector<double>, 5> times;
         for (int iteration = 0; iteration < 11; iteration++)
             for (size_t j = 0; j < paths.size(); j++) {
                 const size_t index = (static_cast<size_t>(iteration) + j) % paths.size();
@@ -948,7 +1018,7 @@ int main(int argc, char **argv) {
             auto &samples = times[i];
             std::sort(samples.begin(), samples.end());
             const auto stats = fixture.statistics(paths[i]);
-            if (paths[i] == Path::bounded)
+            if (paths[i] == Path::bounded || paths[i] == Path::planes)
                 require(stats.GSInvocations == 3 && stats.GSPrimitives == 6,
                         "Geometry shader primitive counts differ from expected");
             if (i)
@@ -1004,17 +1074,18 @@ int main(int argc, char **argv) {
             bool completeComma = false;
             for (const UINT tiles : {1u, 16u, 64u})
                 for (const float work : {0.f, 32.f, 128.f}) {
-                    std::array<std::vector<double>, 4> measured;
+                    std::array<std::vector<double>, 5> measured;
                     for (int iteration = 0; iteration < 11; iteration++)
-                        for (size_t j = 0; j < 4; j++) {
-                            const size_t index = (static_cast<size_t>(iteration) + j) % 4;
+                        for (size_t j = 0; j < 5; j++) {
+                            const size_t index = (static_cast<size_t>(iteration) + j) % 5;
                             fixture.configure(4, 0, 0, tiles, work, index >= 2 ? .55f : 1.f);
                             if (index == 3)
                                 fixture.prepareQuad();
                             const double ms = fixture.time(index == 0   ? Path::ordinary
                                                            : index == 3 ? Path::quad
+                                                           : index == 4 ? Path::planes
                                                                         : Path::bounded,
-                                                           index == 1 || index == 2);
+                                                           index == 1 || index == 2 || index == 4);
                             if (iteration >= 2)
                                 measured[index].push_back(ms);
                         }
@@ -1023,10 +1094,10 @@ int main(int argc, char **argv) {
                     completeComma = true;
                     std::cout << "{\"inputTriangles\":" << 3 * tiles * tiles
                               << ",\"materialWork\":" << work << ",\"paths\":[";
-                    const std::array<const char *, 4> labels{
+                    const std::array<const char *, 5> labels{
                         "ordinary", "boundedFullPlusReconstruction", "bounded55PlusReconstruction",
-                        "matchedQuadPlusComposition"};
-                    for (size_t i = 0; i < 4; i++) {
+                        "matchedQuadPlusComposition", "planes55PlusReconstruction"};
+                    for (size_t i = 0; i < 5; i++) {
                         auto &samples = measured[i];
                         std::sort(samples.begin(), samples.end());
                         if (i)

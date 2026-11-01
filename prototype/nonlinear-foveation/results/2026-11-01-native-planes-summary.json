@@ -1,0 +1,3291 @@
+{
+  "date": "2026-11-01",
+  "purpose": "Owned-scene precomputed primitive-plane experiment. No LMU speedup, reconstructed depth or equal perceptual quality claim.",
+  "nativeCppSha256": "AC5AECF7B0E9A0E9CDFB87E39A8A8290FC08C041C4CD3AD3FD6E0E4236A58B6E",
+  "nativeHlslSha256": "66BF00A79A99EE6DC601BDB42D1DB0EC65B6B83F88E28C1538C8B157D589B612",
+  "compiler": "LLVM-MinGW clang 23.1.0, C++17 -O2 -Wall -Wextra -Wpedantic -Werror -static",
+  "command": "build-native.ps1 -Large",
+  "reports": [
+    {
+      "preset": "warp",
+      "result": {
+        "adapter": "Microsoft Basic Render Driver",
+        "hardware": false,
+        "width": 640,
+        "height": 480,
+        "cases": [
+          {
+            "strength": 0,
+            "gaze": [
+              0,
+              0
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300598,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.002144106777,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.003032224884,
+              "maxDepthError": 1.490116119E-07,
+              "maxColorError255": 1
+            },
+            "ordinaryIdentity": {
+              "wrongPixels": 2,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.01469925549,
+              "maxDepthError": 2.503395081E-06,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300598,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.002144106777,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.003032224884,
+              "maxDepthError": 1.490116119E-07,
+              "maxColorError255": 1
+            },
+            "ordinaryIdentity": {
+              "wrongPixels": 2,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.01469925549,
+              "maxDepthError": 2.503395081E-06,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300598,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.002144106777,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.003032224884,
+              "maxDepthError": 1.490116119E-07,
+              "maxColorError255": 1
+            },
+            "ordinaryIdentity": {
+              "wrongPixels": 2,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.01469925549,
+              "maxDepthError": 2.503395081E-06,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0.1000000015,
+            "gaze": [
+              0,
+              0
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300597,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300597,
+              "colorRmse255": 0.004007596442,
+              "maxDepthError": 4.768371582E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300597,
+              "colorRmse255": 0.003710313338,
+              "maxDepthError": 4.768371582E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0.1000000015,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300589,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300589,
+              "colorRmse255": 0.006247796719,
+              "maxDepthError": 5.587935448E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300589,
+              "colorRmse255": 0.006247796719,
+              "maxDepthError": 5.587935448E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0.1000000015,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300599,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300599,
+              "colorRmse255": 0.004545595424,
+              "maxDepthError": 7.152557373E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300599,
+              "colorRmse255": 0.004545595424,
+              "maxDepthError": 7.152557373E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 4,
+            "gaze": [
+              0,
+              0
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300217,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300217,
+              "colorRmse255": 0.002534414593,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300217,
+              "colorRmse255": 0.002194867421,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "naiveNegativeControl": {
+              "wrongPixels": 51487,
+              "interiorWrong": 49032,
+              "interiorPixels": 300217,
+              "colorRmse255": 10.26362312,
+              "maxDepthError": 0.09031945467,
+              "maxColorError255": 32
+            }
+          },
+          {
+            "strength": 4,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300336,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300336,
+              "colorRmse255": 0.002821256141,
+              "maxDepthError": 2.048909664E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300336,
+              "colorRmse255": 0.003154260257,
+              "maxDepthError": 1.899898052E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 4,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300127,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300127,
+              "colorRmse255": 0.00196371963,
+              "maxDepthError": 2.384185791E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300127,
+              "colorRmse255": 0.002405055545,
+              "maxDepthError": 2.384185791E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 12,
+            "gaze": [
+              0,
+              0
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 299840,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 299840,
+              "colorRmse255": 0.003148653227,
+              "maxDepthError": 2.384185791E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 299840,
+              "colorRmse255": 0.002915086445,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 12,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 299883,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 299883,
+              "colorRmse255": 0.00324392992,
+              "maxDepthError": 2.235174179E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 299883,
+              "colorRmse255": 0.002512737311,
+              "maxDepthError": 2.235174179E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 12,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 299621,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 299621,
+              "colorRmse255": 0.002360474042,
+              "maxDepthError": 4.172325134E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 299621,
+              "colorRmse255": 0.002360474042,
+              "maxDepthError": 3.576278687E-07,
+              "maxColorError255": 1
+            }
+          }
+        ],
+        "reconstruction": [
+          {
+            "scale": 0.55,
+            "gaze": [
+              0,
+              0
+            ],
+            "cpuMaximumCodeDifference": 2,
+            "ordinaryColorRmse255": 6.636700638,
+            "sourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 89102,
+              "colorRmse255": 0.002317088023,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "planeCpuMaximumCodeDifference": 2,
+            "planeSourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 89102,
+              "colorRmse255": 0.002317088023,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "scale": 0.55,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "cpuMaximumCodeDifference": 2,
+            "ordinaryColorRmse255": 6.258060167,
+            "sourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 89163,
+              "colorRmse255": 0.00258175655,
+              "maxDepthError": 2.086162567E-07,
+              "maxColorError255": 1
+            },
+            "planeCpuMaximumCodeDifference": 2,
+            "planeSourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 89163,
+              "colorRmse255": 0.003651155128,
+              "maxDepthError": 1.937150955E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "scale": 0.55,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "cpuMaximumCodeDifference": 2,
+            "ordinaryColorRmse255": 6.523859372,
+            "sourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 89058,
+              "colorRmse255": 0.003594530267,
+              "maxDepthError": 2.384185791E-07,
+              "maxColorError255": 1
+            },
+            "planeCpuMaximumCodeDifference": 2,
+            "planeSourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 89058,
+              "colorRmse255": 0.002541716727,
+              "maxDepthError": 2.384185791E-07,
+              "maxColorError255": 1
+            }
+          }
+        ],
+        "quadChecks": [
+          {
+            "gaze": [
+              0,
+              0
+            ],
+            "sizes": [
+              289,
+              216,
+              202,
+              151
+            ],
+            "sceneSamples": 92926,
+            "outer": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 59459,
+              "colorRmse255": 0.02203721766,
+              "maxDepthError": 5.602836609E-06,
+              "maxColorError255": 1
+            },
+            "focus": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 29725,
+              "colorRmse255": 0,
+              "maxDepthError": 2.354383469E-06,
+              "maxColorError255": 0
+            },
+            "compositionMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 6.404493069
+          },
+          {
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "sizes": [
+              289,
+              216,
+              202,
+              151
+            ],
+            "sceneSamples": 92926,
+            "outer": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 59459,
+              "colorRmse255": 0.02203721766,
+              "maxDepthError": 5.602836609E-06,
+              "maxColorError255": 1
+            },
+            "focus": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 29250,
+              "colorRmse255": 0.009064354222,
+              "maxDepthError": 8.940696716E-07,
+              "maxColorError255": 1
+            },
+            "compositionMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 6.029642039
+          },
+          {
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "sizes": [
+              289,
+              216,
+              202,
+              151
+            ],
+            "sceneSamples": 92926,
+            "outer": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 59459,
+              "colorRmse255": 0.02203721766,
+              "maxDepthError": 5.602836609E-06,
+              "maxColorError255": 1
+            },
+            "focus": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 29449,
+              "colorRmse255": 0.009825192849,
+              "maxDepthError": 1.561827958E-06,
+              "maxColorError255": 1
+            },
+            "compositionMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 6.246417029
+          }
+        ],
+        "tiledCorrectness": [
+          {
+            "strength": 0,
+            "tiles": 4,
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 287684,
+            "colorRmse255": 0.002202408108,
+            "maxDepthError": 1.788139343E-07,
+            "maxColorError255": 1,
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 287684,
+              "colorRmse255": 0.003814682742,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 4,
+            "tiles": 4,
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 286299,
+            "colorRmse255": 0.004797528949,
+            "maxDepthError": 1.028180122E-06,
+            "maxColorError255": 1,
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 286299,
+              "colorRmse255": 0.004291040342,
+              "maxDepthError": 9.834766388E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 12,
+            "tiles": 4,
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 283986,
+            "colorRmse255": 0.004187175718,
+            "maxDepthError": 9.536743164E-07,
+            "maxColorError255": 1,
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 283986,
+              "colorRmse255": 0.004441170516,
+              "maxDepthError": 9.23871994E-07,
+              "maxColorError255": 1
+            }
+          }
+        ],
+        "densePlaneChecks": [
+          {
+            "strength": 4,
+            "scale": 0.5500000119,
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 11210,
+            "colorRmse255": 0.008843672471,
+            "maxDepthError": 8.344650269E-07,
+            "maxColorError255": 1
+          },
+          {
+            "strength": 12,
+            "scale": 1,
+            "wrongPixels": 1,
+            "interiorWrong": 0,
+            "interiorPixels": 112788,
+            "colorRmse255": 0.005357446101,
+            "maxDepthError": 1.519918442E-06,
+            "maxColorError255": 1
+          }
+        ],
+        "pipeline": [
+          {
+            "path": "ordinary",
+            "medianMs": 0.076584375,
+            "minMs": 0.0703,
+            "maxMs": 0.097103125,
+            "gsInvocations": 0,
+            "gsPrimitives": 0,
+            "psInvocations": 216812
+          },
+          {
+            "path": "warpedVertices",
+            "medianMs": 0.088,
+            "minMs": 0.08319375,
+            "maxMs": 0.090828125,
+            "gsInvocations": 0,
+            "gsPrimitives": 0,
+            "psInvocations": 256096
+          },
+          {
+            "path": "boundedGS",
+            "medianMs": 0.984071875,
+            "minMs": 0.933775,
+            "maxMs": 1.123378125,
+            "gsInvocations": 3,
+            "gsPrimitives": 6,
+            "psInvocations": 912772
+          },
+          {
+            "path": "precomputedPlanes",
+            "medianMs": 0.70349375,
+            "minMs": 0.684625,
+            "maxMs": 0.79175625,
+            "gsInvocations": 3,
+            "gsPrimitives": 6,
+            "psInvocations": 912772
+          },
+          {
+            "path": "analytic",
+            "medianMs": 2.03295625,
+            "minMs": 1.926609375,
+            "maxMs": 2.130390625,
+            "gsInvocations": 0,
+            "gsPrimitives": 0,
+            "psInvocations": 308480
+          }
+        ],
+        "scaling": [],
+        "completePaths": [],
+        "timingScope": "pipeline/scaling: source only; completePaths: source plus color reconstruction/composition. Source allocations stay full size. One instanced draw per scene pass (two scene passes for quad), no engine traversal. 2 warmups, 9 rotated batches of 32. CPU creation/upload/readback excluded.",
+        "passed": true
+      }
+    },
+    {
+      "preset": "hardware",
+      "result": {
+        "adapter": "NVIDIA GeForce RTX 5090",
+        "hardware": true,
+        "width": 640,
+        "height": 480,
+        "cases": [
+          {
+            "strength": 0,
+            "gaze": [
+              0,
+              0
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300598,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.3131607228,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.3131643928,
+              "maxDepthError": 1.192092896E-07,
+              "maxColorError255": 1
+            },
+            "ordinaryIdentity": {
+              "wrongPixels": 2,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.01546137385,
+              "maxDepthError": 2.562999725E-06,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300598,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.3131607228,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.3131643928,
+              "maxDepthError": 1.192092896E-07,
+              "maxColorError255": 1
+            },
+            "ordinaryIdentity": {
+              "wrongPixels": 2,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.01546137385,
+              "maxDepthError": 2.562999725E-06,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300598,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.3131607228,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.3131643928,
+              "maxDepthError": 1.192092896E-07,
+              "maxColorError255": 1
+            },
+            "ordinaryIdentity": {
+              "wrongPixels": 2,
+              "interiorWrong": 0,
+              "interiorPixels": 300598,
+              "colorRmse255": 0.01546137385,
+              "maxDepthError": 2.562999725E-06,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0.1000000015,
+            "gaze": [
+              0,
+              0
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300597,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 2,
+              "interiorWrong": 0,
+              "interiorPixels": 300597,
+              "colorRmse255": 0.3131864917,
+              "maxDepthError": 1.072883606E-06,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 300597,
+              "colorRmse255": 0.3131974805,
+              "maxDepthError": 9.536743164E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0.1000000015,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300589,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 300589,
+              "colorRmse255": 0.3125661946,
+              "maxDepthError": 1.454725862E-06,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 300589,
+              "colorRmse255": 0.3125698676,
+              "maxDepthError": 1.456937753E-06,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0.1000000015,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300599,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 300599,
+              "colorRmse255": 0.3134996541,
+              "maxDepthError": 1.728534698E-06,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 2,
+              "interiorWrong": 1,
+              "interiorPixels": 300599,
+              "colorRmse255": 0.3135007337,
+              "maxDepthError": 1.668930054E-06,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 4,
+            "gaze": [
+              0,
+              0
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300217,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300217,
+              "colorRmse255": 0.2792632788,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300217,
+              "colorRmse255": 0.2792632788,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "naiveNegativeControl": {
+              "wrongPixels": 51487,
+              "interiorWrong": 49032,
+              "interiorPixels": 300217,
+              "colorRmse255": 10.26362251,
+              "maxDepthError": 0.09031924605,
+              "maxColorError255": 32
+            }
+          },
+          {
+            "strength": 4,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300336,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300336,
+              "colorRmse255": 0.2985503584,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300336,
+              "colorRmse255": 0.2985603559,
+              "maxDepthError": 1.527369022E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 4,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 300127,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300127,
+              "colorRmse255": 0.2824686288,
+              "maxDepthError": 2.384185791E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 300127,
+              "colorRmse255": 0.282485693,
+              "maxDepthError": 2.384185791E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 12,
+            "gaze": [
+              0,
+              0
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 299840,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 299840,
+              "colorRmse255": 0.2479623319,
+              "maxDepthError": 2.384185791E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 299840,
+              "colorRmse255": 0.2479651878,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 12,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 299883,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 299883,
+              "colorRmse255": 0.3021734215,
+              "maxDepthError": 2.458691597E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 299883,
+              "colorRmse255": 0.302169939,
+              "maxDepthError": 2.4959445E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 12,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 299621,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 299621,
+              "colorRmse255": 0.2544280064,
+              "maxDepthError": 3.576278687E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 299621,
+              "colorRmse255": 0.2544280064,
+              "maxDepthError": 3.576278687E-07,
+              "maxColorError255": 1
+            }
+          }
+        ],
+        "reconstruction": [
+          {
+            "scale": 0.55,
+            "gaze": [
+              0,
+              0
+            ],
+            "cpuMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 6.636514251,
+            "sourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 89102,
+              "colorRmse255": 0.2773352071,
+              "maxDepthError": 2.384185791E-07,
+              "maxColorError255": 1
+            },
+            "planeCpuMaximumCodeDifference": 1,
+            "planeSourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 89102,
+              "colorRmse255": 0.2773352071,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "scale": 0.55,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "cpuMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 6.256185828,
+            "sourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 89163,
+              "colorRmse255": 0.2977762683,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "planeCpuMaximumCodeDifference": 1,
+            "planeSourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 89163,
+              "colorRmse255": 0.2977874601,
+              "maxDepthError": 1.490116119E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "scale": 0.55,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "cpuMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 6.52076045,
+            "sourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 89058,
+              "colorRmse255": 0.2775480182,
+              "maxDepthError": 2.384185791E-07,
+              "maxColorError255": 1
+            },
+            "planeCpuMaximumCodeDifference": 1,
+            "planeSourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 89058,
+              "colorRmse255": 0.2775596562,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            }
+          }
+        ],
+        "quadChecks": [
+          {
+            "gaze": [
+              0,
+              0
+            ],
+            "sizes": [
+              289,
+              216,
+              202,
+              151
+            ],
+            "sceneSamples": 92926,
+            "outer": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 59459,
+              "colorRmse255": 0.3103706768,
+              "maxDepthError": 5.602836609E-06,
+              "maxColorError255": 1
+            },
+            "focus": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 29725,
+              "colorRmse255": 0.1569616189,
+              "maxDepthError": 1.639127731E-06,
+              "maxColorError255": 1
+            },
+            "compositionMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 6.407911455
+          },
+          {
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "sizes": [
+              289,
+              216,
+              202,
+              151
+            ],
+            "sceneSamples": 92926,
+            "outer": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 59459,
+              "colorRmse255": 0.3103706768,
+              "maxDepthError": 5.602836609E-06,
+              "maxColorError255": 1
+            },
+            "focus": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 29250,
+              "colorRmse255": 0.3742272184,
+              "maxDepthError": 5.36441803E-07,
+              "maxColorError255": 1
+            },
+            "compositionMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 6.033252672
+          },
+          {
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "sizes": [
+              289,
+              216,
+              202,
+              151
+            ],
+            "sceneSamples": 92926,
+            "outer": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 59459,
+              "colorRmse255": 0.3103706768,
+              "maxDepthError": 5.602836609E-06,
+              "maxColorError255": 1
+            },
+            "focus": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 29449,
+              "colorRmse255": 0.1382527181,
+              "maxDepthError": 1.645414159E-06,
+              "maxColorError255": 1
+            },
+            "compositionMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 6.249996354
+          }
+        ],
+        "tiledCorrectness": [
+          {
+            "strength": 0,
+            "tiles": 4,
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 287684,
+            "colorRmse255": 0.3070286453,
+            "maxDepthError": 2.384185791E-07,
+            "maxColorError255": 1,
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 287684,
+              "colorRmse255": 0.3070286453,
+              "maxDepthError": 2.980232239E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 4,
+            "tiles": 4,
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 286299,
+            "colorRmse255": 0.3009584398,
+            "maxDepthError": 1.162290573E-06,
+            "maxColorError255": 1,
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 286299,
+              "colorRmse255": 0.3009584398,
+              "maxDepthError": 1.132488251E-06,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 12,
+            "tiles": 4,
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 283986,
+            "colorRmse255": 0.2878359733,
+            "maxDepthError": 2.056360245E-06,
+            "maxColorError255": 1,
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 283986,
+              "colorRmse255": 0.2878359733,
+              "maxDepthError": 1.9967556E-06,
+              "maxColorError255": 1
+            }
+          }
+        ],
+        "densePlaneChecks": [
+          {
+            "strength": 4,
+            "scale": 0.5500000119,
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 11210,
+            "colorRmse255": 0.01250684155,
+            "maxDepthError": 8.046627045E-07,
+            "maxColorError255": 1
+          },
+          {
+            "strength": 12,
+            "scale": 1,
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 112789,
+            "colorRmse255": 0.005357330777,
+            "maxDepthError": 3.069639206E-06,
+            "maxColorError255": 1
+          }
+        ],
+        "pipeline": [
+          {
+            "path": "ordinary",
+            "medianMs": 0.001268,
+            "minMs": 0.001138,
+            "maxMs": 0.001317,
+            "gsInvocations": 0,
+            "gsPrimitives": 0,
+            "psInvocations": 214164
+          },
+          {
+            "path": "warpedVertices",
+            "medianMs": 0.001363,
+            "minMs": 0.001201,
+            "maxMs": 0.001505,
+            "gsInvocations": 0,
+            "gsPrimitives": 0,
+            "psInvocations": 253363
+          },
+          {
+            "path": "boundedGS",
+            "medianMs": 0.005182,
+            "minMs": 0.005013,
+            "maxMs": 0.005403,
+            "gsInvocations": 3,
+            "gsPrimitives": 6,
+            "psInvocations": 909120
+          },
+          {
+            "path": "precomputedPlanes",
+            "medianMs": 0.005174,
+            "minMs": 0.004967,
+            "maxMs": 0.016987,
+            "gsInvocations": 3,
+            "gsPrimitives": 6,
+            "psInvocations": 909120
+          },
+          {
+            "path": "analytic",
+            "medianMs": 0.004362,
+            "minMs": 0.004173,
+            "maxMs": 0.004502,
+            "gsInvocations": 0,
+            "gsPrimitives": 0,
+            "psInvocations": 307200
+          }
+        ],
+        "scaling": [
+          {
+            "tilesPerAxis": 1,
+            "inputTriangles": 3,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.001264,
+                "minMs": 0.001144,
+                "maxMs": 0.001358,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 214164
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.001338,
+                "minMs": 0.001206,
+                "maxMs": 0.001498,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 253363
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.0053,
+                "minMs": 0.005011,
+                "maxMs": 0.011754,
+                "gsInvocations": 3,
+                "gsPrimitives": 6,
+                "psInvocations": 909120
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 1,
+            "inputTriangles": 3,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.002567,
+                "minMs": 0.002264,
+                "maxMs": 0.002793,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 214164
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.002626,
+                "minMs": 0.002611,
+                "maxMs": 0.003056,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 253363
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.008457,
+                "minMs": 0.008038,
+                "maxMs": 0.016137,
+                "gsInvocations": 3,
+                "gsPrimitives": 6,
+                "psInvocations": 909120
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 4,
+            "inputTriangles": 48,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.001306,
+                "minMs": 0.00118,
+                "maxMs": 0.001434,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 214272
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.001359,
+                "minMs": 0.001222,
+                "maxMs": 0.001496,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 215426
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.004916,
+                "minMs": 0.004719,
+                "maxMs": 0.005076,
+                "gsInvocations": 48,
+                "gsPrimitives": 96,
+                "psInvocations": 1113603
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 4,
+            "inputTriangles": 48,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.002948,
+                "minMs": 0.002563,
+                "maxMs": 0.003032,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 214272
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.002701,
+                "minMs": 0.002443,
+                "maxMs": 0.002956,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 215426
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.008483,
+                "minMs": 0.008221,
+                "maxMs": 0.016851,
+                "gsInvocations": 48,
+                "gsPrimitives": 96,
+                "psInvocations": 1113603
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 16,
+            "inputTriangles": 768,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.002162,
+                "minMs": 0.002009,
+                "maxMs": 0.002252,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 214272
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.002356,
+                "minMs": 0.002176,
+                "maxMs": 0.002376,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 214364
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.0066,
+                "minMs": 0.006284,
+                "maxMs": 0.013803,
+                "gsInvocations": 768,
+                "gsPrimitives": 1536,
+                "psInvocations": 1501712
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 16,
+            "inputTriangles": 768,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.003272,
+                "minMs": 0.002923,
+                "maxMs": 0.003395,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 214272
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.003246,
+                "minMs": 0.002995,
+                "maxMs": 0.003413,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 214364
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.011939,
+                "minMs": 0.011718,
+                "maxMs": 0.012111,
+                "gsInvocations": 768,
+                "gsPrimitives": 1536,
+                "psInvocations": 1501712
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 64,
+            "inputTriangles": 12288,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.007311,
+                "minMs": 0.007238,
+                "maxMs": 0.007378,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 217088
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.007294,
+                "minMs": 0.007192,
+                "maxMs": 0.00739,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 211950
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.014423,
+                "minMs": 0.014234,
+                "maxMs": 0.014617,
+                "gsInvocations": 12288,
+                "gsPrimitives": 24576,
+                "psInvocations": 2014929
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 64,
+            "inputTriangles": 12288,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.007457,
+                "minMs": 0.007372,
+                "maxMs": 0.014374,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 217088
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.007365,
+                "minMs": 0.007321,
+                "maxMs": 0.007403,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 211950
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.024821,
+                "minMs": 0.024571,
+                "maxMs": 0.025027,
+                "gsInvocations": 12288,
+                "gsPrimitives": 24576,
+                "psInvocations": 2014929
+              }
+            ]
+          }
+        ],
+        "completePaths": [
+          {
+            "inputTriangles": 3,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.001164,
+                "minMs": 0.001138,
+                "maxMs": 0.001355
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.007087,
+                "minMs": 0.006834,
+                "maxMs": 0.015038
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.005337,
+                "minMs": 0.005233,
+                "maxMs": 0.00601
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.004144,
+                "minMs": 0.004079,
+                "maxMs": 0.004226
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.005311,
+                "minMs": 0.005173,
+                "maxMs": 0.011953
+              }
+            ]
+          },
+          {
+            "inputTriangles": 3,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.002553,
+                "minMs": 0.002264,
+                "maxMs": 0.002763
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.010377,
+                "minMs": 0.010147,
+                "maxMs": 0.010567
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.006563,
+                "minMs": 0.006263,
+                "maxMs": 0.006622
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.004979,
+                "minMs": 0.004786,
+                "maxMs": 0.013939
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.006122,
+                "minMs": 0.006099,
+                "maxMs": 0.006393
+              }
+            ]
+          },
+          {
+            "inputTriangles": 3,
+            "materialWork": 128,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.00809,
+                "minMs": 0.008042,
+                "maxMs": 0.008557
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.024716,
+                "minMs": 0.024198,
+                "maxMs": 0.025065
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.012843,
+                "minMs": 0.012563,
+                "maxMs": 0.020778
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.00946,
+                "minMs": 0.009218,
+                "maxMs": 0.009656
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.012428,
+                "minMs": 0.012353,
+                "maxMs": 0.019256
+              }
+            ]
+          },
+          {
+            "inputTriangles": 768,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.002207,
+                "minMs": 0.002005,
+                "maxMs": 0.002259
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.008313,
+                "minMs": 0.007962,
+                "maxMs": 0.016742
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.005263,
+                "minMs": 0.005111,
+                "maxMs": 0.005414
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.004969,
+                "minMs": 0.004958,
+                "maxMs": 0.00508
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.005197,
+                "minMs": 0.005007,
+                "maxMs": 0.005311
+              }
+            ]
+          },
+          {
+            "inputTriangles": 768,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.003202,
+                "minMs": 0.002918,
+                "maxMs": 0.003403
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.014053,
+                "minMs": 0.013893,
+                "maxMs": 0.025723
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.008615,
+                "minMs": 0.008322,
+                "maxMs": 0.008713
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.005433,
+                "minMs": 0.005428,
+                "maxMs": 0.005675
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.008182,
+                "minMs": 0.007997,
+                "maxMs": 0.008397
+              }
+            ]
+          },
+          {
+            "inputTriangles": 768,
+            "materialWork": 128,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.010233,
+                "minMs": 0.009909,
+                "maxMs": 0.018164
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.034334,
+                "minMs": 0.033852,
+                "maxMs": 0.034399
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.019448,
+                "minMs": 0.019127,
+                "maxMs": 0.02694
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.008875,
+                "minMs": 0.008792,
+                "maxMs": 0.009102
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.019449,
+                "minMs": 0.019147,
+                "maxMs": 0.02521
+              }
+            ]
+          },
+          {
+            "inputTriangles": 12288,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.007375,
+                "minMs": 0.007245,
+                "maxMs": 0.007428
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.015961,
+                "minMs": 0.015799,
+                "maxMs": 0.016029
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.012089,
+                "minMs": 0.012027,
+                "maxMs": 0.018453
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.012464,
+                "minMs": 0.012427,
+                "maxMs": 0.012514
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.012077,
+                "minMs": 0.012003,
+                "maxMs": 0.012198
+              }
+            ]
+          },
+          {
+            "inputTriangles": 12288,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.007503,
+                "minMs": 0.007441,
+                "maxMs": 0.007554
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.027702,
+                "minMs": 0.027402,
+                "maxMs": 0.033855
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.019081,
+                "minMs": 0.018796,
+                "maxMs": 0.019236
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.012592,
+                "minMs": 0.01251,
+                "maxMs": 0.012654
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.018428,
+                "minMs": 0.018218,
+                "maxMs": 0.024319
+              }
+            ]
+          },
+          {
+            "inputTriangles": 12288,
+            "materialWork": 128,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.014945,
+                "minMs": 0.014841,
+                "maxMs": 0.015132
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.073853,
+                "minMs": 0.07324,
+                "maxMs": 0.086855
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.045004,
+                "minMs": 0.044521,
+                "maxMs": 0.051083
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.015743,
+                "minMs": 0.015677,
+                "maxMs": 0.015815
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.044245,
+                "minMs": 0.043921,
+                "maxMs": 0.050584
+              }
+            ]
+          }
+        ],
+        "timingScope": "pipeline/scaling: source only; completePaths: source plus color reconstruction/composition. Source allocations stay full size. One instanced draw per scene pass (two scene passes for quad), no engine traversal. 2 warmups, 9 rotated batches of 32. CPU creation/upload/readback excluded.",
+        "passed": true
+      }
+    },
+    {
+      "preset": "large",
+      "result": {
+        "adapter": "NVIDIA GeForce RTX 5090",
+        "hardware": true,
+        "width": 2048,
+        "height": 1536,
+        "cases": [
+          {
+            "strength": 0,
+            "gaze": [
+              0,
+              0
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3124543,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3124543,
+              "colorRmse255": 0.3147441276,
+              "maxDepthError": 1.192092896E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3124543,
+              "colorRmse255": 0.3147472979,
+              "maxDepthError": 1.192092896E-07,
+              "maxColorError255": 1
+            },
+            "ordinaryIdentity": {
+              "wrongPixels": 2,
+              "interiorWrong": 0,
+              "interiorPixels": 3124543,
+              "colorRmse255": 0.007000378015,
+              "maxDepthError": 2.980232239E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3124543,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3124543,
+              "colorRmse255": 0.3147441276,
+              "maxDepthError": 1.192092896E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3124543,
+              "colorRmse255": 0.3147472979,
+              "maxDepthError": 1.192092896E-07,
+              "maxColorError255": 1
+            },
+            "ordinaryIdentity": {
+              "wrongPixels": 2,
+              "interiorWrong": 0,
+              "interiorPixels": 3124543,
+              "colorRmse255": 0.007000378015,
+              "maxDepthError": 2.980232239E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3124543,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3124543,
+              "colorRmse255": 0.3147441276,
+              "maxDepthError": 1.192092896E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3124543,
+              "colorRmse255": 0.3147472979,
+              "maxDepthError": 1.192092896E-07,
+              "maxColorError255": 1
+            },
+            "ordinaryIdentity": {
+              "wrongPixels": 2,
+              "interiorWrong": 0,
+              "interiorPixels": 3124543,
+              "colorRmse255": 0.007000378015,
+              "maxDepthError": 2.980232239E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0.1000000015,
+            "gaze": [
+              0,
+              0
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3124533,
+            "colorRmse255": 0.0004705001477,
+            "maxDepthError": 0,
+            "maxColorError255": 1,
+            "cpuReference": {
+              "wrongPixels": 3,
+              "interiorWrong": 0,
+              "interiorPixels": 3124533,
+              "colorRmse255": 0.314937598,
+              "maxDepthError": 1.132488251E-06,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 3,
+              "interiorWrong": 0,
+              "interiorPixels": 3124533,
+              "colorRmse255": 0.3149435726,
+              "maxDepthError": 1.013278961E-06,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0.1000000015,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3124543,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 4,
+              "interiorWrong": 0,
+              "interiorPixels": 3124543,
+              "colorRmse255": 0.3149907467,
+              "maxDepthError": 1.385807991E-06,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 4,
+              "interiorWrong": 0,
+              "interiorPixels": 3124543,
+              "colorRmse255": 0.3149967242,
+              "maxDepthError": 1.389533281E-06,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 0.1000000015,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3124540,
+            "colorRmse255": 0.0004706566141,
+            "maxDepthError": 0,
+            "maxColorError255": 1,
+            "cpuReference": {
+              "wrongPixels": 10,
+              "interiorWrong": 0,
+              "interiorPixels": 3124540,
+              "colorRmse255": 0.3149373753,
+              "maxDepthError": 1.788139343E-06,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 9,
+              "interiorWrong": 0,
+              "interiorPixels": 3124540,
+              "colorRmse255": 0.3149419472,
+              "maxDepthError": 1.728534698E-06,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 4,
+            "gaze": [
+              0,
+              0
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3123338,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3123338,
+              "colorRmse255": 0.280382126,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 1,
+              "interiorWrong": 1,
+              "interiorPixels": 3123338,
+              "colorRmse255": 0.2803874541,
+              "maxDepthError": 1.192092896E-07,
+              "maxColorError255": 1
+            },
+            "naiveNegativeControl": {
+              "wrongPixels": 527341,
+              "interiorWrong": 519415,
+              "interiorPixels": 3123338,
+              "colorRmse255": 10.26211728,
+              "maxDepthError": 0.09033569694,
+              "maxColorError255": 32
+            }
+          },
+          {
+            "strength": 4,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3123681,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3123681,
+              "colorRmse255": 0.3004214233,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3123681,
+              "colorRmse255": 0.3004252613,
+              "maxDepthError": 1.564621925E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 4,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3123038,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 2,
+              "interiorWrong": 0,
+              "interiorPixels": 3123038,
+              "colorRmse255": 0.2835484269,
+              "maxDepthError": 2.384185791E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 2,
+              "interiorWrong": 0,
+              "interiorPixels": 3123038,
+              "colorRmse255": 0.2835533514,
+              "maxDepthError": 2.086162567E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 12,
+            "gaze": [
+              0,
+              0
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3122112,
+            "colorRmse255": 0.0003701593787,
+            "maxDepthError": 0,
+            "maxColorError255": 1,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3122112,
+              "colorRmse255": 0.2503265574,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3122112,
+              "colorRmse255": 0.250334494,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 12,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3122119,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3122119,
+              "colorRmse255": 0.304199053,
+              "maxDepthError": 1.844018698E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3122119,
+              "colorRmse255": 0.3042000537,
+              "maxDepthError": 1.834705472E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 12,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3121348,
+            "colorRmse255": 0,
+            "maxDepthError": 0,
+            "maxColorError255": 0,
+            "cpuReference": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 3121348,
+              "colorRmse255": 0.2561189271,
+              "maxDepthError": 3.576278687E-07,
+              "maxColorError255": 1
+            },
+            "precomputedPlanes": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 3121348,
+              "colorRmse255": 0.2561241766,
+              "maxDepthError": 3.278255463E-07,
+              "maxColorError255": 1
+            }
+          }
+        ],
+        "reconstruction": [
+          {
+            "scale": 0.55,
+            "gaze": [
+              0,
+              0
+            ],
+            "cpuMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 3.764678695,
+            "sourceCpuReference": {
+              "wrongPixels": 1,
+              "interiorWrong": 0,
+              "interiorPixels": 939168,
+              "colorRmse255": 0.2798455011,
+              "maxDepthError": 2.384185791E-07,
+              "maxColorError255": 1
+            },
+            "planeCpuMaximumCodeDifference": 1,
+            "planeSourceCpuReference": {
+              "wrongPixels": 2,
+              "interiorWrong": 1,
+              "interiorPixels": 939168,
+              "colorRmse255": 0.2798475591,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "scale": 0.55,
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "cpuMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 3.519542811,
+            "sourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 939367,
+              "colorRmse255": 0.2998706742,
+              "maxDepthError": 1.788139343E-07,
+              "maxColorError255": 1
+            },
+            "planeCpuMaximumCodeDifference": 1,
+            "planeSourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 939367,
+              "colorRmse255": 0.2998738655,
+              "maxDepthError": 1.639127731E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "scale": 0.55,
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "cpuMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 3.685162164,
+            "sourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 939011,
+              "colorRmse255": 0.2824675637,
+              "maxDepthError": 2.682209015E-07,
+              "maxColorError255": 1
+            },
+            "planeCpuMaximumCodeDifference": 1,
+            "planeSourceCpuReference": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 939011,
+              "colorRmse255": 0.2824763171,
+              "maxDepthError": 2.384185791E-07,
+              "maxColorError255": 1
+            }
+          }
+        ],
+        "quadChecks": [
+          {
+            "gaze": [
+              0,
+              0
+            ],
+            "sizes": [
+              923,
+              692,
+              645,
+              484
+            ],
+            "sceneSamples": 950896,
+            "outer": {
+              "wrongPixels": 6,
+              "interiorWrong": 0,
+              "interiorPixels": 629188,
+              "colorRmse255": 0.3139192027,
+              "maxDepthError": 1.008156687E-06,
+              "maxColorError255": 1
+            },
+            "focus": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 309676,
+              "colorRmse255": 0.1592950343,
+              "maxDepthError": 3.576278687E-07,
+              "maxColorError255": 1
+            },
+            "compositionMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 3.61421187
+          },
+          {
+            "gaze": [
+              0.8000000119,
+              -0.8000000119
+            ],
+            "sizes": [
+              923,
+              692,
+              645,
+              484
+            ],
+            "sceneSamples": 950896,
+            "outer": {
+              "wrongPixels": 6,
+              "interiorWrong": 0,
+              "interiorPixels": 629188,
+              "colorRmse255": 0.3139192027,
+              "maxDepthError": 1.008156687E-06,
+              "maxColorError255": 1
+            },
+            "focus": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 308143,
+              "colorRmse255": 0.3759830944,
+              "maxDepthError": 5.960464478E-08,
+              "maxColorError255": 1
+            },
+            "compositionMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 3.436181311
+          },
+          {
+            "gaze": [
+              -0.6999999881,
+              0.6000000238
+            ],
+            "sizes": [
+              923,
+              692,
+              645,
+              484
+            ],
+            "sceneSamples": 950896,
+            "outer": {
+              "wrongPixels": 6,
+              "interiorWrong": 0,
+              "interiorPixels": 629188,
+              "colorRmse255": 0.3139192027,
+              "maxDepthError": 1.008156687E-06,
+              "maxColorError255": 1
+            },
+            "focus": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 308791,
+              "colorRmse255": 0.1400768355,
+              "maxDepthError": 3.880122676E-07,
+              "maxColorError255": 1
+            },
+            "compositionMaximumCodeDifference": 1,
+            "ordinaryColorRmse255": 3.540582573
+          }
+        ],
+        "tiledCorrectness": [
+          {
+            "strength": 0,
+            "tiles": 4,
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3082692,
+            "colorRmse255": 0.3130071059,
+            "maxDepthError": 1.788139343E-07,
+            "maxColorError255": 1,
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3082692,
+              "colorRmse255": 0.3130049446,
+              "maxDepthError": 3.278255463E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 4,
+            "tiles": 4,
+            "wrongPixels": 2,
+            "interiorWrong": 0,
+            "interiorPixels": 3077622,
+            "colorRmse255": 0.3080475687,
+            "maxDepthError": 7.301568985E-07,
+            "maxColorError255": 1,
+            "precomputedPlanes": {
+              "wrongPixels": 2,
+              "interiorWrong": 0,
+              "interiorPixels": 3077622,
+              "colorRmse255": 0.3080520803,
+              "maxDepthError": 7.282942533E-07,
+              "maxColorError255": 1
+            }
+          },
+          {
+            "strength": 12,
+            "tiles": 4,
+            "wrongPixels": 0,
+            "interiorWrong": 0,
+            "interiorPixels": 3069421,
+            "colorRmse255": 0.2955930371,
+            "maxDepthError": 1.221895218E-06,
+            "maxColorError255": 1,
+            "precomputedPlanes": {
+              "wrongPixels": 0,
+              "interiorWrong": 0,
+              "interiorPixels": 3069421,
+              "colorRmse255": 0.2956012766,
+              "maxDepthError": 1.192092896E-06,
+              "maxColorError255": 1
+            }
+          }
+        ],
+        "densePlaneChecks": [
+          {
+            "strength": 4,
+            "scale": 0.5500000119,
+            "wrongPixels": 1,
+            "interiorWrong": 0,
+            "interiorPixels": 530747,
+            "colorRmse255": 0.008417992653,
+            "maxDepthError": 3.129243851E-06,
+            "maxColorError255": 1
+          },
+          {
+            "strength": 12,
+            "scale": 1,
+            "wrongPixels": 3,
+            "interiorWrong": 0,
+            "interiorPixels": 2230086,
+            "colorRmse255": 0.005894395872,
+            "maxDepthError": 3.784894943E-06,
+            "maxColorError255": 1
+          }
+        ],
+        "pipeline": [
+          {
+            "path": "ordinary",
+            "medianMs": 0.006133,
+            "minMs": 0.005921,
+            "maxMs": 0.007159,
+            "gsInvocations": 0,
+            "gsPrimitives": 0,
+            "psInvocations": 2193136
+          },
+          {
+            "path": "warpedVertices",
+            "medianMs": 0.006981,
+            "minMs": 0.006743,
+            "maxMs": 0.007121,
+            "gsInvocations": 0,
+            "gsPrimitives": 0,
+            "psInvocations": 2594077
+          },
+          {
+            "path": "boundedGS",
+            "medianMs": 0.037661,
+            "minMs": 0.037302,
+            "maxMs": 0.044181,
+            "gsInvocations": 3,
+            "gsPrimitives": 6,
+            "psInvocations": 9308160
+          },
+          {
+            "path": "precomputedPlanes",
+            "medianMs": 0.036701,
+            "minMs": 0.036665,
+            "maxMs": 0.036987,
+            "gsInvocations": 3,
+            "gsPrimitives": 6,
+            "psInvocations": 9308160
+          },
+          {
+            "path": "analytic",
+            "medianMs": 0.028148,
+            "minMs": 0.028102,
+            "maxMs": 0.034312,
+            "gsInvocations": 0,
+            "gsPrimitives": 0,
+            "psInvocations": 3145728
+          }
+        ],
+        "scaling": [
+          {
+            "tilesPerAxis": 1,
+            "inputTriangles": 3,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.005954,
+                "minMs": 0.005932,
+                "maxMs": 0.006181,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2193136
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.006749,
+                "minMs": 0.006733,
+                "maxMs": 0.007127,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2594077
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.037391,
+                "minMs": 0.037313,
+                "maxMs": 0.037704,
+                "gsInvocations": 3,
+                "gsPrimitives": 6,
+                "psInvocations": 9308160
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 1,
+            "inputTriangles": 3,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.020274,
+                "minMs": 0.02021,
+                "maxMs": 0.020788,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2193136
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.02395,
+                "minMs": 0.023919,
+                "maxMs": 0.030846,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2594077
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.057182,
+                "minMs": 0.056969,
+                "maxMs": 0.078264,
+                "gsInvocations": 3,
+                "gsPrimitives": 6,
+                "psInvocations": 9308160
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 4,
+            "inputTriangles": 48,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.00622,
+                "minMs": 0.006205,
+                "maxMs": 0.006242,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2192704
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.006479,
+                "minMs": 0.006448,
+                "maxMs": 0.01813,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2205524
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.03107,
+                "minMs": 0.031044,
+                "maxMs": 0.049832,
+                "gsInvocations": 48,
+                "gsPrimitives": 96,
+                "psInvocations": 11244053
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 4,
+            "inputTriangles": 48,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.021005,
+                "minMs": 0.020896,
+                "maxMs": 0.021079,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2192704
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.021271,
+                "minMs": 0.021204,
+                "maxMs": 0.021324,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2205524
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.054416,
+                "minMs": 0.054052,
+                "maxMs": 0.069439,
+                "gsInvocations": 48,
+                "gsPrimitives": 96,
+                "psInvocations": 11244053
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 16,
+            "inputTriangles": 768,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.007363,
+                "minMs": 0.007349,
+                "maxMs": 0.007373,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2193920
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.007254,
+                "minMs": 0.00723,
+                "maxMs": 0.007268,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2194366
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.038031,
+                "minMs": 0.037949,
+                "maxMs": 0.04663,
+                "gsInvocations": 768,
+                "gsPrimitives": 1536,
+                "psInvocations": 14491906
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 16,
+            "inputTriangles": 768,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.022749,
+                "minMs": 0.022681,
+                "maxMs": 0.02882,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2193920
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.023373,
+                "minMs": 0.023285,
+                "maxMs": 0.02342,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2194366
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.080446,
+                "minMs": 0.070558,
+                "maxMs": 0.089652,
+                "gsInvocations": 768,
+                "gsPrimitives": 1536,
+                "psInvocations": 14491906
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 64,
+            "inputTriangles": 12288,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.013698,
+                "minMs": 0.013586,
+                "maxMs": 0.013748,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2203648
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.014223,
+                "minMs": 0.014047,
+                "maxMs": 0.014293,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2193853
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.0554,
+                "minMs": 0.055152,
+                "maxMs": 0.069618,
+                "gsInvocations": 12288,
+                "gsPrimitives": 24576,
+                "psInvocations": 16461033
+              }
+            ]
+          },
+          {
+            "tilesPerAxis": 64,
+            "inputTriangles": 12288,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.027617,
+                "minMs": 0.02758,
+                "maxMs": 0.04156,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2203648
+              },
+              {
+                "path": "warpedVertices",
+                "medianMs": 0.028005,
+                "minMs": 0.027932,
+                "maxMs": 0.028028,
+                "gsInvocations": 0,
+                "gsPrimitives": 0,
+                "psInvocations": 2193853
+              },
+              {
+                "path": "boundedGS",
+                "medianMs": 0.123501,
+                "minMs": 0.109392,
+                "maxMs": 0.136434,
+                "gsInvocations": 12288,
+                "gsPrimitives": 24576,
+                "psInvocations": 16461033
+              }
+            ]
+          }
+        ],
+        "completePaths": [
+          {
+            "inputTriangles": 3,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.005963,
+                "minMs": 0.005928,
+                "maxMs": 0.006107
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.045649,
+                "minMs": 0.045478,
+                "maxMs": 0.05748
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.02125,
+                "minMs": 0.021221,
+                "maxMs": 0.027874
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.013886,
+                "minMs": 0.013821,
+                "maxMs": 0.01393
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.021185,
+                "minMs": 0.021054,
+                "maxMs": 0.034704
+              }
+            ]
+          },
+          {
+            "inputTriangles": 3,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.02027,
+                "minMs": 0.020253,
+                "maxMs": 0.020316
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.065505,
+                "minMs": 0.065307,
+                "maxMs": 0.079091
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.028549,
+                "minMs": 0.028394,
+                "maxMs": 0.042412
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.020706,
+                "minMs": 0.02068,
+                "maxMs": 0.032974
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.027255,
+                "minMs": 0.027139,
+                "maxMs": 0.0417
+              }
+            ]
+          },
+          {
+            "inputTriangles": 3,
+            "materialWork": 128,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.077716,
+                "minMs": 0.076906,
+                "maxMs": 0.092755
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.180142,
+                "minMs": 0.173187,
+                "maxMs": 0.197447
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.065436,
+                "minMs": 0.064452,
+                "maxMs": 0.077651
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.049132,
+                "minMs": 0.049041,
+                "maxMs": 0.063226
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.063987,
+                "minMs": 0.063279,
+                "maxMs": 0.081082
+              }
+            ]
+          },
+          {
+            "inputTriangles": 768,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.007345,
+                "minMs": 0.007323,
+                "maxMs": 0.021395
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.046965,
+                "minMs": 0.046797,
+                "maxMs": 0.065978
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.023037,
+                "minMs": 0.023012,
+                "maxMs": 0.023073
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.01401,
+                "minMs": 0.013993,
+                "maxMs": 0.014064
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.022883,
+                "minMs": 0.02281,
+                "maxMs": 0.037195
+              }
+            ]
+          },
+          {
+            "inputTriangles": 768,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.022693,
+                "minMs": 0.022649,
+                "maxMs": 0.022757
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.078961,
+                "minMs": 0.078672,
+                "maxMs": 0.094779
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.035382,
+                "minMs": 0.035245,
+                "maxMs": 0.043812
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.019049,
+                "minMs": 0.018962,
+                "maxMs": 0.025332
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.032942,
+                "minMs": 0.032863,
+                "maxMs": 0.039491
+              }
+            ]
+          },
+          {
+            "inputTriangles": 768,
+            "materialWork": 128,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.085198,
+                "minMs": 0.085094,
+                "maxMs": 0.098466
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.20781,
+                "minMs": 0.195598,
+                "maxMs": 0.229657
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.08058,
+                "minMs": 0.080264,
+                "maxMs": 0.089521
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.04049,
+                "minMs": 0.040246,
+                "maxMs": 0.049351
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.078631,
+                "minMs": 0.077969,
+                "maxMs": 0.091143
+              }
+            ]
+          },
+          {
+            "inputTriangles": 12288,
+            "materialWork": 0,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.013692,
+                "minMs": 0.013611,
+                "maxMs": 0.022934
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.063395,
+                "minMs": 0.063287,
+                "maxMs": 0.075943
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.033934,
+                "minMs": 0.033823,
+                "maxMs": 0.053477
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.024769,
+                "minMs": 0.024718,
+                "maxMs": 0.024807
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.033836,
+                "minMs": 0.033787,
+                "maxMs": 0.047932
+              }
+            ]
+          },
+          {
+            "inputTriangles": 12288,
+            "materialWork": 32,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.027629,
+                "minMs": 0.027565,
+                "maxMs": 0.027683
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.123943,
+                "minMs": 0.117054,
+                "maxMs": 0.144349
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.056388,
+                "minMs": 0.056305,
+                "maxMs": 0.0702
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.026477,
+                "minMs": 0.026445,
+                "maxMs": 0.040943
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.05281,
+                "minMs": 0.052764,
+                "maxMs": 0.067243
+              }
+            ]
+          },
+          {
+            "inputTriangles": 12288,
+            "materialWork": 128,
+            "paths": [
+              {
+                "path": "ordinary",
+                "medianMs": 0.101356,
+                "minMs": 0.101199,
+                "maxMs": 0.119605
+              },
+              {
+                "path": "boundedFullPlusReconstruction",
+                "medianMs": 0.330379,
+                "minMs": 0.316954,
+                "maxMs": 0.351922
+              },
+              {
+                "path": "bounded55PlusReconstruction",
+                "medianMs": 0.147925,
+                "minMs": 0.147611,
+                "maxMs": 0.169448
+              },
+              {
+                "path": "matchedQuadPlusComposition",
+                "medianMs": 0.050894,
+                "minMs": 0.050725,
+                "maxMs": 0.057644
+              },
+              {
+                "path": "planes55PlusReconstruction",
+                "medianMs": 0.154533,
+                "minMs": 0.144588,
+                "maxMs": 0.167673
+              }
+            ]
+          }
+        ],
+        "timingScope": "pipeline/scaling: source only; completePaths: source plus color reconstruction/composition. Source allocations stay full size. One instanced draw per scene pass (two scene passes for quad), no engine traversal. 2 warmups, 9 rotated batches of 32. CPU creation/upload/readback excluded.",
+        "passed": true
+      }
+    }
+  ]
+}
