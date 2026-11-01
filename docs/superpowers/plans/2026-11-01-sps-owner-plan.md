@@ -41,19 +41,19 @@ Result contains completion/refusal reason, renderingEligible=false, owned final
 states, per-eye owner/source order and ordered transition records with eye,
 owner index, field, before and after. Equal-value assignments need no event.
 
-- [ ] Write analytic focused tests and run a failing baseline before implementation.
-- [ ] Implement bounded graph validation and iterative left-then-right traversal.
-- [ ] Cover right-only root/child admission; zero/partial/high-bit masks; assignment
+- [x] Write analytic focused tests and run a failing baseline before implementation.
+- [x] Implement bounded graph validation and iterative left-then-right traversal.
+- [x] Cover right-only root/child admission; zero/partial/high-bit masks; assignment
   before flag/mask rejection; no final clear on early rejection; parent final clear
   after child; left write visible to right; nonnull attachment bypass; special/
   refresh refusal even when hidden; root/index/cycle/shared/duplicate/unreachable
   errors; duplicate IDs and count limits; 4096-deep success; input immutability.
-- [ ] Compile/run focused test O0/O2, integrate in build.ps1 and run full native
+- [x] Compile/run focused test O0/O2, integrate in build.ps1 and run full native
   suite once. Use existing warning/error flags; no new dependency.
-- [ ] Self-review, commit only task files, report exact tests and known limitations.
+- [x] Self-review, commit only task files, report exact tests and known limitations.
 
 ### Task 2: Independent review and publish prerequisite
 
-- [ ] Review frozen Task 1 diff for spec and quality; resolve blocking findings.
-- [ ] Verify source/build evidence, document and push. No live session is needed:
+- [x] Review frozen Task 1 diff for spec and quality; resolve blocking findings.
+- [x] Verify source/build evidence, document and push. No live session is needed:
   a native producer/lifetime contract is explicitly outside this component.
