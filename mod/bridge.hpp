@@ -31,6 +31,14 @@ bool xr_retire_focus_image(FocusImageLease&);
 bool xr_copy_outer(unsigned eye, ID3D11Texture2D* source);
 // Borrowed RTV for the captured outer image, still acquired until xrEndFrame.
 ID3D11RenderTargetView* xr_outer_rtv(unsigned eye);
+// Cached dimensions are validated during outer capture. Same borrowed-image lifetime
+// as xr_outer_rtv; unavailable targets return an empty descriptor.
+struct OuterTarget {
+    ID3D11RenderTargetView* rtv = nullptr;
+    uint32_t width = 0;
+    uint32_t height = 0;
+};
+OuterTarget xr_outer_target(unsigned eye);
 void xr_scene_focus_complete(unsigned eye);
 void log_line(const char* message);
 void flush_log();

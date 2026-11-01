@@ -1,109 +1,119 @@
 # LMU Quad View Mod
 
-This research branch adds an opt-in [CPU upload-reuse prototype](CPU-UPLOAD-REUSE.md),
-portable vertex/pixel shader conversion and an in-game private paired-draw check.
-The current [CPU fast-path candidate](CPU-UPLOAD-FASTPATH.md) combines unchanged
-upload filtering and adaptive buffer batching for outer and focus geometry.
-The CPU prototype filters byte-identical native uploads within a focus geometry
-group. The stereo check compares one paired draw with two original references in
-private targets; normal game eye draws remain enabled. Full game-renderer single-
-pass stereo is still in development. No live-game CPU/FPS gain has been measured.
-See [research status, capture steps and hardware check](PORTABLE-STEREO-RESEARCH.txt).
-For continuing the renderer work, read the [maintainer handoff](INSTANCED-STEREO-HANDOFF.md),
-which separates completed GPU checks from the unimplemented native pass integration.
+A free Windows x64 / D3D11 mod that adds two outer and two focus views to
+**Le Mans Ultimate** through OpenXR. Use a native quad-view runtime, or install
+Quad-Views-Foveated (QVFR) or VectorXR separately to provide quad views on a
+stereo runtime.
 
-Experimental Windows x64 / D3D11 renderer integration for Le Mans Ultimate.
-It renders two outer and two focus views, with native OpenXR quad runtimes or
-mbucchia's separately installed Quad-Views-Foveated or VectorXR stereo compositor.
+**v0.1.0 is an experimental offline release.** Headset and runtime compatibility
+still needs broader testing. Always free; donations are completely optional.
 
-## Run
+## Install and launch
 
-Extract the complete ZIP and open **LMU-QuadView-Launcher.exe**. No PowerShell
-installation, setup script or script-unblocking step is required. Select the
-game folder in Setup, then provider and mode in Rendering. .NET Framework 4.8
-is required. The unsigned EXE may still trigger Windows reputation warnings.
-Keep the included `.exe.config` next to the launcher for per-monitor DPI support.
+1. Download `LMU-Quad-View-Mod-0.1.0.zip` from [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases/tag/v0.1.0).
+2. Extract the **complete ZIP** to a writable folder outside the LMU installation.
+3. Open **LMU-QuadView-Launcher.exe**. Keep its `.exe.config` file beside it.
+4. In **Setup**, select the LMU game folder. Ensure your headset's OpenXR runtime
+   is active, and choose your provider in **Rendering**.
+5. Choose Auto or Fixed, save settings, and launch LMU offline. Restart LMU after
+   changing rendering settings.
 
-QVFR mode exposes outer/inner resolution and independent box width/height.
-Build **2026.10.30.1** adds equal-axis focus controls: after measuring the headset
-FOV, 50/50 produces an approximately square region near the center. The launcher
-reads the latest local run's outer FOV and converts the displayed values to QVFR's
-per-axis fractions. Old settings preserve their existing region. On a fresh
-installation, controls explicitly remain per-axis percentages until you run LMU
-once and click **Read latest headset FOV**. Re-read after changing headset,
-runtime or FOV; calibration is a snapshot, not live headset detection. QVFR can
-widen/clip the region near gaze limits. Stored percentages and native rendering
-are unchanged. Always free; donations are completely optional.
-Save or Launch applies a backed-up LMU-only provider profile. Native mode uses
-runtime settings. Optional outer smoothing defaults to off and leaves focus
-sharp. It adds GPU work; no measured performance cost is claimed yet.
+Requires Windows x64, D3D11 and .NET Framework 4.8. The distributed launcher does
+not require PowerShell or script unblocking. The EXE is unsigned, so Windows may
+show reputation warnings. OpenXR Toolkit is not required.
 
-Read [README.txt](README.txt) and [portable backend instructions](PORTABLE-QVFR.txt).
-The Setup page links to the upstream QVFR installation instructions. QVFR is not
-bundled. OpenXR Toolkit is not required. Crop work remains paused.
+| Provider | Setup and settings |
+| --- | --- |
+| Native OpenXR | Requires a runtime exposing quad views. Resolution and FOV come from runtime settings. |
+| Quad-Views-Foveated | Install mbucchia's QVFR separately; Setup links to upstream instructions and can select its manifest. Configure resolution and focus size in the launcher. See [QVFR instructions](PORTABLE-QVFR.txt). |
+| VectorXR | Install separately, enable its LMU Quadviews profile, and select VectorXR. Setup can locate its manifest or accept a JSON path. Configure resolution, focus and tracking in VectorXR; launcher QVFR sizing controls are inactive. See [VectorXR instructions](PORTABLE-VECTORXR.txt). |
 
-### VectorXR
+The launcher starts LMU with process-local provider settings and layer ordering.
+It does not modify the game EXE, global OpenXR registration or active runtime.
+QVFR profile changes are scoped to LMU, backed up and applied atomically. VectorXR
+launch preparation preserves installed manifests and disables conflicting layers
+for the launched process.
 
-Install VectorXR separately, enable its Quadviews profile for LMU, and select
-**VectorXR** in Rendering. Setup can locate its manifest automatically or accept
-an explicit JSON path. Configure resolution, focus size and tracking in VectorXR;
-the launcher's QVFR sizing controls are inactive for this backend. Native and QVFR
-remain available, and the default provider is unchanged.
+## Settings and calibration
 
-The launcher prepares a process-local explicit provider manifest and disables
-duplicate or conflicting QVFR/Toolkit layers for the launched game. It preserves
-the installed manifests, registry settings and active runtime. Eligible VectorXR
-color swapchains request sampled usage to allow direct compositor inputs, with
-fallback to original usage if unsupported. See [VectorXR setup](PORTABLE-VECTORXR.txt).
+Auto queries the provider's tracking capability before requesting tracked or
+fixed focus views; working gaze tracking depends on the provider. Fixed requests
+stationary focus views. Use the green outline to inspect focus placement.
 
-### Diagnostics and render profiling
+QVFR exposes outer/inner resolution and independent focus width/height. Resolution
+percentages scale each dimension: 200% means twice the width and height, or four
+times the pixels. Focus dimensions use QVFR's supported 10–90% range.
 
-Setup's **Enable diagnostics and logging** switch disables mod logs, per-run
-metadata and diagnostic collection together on the next launch. The preference
-is saved and defaults to enabled to retain existing logging behavior. VectorXR
-and runtime diagnostics remain separately controlled in their own applications.
+For equal-axis focus controls, run LMU once, then click **Read latest headset
+FOV**. With a measured FOV, 50/50 produces an approximately square region near the
+center. Before calibration, a fresh installation explicitly displays per-axis
+percentages. Existing settings preserve their region. Calibration reads the latest
+local run; it is a snapshot, not live headset detection. Re-read after changing
+headset, runtime or FOV. QVFR can widen or clip the region near gaze limits.
+Stored percentages and native rendering are unchanged.
 
-When diagnostics is enabled, tick **Enable render profiling**, choose 30-300
-seconds (120 default), and press **Ctrl+Alt+F9** while driving. Captures include
-CPU scope statistics and sparse asynchronous GPU pass timings. Samples close at
-XR frame boundaries, with menu work reported separately. Normal session shutdown
-saves a partial capture and flushes the log; checkpoints retain partial means if
-normal teardown does not occur. Forced termination cannot guarantee final results.
-See [profiling instructions and limitations](RENDER-PROFILING.txt).
+Outer smoothing defaults to off and leaves the focus image sharp. Start with
+0.5–1 pixel if desired. It adds GPU work; headset cost has not been measured.
+It does not replace temporal anti-aliasing. The smaller outer-target optimization
+can be disabled in Setup for diagnosis. In-game crop support remains deferred.
 
-## Implementation and limits
+## What this release does
 
-The adapter exposes stereo to LMU and submits four rendered views to the provider.
-Pinned renderer hooks repeat focus rendering; an optional smaller render-target
-bank reduces outer work where supported. Incompatible small banks use a full-size
-outer render and resampling, which loses those savings. Auxiliary swapchains are
-identified separately using native eye handles. Runtime sizes, formats, poses and
-resource state remain validated. Fixed mode requests stationary focus views; Auto
-queries provider tracking capability before selecting tracked/fixed requests.
+The adapter presents stereo to LMU and submits four rendered views downstream.
+The game still performs its original eye draws plus **two additional focus scene
+traversals**. A smaller native outer render-target bank reduces outer work where
+compatible; otherwise full-size outer rendering and resampling provide a fallback.
+Auxiliary swapchains are identified using native eye handles rather than size or
+creation order.
 
-The C# launcher starts the game directly, preserves the build guard, sets only
-child environment variables and prepares LMU-before-QVFR layer order. It does not
-modify the game EXE, global OpenXR registration or the active runtime. User QVFR
-configuration changes are scoped to LMU, atomic and backed up.
+Shared-path CPU housekeeping avoids per-frame heap allocations for submissions
+of up to 16 layers (larger lists use a fallback), borrows the outer RTV with cached
+dimensions, and skips D3D state capture when there is no outer UI draw. These are
+not full single-pass stereo, and no confirmed 4–5 ms frametime improvement is
+claimed. See the [measured results and comparison procedure](docs/PERFORMANCE.md).
+
+Experimental upload batching/reuse and private paired-draw checks remain disabled
+by default. They require explicit opt-in and do not remove normal eye draws.
+See [CPU fast-path research](CPU-UPLOAD-FASTPATH.md),
+[upload reuse](CPU-UPLOAD-REUSE.md), [stereo research](PORTABLE-STEREO-RESEARCH.txt)
+and the [renderer handoff](INSTANCED-STEREO-HANDOFF.md) for their scope and limits.
 
 Supported LMU executable SHA256:
 `66942337813B301B87D12EDFA330F33354A2A4B8CD9B048885CBF77EB6F940CF`.
-A game update requires revalidation. This remains an experimental offline mod;
-no Studio397 endorsement or anti-cheat approval is claimed. Broad headset support
-is a target, not a guarantee. Live headset compatibility and smoothing cost still
-need measurement. Logs/settings can contain personal paths and are not packaged.
+The build guard and resource checks must remain enabled. A game update needs
+revalidation. No Studio397 endorsement or anti-cheat approval is claimed.
+Broad headset support is a target, not a guarantee.
 
-## Development
+## Diagnostics and support
 
-Build native code with the Windows MinGW-w64 toolchain (`./mod/build.ps1`) or
-Visual Studio Build Tools with the C++ workload (`./mod/build-msvc.cmd`). Both
-scripts run native tests before building the DLL. Build the .NET Framework C#
-launcher with `./mod/build-launcher.ps1`, then run `./package.ps1`.
-These are developer build scripts; the distributed app does not invoke them.
-Graphics tests use D3D11 WARP; native/fake-runtime tests do not replace headset QA.
+Report bugs through this repository's GitHub Issues. Include the mod version,
+LMU build, headset, GPU/driver, runtime/provider versions, rendering settings,
+reproduction steps and expected versus actual result. Attach the actual
+`logs/quad-*.log`, not just the matching `*-run.json` launch summary. Review files
+for personal paths before sharing. A started process alone does not establish
+correct VR rendering.
+
+**Setup → Enable diagnostics and logging** controls mod logs, per-run metadata
+and diagnostic collection on the next launch. It defaults to enabled. Provider
+and runtime diagnostics are controlled separately.
+
+For a performance report, enable diagnostics and **Enable render profiling**,
+choose 30–300 seconds (120 default), then press **Ctrl+Alt+F9** while driving.
+Exit normally to save partial captures. Forced termination may lose final results.
+CPU scopes overlap and include waits; sparse GPU timings omit some work. Follow
+[profiling instructions](RENDER-PROFILING.txt) for matched comparisons.
+
+## Build and contribute
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for Windows x64 prerequisites, exact build
+and test commands, review expectations and release steps. The
+[architecture guide](docs/ARCHITECTURE.md) maps the launcher, XR adapter, hooks and
+resource ownership. Native builds run tests; graphics tests use D3D11 WARP and
+cannot replace headset QA. Release versions come from the root `VERSION` file.
 
 ## License
 
-Original source: [PolyForm Noncommercial 1.0.0](LICENSE.md), source-available for
-permitted noncommercial reuse, not OSI open source. [Third-party licenses](THIRD_PARTY_NOTICES.md)
-remain separate. No rights to LMU or its assets are granted.
+Original source is licensed under [PolyForm Noncommercial 1.0.0](LICENSE.md):
+source-available for permitted noncommercial reuse, **not OSI open source**.
+[Third-party licenses](THIRD_PARTY_NOTICES.md) remain separate. No rights to LMU or
+its assets are granted. The mod is always free; donations are optional.

@@ -921,17 +921,20 @@ void uiHook(void* object,ID3D11DeviceContext* context,const UiArgs* originalArgs
     }
     uiOriginal(object,context,&focus);
     // Original establishes common UI pipeline state. Eye helper rebinds the draw-specific state.
-    UiD3dState restoreState(context);
-    auto drawEye=reinterpret_cast<UiEyeFn>(base+0x617fb0);
-    for(unsigned eye=0;eye<2;++eye) if(auto* target=xr_outer_rtv(eye)) {
-        ID3D11Resource* resource{};target->GetResource(&resource);
-        ID3D11Texture2D* texture{};
-        const HRESULT query=resource?resource->QueryInterface(__uuidof(ID3D11Texture2D),reinterpret_cast<void**>(&texture)):E_POINTER;
-        if(resource)resource->Release();
-        if(FAILED(query)||!texture) {log_line("engine UI: outer RTV is not a Texture2D");continue;}
-        D3D11_TEXTURE2D_DESC desc{};texture->GetDesc(&desc);texture->Release();
-        UiTargetScope targetScope(targetSlots[eye],reinterpret_cast<UINT*>(static_cast<std::byte*>(object)+0xbc),target,desc.Width,desc.Height);
-        drawEye(object,context,originalArgs,eye);
+    // Outer capture already validated these dimensions. Avoid COM descriptor
+    // queries per eye and preserve state only when adding an outer UI draw.
+    const OuterTarget outerTargets[]{xr_outer_target(0), xr_outer_target(1)};
+    if (outerTargets[0].rtv || outerTargets[1].rtv) {
+        UiD3dState restoreState(context);
+        auto drawEye = reinterpret_cast<UiEyeFn>(base + 0x617fb0);
+        for (unsigned eye = 0; eye < 2; ++eye) {
+            const auto& target = outerTargets[eye];
+            if (!target.rtv) continue;
+            UiTargetScope targetScope(targetSlots[eye],
+                reinterpret_cast<UINT*>(static_cast<std::byte*>(object) + 0xbc),
+                target.rtv, target.width, target.height);
+            drawEye(object, context, originalArgs, eye);
+        }
     }
     auto calls=++uiCalls;
     if(diagnostics_enabled()&&(calls<=8 || calls%600==0)) {

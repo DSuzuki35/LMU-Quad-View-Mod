@@ -314,7 +314,7 @@ namespace LmuQuadViewLauncher
         public Launcher()
         {
             SuspendLayout();
-            Text = "LMU Quad View - CPU fast path 1"; BackColor = Theme.Background; ForeColor = Theme.Text;
+            Text = "LMU Quad View - " + Application.ProductVersion; BackColor = Theme.Background; ForeColor = Theme.Text;
             Font = new Font("Segoe UI", 10F); AutoScaleDimensions = new SizeF(96F, 96F); AutoScaleMode = AutoScaleMode.Dpi;
             try {
                 using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("LmuQuadView.Icon")) {
