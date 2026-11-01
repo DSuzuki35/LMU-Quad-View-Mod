@@ -48,7 +48,7 @@ class GuiLayoutTests {
         for(var parent=control.Parent;parent!=null;parent=parent.Parent) {
             var bounds=parent.RectangleToScreen(parent.ClientRectangle);
             bounds.Inflate(1,1);
-            Check(bounds.Contains(rectangle),control.Name+" is clipped by "+parent.GetType().Name+" "+parent.Name);
+            Check(bounds.Contains(rectangle),control.Name+" "+rectangle+" is clipped by "+parent.GetType().Name+" "+parent.Name+" "+bounds);
         }
     }
     static void NoNativeScrollBars(Form form) {
@@ -141,6 +141,14 @@ class GuiLayoutTests {
         foreach(var name in new[]{"SaveButton","LaunchButton","CoffeeButton"})FullyVisible(Named(form,name));
         NoNativeScrollBars(form);
         if(pageName=="RenderingPage") {
+            var pin=Named(form,"PinPixelComparison");pin.Focus();Settle(form);FullyVisible(pin);TextFits(pin);
+            var read=Named(form,"ReadPixelMeasurement");FullyVisible(read);TextFits(read);
+            foreach(var name in new[]{"PixelTotal","PixelParts","PixelComparison","PixelSource"}) {
+                var label=Named(form,name);FullyVisible(label);
+                var measured=TextRenderer.MeasureText(label.Text,label.Font,new Size(label.ClientSize.Width,Int32.MaxValue),TextFormatFlags.WordBreak|TextFormatFlags.TextBoxControl);
+                Check(measured.Height<=label.ClientSize.Height,"Pixel card text clipped: "+name);
+            }
+            Screenshot(form,Path.Combine(output,stem+"-pixels.png"));
             var reset=Named(form,"ResetFocusOffsets");reset.Focus();Settle(form);FullyVisible(reset);TextFits(reset);
             foreach(var name in new[]{"FocusOffsetXPercent","FocusOffsetYPercent"}) {
                 var control=Named(form,name);control.Focus();Settle(form);FullyVisible(control);
@@ -157,6 +165,25 @@ class GuiLayoutTests {
             Directory.CreateDirectory(output);
             using(var form=new Launcher()) {
                 var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+                typeof(Launcher).GetField("pixelMeasurement",flags).SetValue(form,null);
+                typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{new LauncherSettings {Backend="QVFR",InnerPercent=300}});
+                var pixelTotal=Named(form,"PixelTotal");var pixelComparison=Named(form,"PixelComparison");
+                string highPixels=pixelTotal.Text;
+                typeof(Button).GetMethod("OnClick",flags).Invoke(Named(form,"PinPixelComparison"),new object[]{EventArgs.Empty});
+                ((PercentSetting)Named(form,"InnerResolution")).Value=200;
+                Check(pixelTotal.Text!=highPixels&&pixelComparison.Text.Contains("fewer"),"Live pixel estimate/comparison did not update");
+                string beforeOffset=pixelTotal.Text;((PercentSetting)Named(form,"FocusOffsetXPercent")).Value=25;
+                Check(pixelTotal.Text==beforeOffset,"Offset changed pixel area");
+                typeof(Button).GetMethod("OnClick",flags).Invoke(Named(form,"PinPixelComparison"),new object[]{EventArgs.Empty});
+                Check(pixelComparison.Text.Contains("unchanged"),"Pin did not replace comparison");
+                ((ComboBox)Named(form,"ProviderSelector")).SelectedIndex=2;
+                Check(!Named(form,"PinPixelComparison").Enabled&&!pixelTotal.Text.Contains("%"),"VectorXR uses inactive QVFR sliders");
+                typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{new LauncherSettings {Backend="QVFR",InnerPercent=200,FocusWidthPercent=25,FocusHeightPercent=50,FocusAspectRatio=2}});
+                Check(pixelTotal.Text.Contains(56.25m.ToString("N2")),"Equal-axis display sizes were used instead of provider fractions");
+                ((PercentSetting)Named(form,"OuterResolution")).Value=100;
+                Check(!Named(form,"PinPixelComparison").Enabled&&pixelTotal.Text.Contains("No estimate"),"Invalid sizing still produces an estimate");
+                ((PercentSetting)Named(form,"OuterResolution")).Value=25;
+                Check(pixelComparison.Text.Contains("unchanged"),"Invalid slider state discarded the comparison");
                 foreach(var providerName in new[]{"Native","QVFR","VectorXR"})foreach(var foveation in new[]{"fixed","auto"}) {
                     var offsets=new LauncherSettings {Backend=providerName,FoveationMode=foveation,FocusOffsetXPercent=-12.5m,FocusOffsetYPercent=50};
                     typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{offsets});
@@ -213,6 +240,13 @@ class GuiLayoutTests {
             }
             foreach(float scale in new[]{1f,1.5f,2f})foreach(bool minimum in new[]{false,true}) {
                 using(var form=new Launcher()) {
+                    var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+                    var settings=new LauncherSettings {Backend="QVFR",OuterPercent=25,InnerPercent=300};
+                    typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{settings});
+                    string metadata="{\"Status\":\"started\",\"Mode\":\"quad\",\"Backend\":\"QVFR\",\"UseRuntimeSettings\":true,\"NativeOuterResolution\":true,\"OuterPercent\":25,\"InnerPercent\":300,\"FocusWidthPercent\":50,\"FocusHeightPercent\":50}";
+                    var sample=PixelMeasurement.Parse("Actual swapchains outer0=1000x1000 outer1=1200x900 focus=4000x3000",metadata,new DateTime(2026,11,1,12,0,0,DateTimeKind.Utc));
+                    typeof(Launcher).GetField("pixelMeasurement",flags).SetValue(form,sample);
+                    ((PercentSetting)Named(form,"InnerResolution")).Value=200;
                     form.Opacity=0;form.ShowInTaskbar=false;form.StartPosition=FormStartPosition.Manual;form.Location=new Point(-16000,-16000);
                     if(minimum)form.Size=form.MinimumSize;
                     form.Show();Settle(form);

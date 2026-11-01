@@ -10,10 +10,11 @@ $versionFiles = Write-LmuVersionFiles (Join-Path $PSScriptRoot 'build/launcher-v
 $core = @((Join-Path $PSScriptRoot 'launcher/QvfrSettings.cs'),(Join-Path $PSScriptRoot 'launcher/FocusGeometry.cs'),(Join-Path $PSScriptRoot 'launcher/LaunchService.cs'),(Join-Path $PSScriptRoot 'launcher/AssemblyInfo.cs'))
 $manifest = Join-Path $PSScriptRoot 'launcher/app.manifest'
 $core += $versionFiles.AssemblyPath
+$core += Join-Path $PSScriptRoot 'launcher/PixelEstimate.cs'
 $icon = Join-Path $PSScriptRoot 'launcher/assets/quadview.ico'
 $appConfig = Join-Path $PSScriptRoot 'launcher/app.config'
 $references = @('/reference:System.Windows.Forms.dll','/reference:System.Drawing.dll','/reference:System.Xml.Linq.dll','/reference:System.Web.Extensions.dll')
-foreach ($test in @('SettingsTests','FocusGeometryTests','LaunchServiceTests')) {
+foreach ($test in @('SettingsTests','FocusGeometryTests','LaunchServiceTests','PixelEstimateTests')) {
     $testOutput = Join-Path $PSScriptRoot ('build/' + $test + '.exe')
     & $compiler /nologo /target:exe /platform:x64 /optimize+ /warnaserror+ "/main:$test" "/out:$testOutput" @references @core (Join-Path $PSScriptRoot "launcher/$test.cs")
     if ($LASTEXITCODE -ne 0) { throw "$test compilation failed" }

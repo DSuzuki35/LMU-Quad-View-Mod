@@ -4,6 +4,13 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
+## Unreleased
+
+- Live QVFR view-pixel estimate with outer/focus totals and a pinned comparison.
+  Matching last-run dimensions enable megapixel estimates; otherwise relative
+  percentages remain available. Native/VectorXR show historical counts only.
+  This is a launcher calculation, with no extra game profiling or rendering work.
+
 ## 0.1.1 - 2026-11-01
 
 ### Added

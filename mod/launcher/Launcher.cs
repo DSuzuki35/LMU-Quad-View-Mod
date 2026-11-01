@@ -239,6 +239,7 @@ namespace LmuQuadViewLauncher
 
     sealed class PercentSetting : UserControl
     {
+        public event EventHandler ValueChanged;
         readonly NumericUpDown number = new SpacedNumericUpDown();
         readonly PurpleSlider slider = new PurpleSlider();
         public decimal Value { get { return number.Value; } set { number.Value = Math.Max(number.Minimum, Math.Min(number.Maximum, value)); } }
@@ -266,6 +267,7 @@ namespace LmuQuadViewLauncher
             bool synchronizing = false;
             number.ValueChanged += delegate { if (synchronizing) return; synchronizing = true; slider.Value = (int)Math.Round(number.Value); synchronizing = false; };
             slider.ValueChanged += delegate { if (synchronizing) return; synchronizing = true; Value = slider.Value; synchronizing = false; };
+            number.ValueChanged += delegate { if(ValueChanged!=null)ValueChanged(this,EventArgs.Empty); };
             Controls.Add(grid);
         }
     }
@@ -308,6 +310,15 @@ namespace LmuQuadViewLauncher
         readonly Label focusHint = Theme.Label("", 9F, Theme.Muted);
         readonly Button refreshFov = Theme.Button("Read latest headset FOV", false);
         FocusGeometry focusGeometry;
+        readonly Label pixelTotal=Theme.Label("",11F,Theme.Text);
+        readonly Label pixelParts=Theme.Label("",9F,Theme.Muted);
+        readonly Label pixelComparison=Theme.Label("",9F,Theme.Accent);
+        readonly Label pixelSource=Theme.Label("",9F,Theme.Muted);
+        readonly Button pinPixels=Theme.Button("Use as comparison",false);
+        readonly Button readPixels=Theme.Button("Read latest run",false);
+        PixelMeasurement pixelMeasurement;
+        PixelSettings pixelBaseline;
+        bool fillingSettings;
         readonly Button launch = Theme.Button("Launch LMU", true);
         readonly Button save = Theme.Button("Save settings", false);
         readonly Button renderingNav = Theme.Button("  Rendering", false);
@@ -376,7 +387,9 @@ namespace LmuQuadViewLauncher
             var pages = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0) };
             pages.Controls.Add(setupPage); pages.Controls.Add(renderingPage); main.Controls.Add(pages, 0, 1);
             BuildRendering(); BuildSetup(); main.Controls.Add(BuildFooter(), 0, 2);
-            backend.SelectedIndexChanged += delegate { UpdateProvider(); };
+            backend.SelectedIndexChanged += delegate { pixelBaseline=null;UpdateProvider(); };
+            foreach(var setting in new[]{outer,inner,focusWidth,focusHeight})setting.ValueChanged+=delegate { UpdatePixels(); };
+            nativeOuter.CheckedChanged+=delegate { UpdatePixels(); };
             diagnosticsEnabled.Name="DiagnosticsEnabled";
             stereoDrawAudit.Name="StereoDrawAudit";
             stereoShaderCapture.Name="StereoShaderCapture";
@@ -395,6 +408,7 @@ namespace LmuQuadViewLauncher
                 Fill(settings);
             }
             catch (Exception ex) { status.Text = "Settings could not be loaded: " + ex.Message; }
+            pixelMeasurement=PixelMeasurement.Latest(root);
             UpdateProvider(); ShowPage(false);
             ResumeLayout(true);
         }
@@ -422,10 +436,10 @@ namespace LmuQuadViewLauncher
         }
         void BuildRendering()
         {
-            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 5, Margin = new Padding(0) };
+            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 6, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 200)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 280));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 250)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54)); renderingPage.SetContent(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute,310));grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 250)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54)); renderingPage.SetContent(grid);
             var provider = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
             var p = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Margin = new Padding(0) };
             p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -442,6 +456,7 @@ namespace LmuQuadViewLauncher
             focusFooter.Controls.Add(focusHint,0,0);refreshFov.Dock=DockStyle.Fill;refreshFov.Margin=new Padding(0);refreshFov.Font=new Font("Segoe UI",9F);
             refreshFov.Click+=delegate { RefreshFocusGeometry(); };focusFooter.Controls.Add(refreshFov,0,1);focusContent.Controls.Add(focusFooter,0,3);
             grid.Controls.Add(focusCard,1,1);
+            grid.Controls.Add(BuildPixelCard(),0,2);grid.SetColumnSpan(grid.GetControlFromPosition(0,2),2);
             var position = new Surface { Name="FocusPositionCard", Dock=DockStyle.Fill, Margin=new Padding(0,0,0,14), Padding=new Padding(17,12,17,10) };
             var positionContent = new TableLayoutPanel { Dock=DockStyle.Fill, ColumnCount=2, RowCount=3, Margin=new Padding(0) };
             positionContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));positionContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));
@@ -455,7 +470,7 @@ namespace LmuQuadViewLauncher
             focusOffsetX.Margin=new Padding(0,3,12,0);focusOffsetY.Margin=new Padding(12,3,0,0);
             positionContent.Controls.Add(focusOffsetX,0,1);positionContent.Controls.Add(focusOffsetY,1,1);
             var positionHint=Caption("Percent of each eye's full view. Positive: right / up. In Auto, offsets are relative to gaze. 0 = no shift. Applies next game launch.");
-            positionContent.Controls.Add(positionHint,0,2);positionContent.SetColumnSpan(positionHint,2);position.Controls.Add(positionContent);grid.Controls.Add(position,0,2);grid.SetColumnSpan(position,2);
+            positionContent.Controls.Add(positionHint,0,2);positionContent.SetColumnSpan(positionHint,2);position.Controls.Add(positionContent);grid.Controls.Add(position,0,3);grid.SetColumnSpan(position,2);
             var preview = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 12), Padding = new Padding(18, 10, 18, 10) };
             var info = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Margin = new Padding(0) };
             info.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); info.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -467,8 +482,61 @@ namespace LmuQuadViewLauncher
             blurRow.Controls.Add(Theme.Label("Outer smoothing (pixels)", 10F, Theme.Text), 0, 0);
             outerBlur.Margin = new Padding(2, 4, 0, 0); blurRow.Controls.Add(outerBlur, 1, 0); info.Controls.Add(blurRow, 1, 0);
             info.Controls.Add(Caption("Softens peripheral shimmer; adds a small GPU pass. Focus stays sharp. 0 = off."), 1, 1);
-            preview.Controls.Add(info); grid.Controls.Add(preview, 0, 3); grid.SetColumnSpan(preview, 2);
-            grid.Controls.Add(resolutionHint, 0, 4); grid.SetColumnSpan(resolutionHint, 2);
+            preview.Controls.Add(info); grid.Controls.Add(preview, 0, 4); grid.SetColumnSpan(preview, 2);
+            grid.Controls.Add(resolutionHint, 0, 5); grid.SetColumnSpan(resolutionHint, 2);
+        }
+        Control BuildPixelCard() {
+            var card=new Surface {Name="PixelEstimateCard",Dock=DockStyle.Fill,Margin=new Padding(0,0,0,14),Padding=new Padding(17,12,17,12)};
+            var stack=Stack(6);
+            foreach(int height in new[]{28,30,28,42,106,34})stack.RowStyles.Add(new RowStyle(SizeType.Absolute,height));
+            stack.Controls.Add(Theme.Label("Estimated view pixels",13F,Theme.Text),0,0);
+            pixelTotal.Name="PixelTotal";pixelParts.Name="PixelParts";pixelComparison.Name="PixelComparison";pixelSource.Name="PixelSource";
+            stack.Controls.Add(pixelTotal,0,1);stack.Controls.Add(pixelParts,0,2);stack.Controls.Add(pixelComparison,0,3);stack.Controls.Add(pixelSource,0,4);
+            var buttons=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=new Padding(0)};
+            buttons.RowStyles.Add(new RowStyle(SizeType.Percent,100));
+            buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));
+            pinPixels.Name="PinPixelComparison";readPixels.Name="ReadPixelMeasurement";
+            foreach(var button in new[]{pinPixels,readPixels}){button.Dock=DockStyle.Fill;button.Font=new Font("Segoe UI",9F);button.Height=30;}
+            pinPixels.Margin=new Padding(0,0,6,0);readPixels.Margin=new Padding(6,0,0,0);
+            pinPixels.Click+=delegate {pixelBaseline=CurrentPixelSettings();UpdatePixels();};
+            readPixels.Click+=delegate {pixelMeasurement=PixelMeasurement.Latest(root);UpdatePixels();};
+            buttons.Controls.Add(pinPixels,0,0);buttons.Controls.Add(readPixels,1,0);stack.Controls.Add(buttons,0,5);card.Controls.Add(stack);return card;
+        }
+        PixelSettings CurrentPixelSettings() {
+            return new PixelSettings(outer.Value,inner.Value,
+                focusGeometry==null?focusWidth.Value:focusGeometry.ProviderWidth(focusWidth.Value),
+                focusGeometry==null?focusHeight.Value:focusGeometry.ProviderHeight(focusHeight.Value),nativeOuter.Checked);
+        }
+        static string PixelAmount(decimal value,bool measured) { return measured?(value/1000000m).ToString("N2")+" MP":(value*100m).ToString("N2")+"%"; }
+        static string PixelChange(decimal current,decimal baseline) {
+            decimal change=100m*(current/baseline-1m);
+            return Math.Abs(change)<.05m?"unchanged":Math.Abs(change).ToString("N1")+"% "+(change<0?"fewer":"more");
+        }
+        void UpdatePixels() {
+            if(fillingSettings)return;
+            string provider=backend.SelectedIndex==1?"QVFR":backend.SelectedIndex==2?"VectorXR":"Native";
+            var measurement=pixelMeasurement!=null&&pixelMeasurement.Backend==provider?pixelMeasurement:null;
+            const string limits="View-area estimate, not FPS. Excludes MSAA, overdraw, shadows and post-processing; outer warmup/fallback can cost more.";
+            string source=measurement==null?"No matching run measurement. For MP counts, enable diagnostics, launch once, then read latest run.":
+                "Based on run "+measurement.TimestampUtc.ToLocalTime().ToString("g")+". Re-read after headset/runtime changes; rounding and resolution limits may differ.";
+            pixelSource.Text=source+"\n"+limits;
+            pinPixels.Enabled=provider=="QVFR";
+            if(provider!="QVFR") {
+                pixelTotal.Text=measurement==null?"Pixel count unavailable until a matching run is recorded.":"Last run: "+PixelAmount(measurement.FocusPixels+(measurement.Settings.NativeOuter?measurement.OuterPixels:measurement.FocusPixels),true)+" / frame (both eyes)";
+                pixelParts.Text=measurement==null?"Configure resolution in your provider.":"Outer: "+PixelAmount(measurement.Settings.NativeOuter?measurement.OuterPixels:measurement.FocusPixels,true)+"   |   Focus: "+PixelAmount(measurement.FocusPixels,true);
+                pixelComparison.Text="Live slider comparison is available with Quad-Views-Foveated.";return;
+            }
+            var settings=CurrentPixelSettings();
+            if(!settings.Valid) {
+                pinPixels.Enabled=false;pixelTotal.Text="No estimate: outer image must fit inside the focus buffer.";
+                pixelParts.Text="Reduce outer resolution, or increase inner resolution / focus size.";pixelComparison.Text="Comparison is kept until settings are valid again.";return;
+            }
+            if(pixelBaseline==null||!pixelBaseline.Valid)pixelBaseline=settings;
+            var current=PixelEstimate.Calculate(settings,measurement);var reference=PixelEstimate.Calculate(pixelBaseline,measurement);
+            bool measured=measurement!=null;
+            pixelTotal.Text="Total: "+PixelAmount(current.Total,measured)+(measured?" / frame (both eyes)":" of full-view 100% stereo");
+            pixelParts.Text="Outer: "+PixelAmount(current.Outer,measured)+"   |   Focus: "+PixelAmount(current.Focus,measured);
+            pixelComparison.Text="Comparison: "+PixelChange(current.Total,reference.Total)+" total pixels; "+PixelChange(current.Focus,reference.Focus)+" focus pixels.\nReference total: "+PixelAmount(reference.Total,measured)+".";
         }
         Control SettingCard(string title, PercentSetting first, PercentSetting second, string hint, Padding margin)
         {
@@ -568,9 +636,11 @@ namespace LmuQuadViewLauncher
             resolutionHint.Text = qvfr ? "200% resolution means 2x width and 2x height (4x pixels). Save updates only LMU's QVFR profile and backs up existing settings. Restart LMU after changes."
                 : vector ? "Resolution, focus size and tracking are configured in VectorXR's LMU profile. Controls above are inactive. QVFR and OpenXR Toolkit are bypassed for this launch. Restart LMU after changes."
                 : "Resolution and focus size are controlled by your native runtime. Switch to Quad-Views-Foveated to adjust them here. Restart LMU after changes.";
+            UpdatePixels();
         }
         void Fill(LauncherSettings s)
         {
+            fillingSettings=true;
             focusGeometry=s.FocusAspectRatio==0?null:new FocusGeometry(s.FocusAspectRatio);
             focusWidth.SetRange(focusGeometry==null?10:focusGeometry.DisplayWidth(10),focusGeometry==null?90:focusGeometry.DisplayWidth(90));
             focusHeight.SetRange(focusGeometry==null?10:focusGeometry.DisplayHeight(10),focusGeometry==null?90:focusGeometry.DisplayHeight(90));
@@ -592,6 +662,7 @@ namespace LmuQuadViewLauncher
             focusHeight.Value = focusGeometry==null?s.FocusHeightPercent:focusGeometry.DisplayHeight(s.FocusHeightPercent);
             focusOffsetX.Value=s.FocusOffsetXPercent;focusOffsetY.Value=s.FocusOffsetYPercent;
             outerBlur.Value = Math.Max(outerBlur.Minimum, Math.Min(outerBlur.Maximum, s.OuterBlur));
+            fillingSettings=false;pixelBaseline=null;
             UpdateProvider();
         }
         LauncherSettings Values()

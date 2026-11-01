@@ -72,6 +72,28 @@ QVFR exposes outer/inner resolution and independent focus width/height. Resoluti
 percentages scale each dimension: 200% means twice the width and height, or four
 times the pixels. Focus dimensions use QVFR's supported 10–90% range.
 
+### Pixel estimate (development branch)
+
+**Estimated view pixels** updates as you adjust QVFR resolution or focus size.
+Click **Use as comparison**, then change settings to see the total and focus pixel
+change. For example, 300% to 200% uses about 56% fewer focus pixels; total savings
+also depend on the outer views. Offsets do not change the count.
+
+After a run with diagnostics enabled, **Read latest run** reads that run's recorded
+sizes and settings to estimate megapixels per frame for both eyes. Before a matching
+measurement exists, percentages are relative to full-view 100% stereo pixels.
+Re-read after changing headset/runtime settings. Native OpenXR and VectorXR show
+only their matching last-run count because their resolution is configured externally.
+
+These are view-area estimates, not GPU timing or an FPS forecast. Runtime limits
+and rounding can change the result. They exclude MSAA, overdraw, shadows,
+post-processing and compositor work; outer-render warmup/fallback can cost more.
+Disabling native outer resolution is accounted for as full-size outer rendering.
+The estimator adds no game-side profiling or rendering work. This feature is not
+part of the published 0.1.1 ZIP yet.
+
+### Focus size calibration
+
 For equal-axis focus controls, run LMU once, then click **Read latest headset
 FOV**. With a measured FOV, 50/50 produces an approximately square region near the
 center. Before calibration, a fresh installation explicitly displays per-axis
