@@ -47,6 +47,10 @@ try {
         & ".\build\${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests failed" }
     }
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -ffp-contract=off -static tests/native_stereo_classify_test.cpp -o build/native_stereo_classify_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native classifier model compilation failed' }
+    & .\build\native_stereo_classify_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native classifier model tests failed' }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/stereo_audit_test.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/stereo_audit_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Stereo audit tests compilation failed' }
     & .\build\stereo_audit_test.exe
