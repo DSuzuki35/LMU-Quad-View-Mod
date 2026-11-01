@@ -108,6 +108,22 @@ std::vector<Triangle> makeScene() {
     require(triangles.size() == 3, "Owned fixture clipping changed unexpectedly");
     return triangles;
 }
+std::vector<Triangle> tiledScene(UINT tiles) {
+    const auto original = makeScene();
+    std::vector<Triangle> result;
+    for (UINT y = 0; y < tiles; y++)
+        for (UINT x = 0; x < tiles; x++)
+            for (auto tri : original) {
+                const float ox = -1 + (float(x) + .5f) * 2 / float(tiles),
+                            oy = -1 + (float(y) + .5f) * 2 / float(tiles);
+                for (auto &v : tri) {
+                    v.clip.x = v.clip.x / float(tiles) + ox * v.clip.w;
+                    v.clip.y = v.clip.y / float(tiles) + oy * v.clip.w;
+                }
+                result.push_back(tri);
+            }
+    return result;
+}
 struct alignas(16) Constants {
     Float4 config, dimensions;
     std::array<Float4, 16> a{}, b{}, c{}, ua{}, ub{}, uc{};
@@ -397,8 +413,9 @@ class Fixture {
         if (context.p)
             context->ClearState();
     }
-    void configure(float k, float gx, float gy) {
-        values.config = {gx, gy, k, 0};
+    void configure(float k, float gx, float gy, UINT tiles = 1, float work = 0) {
+        values.config = {gx, gy, k, work};
+        values.dimensions.w = float(tiles);
         context->UpdateSubresource(constants.p, 0, nullptr, &values, 0, 0);
     }
     void draw(Path path) {
@@ -426,7 +443,12 @@ class Fixture {
                              : path == Path::bounded ? boundedPS.p
                                                      : ordinaryPS.p,
                              nullptr, 0);
-        context->Draw(path == Path::analytic ? 3 : vertexCount, 0);
+        if (path == Path::analytic)
+            context->Draw(3, 0);
+        else {
+            const UINT tiles = static_cast<UINT>(values.dimensions.w);
+            context->DrawInstanced(vertexCount, tiles * tiles, 0, 0);
+        }
     }
     Image read() {
         context->OMSetRenderTargets(0, nullptr, nullptr);
@@ -560,6 +582,36 @@ int main(int argc, char **argv) {
                 }
                 std::cout << '}';
             }
+        fixture.configure(4, 0, 0, 4);
+        const auto tiledStats = fixture.statistics(Path::bounded);
+        require(tiledStats.GSInvocations == 48 && tiledStats.GSPrimitives == 96,
+                "Tiled probe did not emit the expected primitive count");
+        std::cout << "],\"tiledCorrectness\":[";
+        const auto tiled = tiledScene(4);
+        bool tileComma = false;
+        for (const float k : {0.f, 4.f, 12.f}) {
+            fixture.configure(k, .8f, -.8f, 4);
+            fixture.draw(Path::bounded);
+            const auto image = fixture.read();
+            const auto cpu = compare(image, cpuReference(tiled, k, .8f, -.8f));
+            require(cpu.interiorWrong <= 2 && cpu.colorMax <= 1 && cpu.depthMax < .00001,
+                    "Tiled nonlinear rendering differs from CPU reference");
+            if (tileComma)
+                std::cout << ',';
+            tileComma = true;
+            std::cout << "{\"strength\":" << k << ",\"tiles\":4,";
+            printMetrics(cpu);
+            std::cout << '}';
+            if (k == 0) {
+                fixture.draw(Path::ordinary);
+                const auto identity = compare(image, fixture.read());
+                require(identity.interiorWrong <= 2 && identity.colorMax <= 1 &&
+                            identity.depthMax < .00001,
+                        "Tiled native identity differs");
+            }
+            if (k == 4 && hardware)
+                saveBmp(output / "hardware-tiled-bounded.bmp", image);
+        }
         std::cout << "],\"pipeline\":[";
         fixture.configure(4, 0, 0);
         const std::array<Path, 4> paths{Path::ordinary, Path::vertices, Path::bounded,
@@ -589,9 +641,49 @@ int main(int argc, char **argv) {
                       << ",\"gsPrimitives\":" << stats.GSPrimitives
                       << ",\"psInvocations\":" << stats.PSInvocations << '}';
         }
-        std::cout
-            << "],\"timingScope\":\"Source rendering only, no reconstruction. 2 warmups, 9 rotated "
-               "batches of 32. CPU creation/upload/readback excluded.\",\"passed\":true}\n";
+        std::cout << "],\"scaling\":[";
+        if (hardware) {
+            bool scalingComma = false;
+            for (const UINT tiles : {1u, 4u, 16u, 64u})
+                for (const float work : {0.f, 32.f}) {
+                    fixture.configure(4, 0, 0, tiles, work);
+                    std::array<std::vector<double>, 3> measured;
+                    for (int iteration = 0; iteration < 11; iteration++)
+                        for (size_t j = 0; j < 3; j++) {
+                            const size_t index = (static_cast<size_t>(iteration) + j) % 3;
+                            const double ms = fixture.time(paths[index]);
+                            if (iteration >= 2)
+                                measured[index].push_back(ms);
+                        }
+                    if (scalingComma)
+                        std::cout << ',';
+                    scalingComma = true;
+                    std::cout << "{\"tilesPerAxis\":" << tiles
+                              << ",\"inputTriangles\":" << 3 * tiles * tiles
+                              << ",\"materialWork\":" << work << ",\"paths\":[";
+                    for (size_t i = 0; i < 3; i++) {
+                        auto &samples = measured[i];
+                        std::sort(samples.begin(), samples.end());
+                        const auto stats = fixture.statistics(paths[i]);
+                        if (paths[i] == Path::bounded)
+                            require(stats.GSInvocations == 3 * tiles * tiles &&
+                                        stats.GSPrimitives == 6 * tiles * tiles,
+                                    "Scaling GS counts differ");
+                        if (i)
+                            std::cout << ',';
+                        std::cout << "{\"path\":\"" << names[i] << "\",\"medianMs\":" << samples[4]
+                                  << ",\"minMs\":" << samples.front()
+                                  << ",\"maxMs\":" << samples.back()
+                                  << ",\"gsInvocations\":" << stats.GSInvocations
+                                  << ",\"gsPrimitives\":" << stats.GSPrimitives
+                                  << ",\"psInvocations\":" << stats.PSInvocations << '}';
+                    }
+                    std::cout << "]}";
+                }
+        }
+        std::cout << "],\"timingScope\":\"Source rendering only, no reconstruction. One instanced "
+                     "draw per path, no engine traversal. 2 warmups, 9 rotated "
+                     "batches of 32. CPU creation/upload/readback excluded.\",\"passed\":true}\n";
         return 0;
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';

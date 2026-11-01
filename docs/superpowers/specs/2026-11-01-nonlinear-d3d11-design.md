@@ -26,3 +26,12 @@ This does not implement general GPU near-plane clipping, arbitrary LMU materials
 shader interception, MSAA, derivatives, transparency, reconstructed depth/history
 or a standalone replacement for the game's renderer. Native API support and
 fixture correctness do not establish engine compatibility or a performance win.
+
+Follow-up: instance the clipped owned scene into a grid of tiles, keeping total
+image coverage broadly comparable while varying primitive size/count. Check a
+4x4 tiled result against ordinary identity and the independent CPU reference.
+On hardware only, measure 1/4/16/64 tiles per axis with light and synthetic costly
+materials. Record GS/PS invocation counts and source-only GPU time; bounds remain
+on the GPU and all instances are one draw. This intentionally excludes engine
+traversal and per-object draw submission. Do not use WARP scaling timings as GPU
+evidence. The full-source benchmark remains a cost test, not a foveation speedup.

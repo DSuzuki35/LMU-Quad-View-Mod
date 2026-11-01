@@ -1,7 +1,7 @@
 // Owned-scene D3D11 experiment. Geometry is clipped before reaching this shader.
 cbuffer Fixture : register(b0) {
-    float4 config;     // gaze.xy, strength, unused
-    float4 dimensions; // width, height, clipped triangle count, unused
+    float4 config;     // gaze.xy, strength, synthetic material work
+    float4 dimensions; // width, height, clipped triangle count, tiles per axis
     float4 clipA[16];
     float4 clipB[16];
     float4 clipC[16];
@@ -33,7 +33,13 @@ float radialScale(float t) {
     return t < .000001 ? k / asinhPositive(k) : asinhPositive(k * t) / (asinhPositive(k) * t);
 }
 float4 material(float2 uv, float id) {
-    return float4(.15 + .75 * uv.x, .15 + .75 * uv.y, .2 + .3 * id, id / 255);
+    float3 color = float3(.15 + .75 * uv.x, .15 + .75 * uv.y, .2 + .3 * id);
+    float detail = 0;
+    [loop] for (int i = 0; i < (int)config.w; i++) {
+        float f = i + 1;
+        detail += sin(uv.x * f * 17) * cos(uv.y * f * 13) / max(1, config.w);
+    }
+    return float4(saturate(color * (1 + detail * .15)), id / 255);
 }
 float cross2(float2 a, float2 b) { return a.x * b.y - a.y * b.x; }
 float2 sampleNdc(float4 position) {
@@ -51,16 +57,19 @@ struct MeshOutput {
     float2 uv : TEXCOORD0;
     nointerpolation float id : TEXCOORD1;
 };
-MeshOutput OrdinaryVS(MeshVertex v) {
+MeshOutput OrdinaryVS(MeshVertex v, uint instance : SV_InstanceID) {
     MeshOutput o;
     o.position = v.position;
+    uint tiles = (uint)dimensions.w;
+    float2 origin = -1 + (float2(instance % tiles, instance / tiles) + .5) * 2 / tiles;
+    o.position.xy = v.position.xy / tiles + origin * v.position.w;
     o.uv = v.uv;
     o.id = v.id;
     return o;
 }
-MeshOutput WarpedVS(MeshVertex v) {
-    MeshOutput o = OrdinaryVS(v);
-    o.position.xy = warp(v.position.xy / v.position.w, false) * v.position.w;
+MeshOutput WarpedVS(MeshVertex v, uint instance : SV_InstanceID) {
+    MeshOutput o = OrdinaryVS(v, instance);
+    o.position.xy = warp(o.position.xy / o.position.w, false) * o.position.w;
     return o;
 }
 float4 OrdinaryPS(MeshOutput v) : SV_Target { return material(v.uv, v.id); }

@@ -293,3 +293,25 @@ MSAA, transparency, texture derivatives, output depth reconstruction or history.
 The [geometry shader API](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-geometry-shader)
 supports the required mechanism; the tested owned pipeline does not establish
 that LMU's existing shader interfaces can be converted safely.
+
+The native probe also instances the owned scene into 1/4/16/64 tiles per axis
+(3/48/768/12,288 input triangles). Three 4x4 cases pass the independent CPU
+coverage/color/depth check, and zero warp also matches ordinary hardware
+rendering. A controlled material loop adds 32 sine/cosine terms per shaded sample.
+Each benchmark uses one instanced draw, so this excludes per-object engine work.
+
+Representative RTX 5090 **source-only** medians, in milliseconds:
+
+| Input triangles | Ordinary, light | Bounded, light | Ordinary, work 32 | Bounded, work 32 |
+| --- | ---: | ---: | ---: | ---: |
+| 3 | 0.0013 | 0.0053 | 0.0023 | 0.0084 |
+| 48 | 0.0013 | 0.0049 | 0.0028 | 0.0085 |
+| 768 | 0.0022 | 0.0066 | 0.0032 | 0.0119 |
+| 12,288 | 0.0072 | 0.0145 | 0.0074 | 0.0247 |
+
+The full-size source still has no resolution saving. At 12,288 triangles,
+bounded pixel-shader invocations reached 2,014,929 vs 217,088 ordinary. Small
+primitive guards and raster scheduling contribute additional work; these counts
+alone do not isolate each cause. The scaling test confirms the GPU mechanism
+works across many primitives, while showing why it must be measured as a complete
+reduced-resolution pipeline before it can be called an optimization.
