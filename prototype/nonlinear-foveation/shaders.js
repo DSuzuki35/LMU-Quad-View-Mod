@@ -162,5 +162,5 @@ window.FoveationShaders = {
     if(uCrosshair&&((d.x<.002&&d.y<.025)||(d.y<.002&&d.x<.025)))color=vec3(1,.1,.75);
     outColor=vec4(color,1);
   }
-  `
+  `,
 };

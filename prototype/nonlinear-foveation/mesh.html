@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Nonlinear Mesh Coverage Test</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font: 15px/1.5 system-ui;
+        background: #101219;
+        color: #e5e9f2;
+      }
+      body {
+        max-width: 1400px;
+        margin: auto;
+        padding: 24px;
+      }
+      h1 {
+        font-size: 28px;
+        margin: 0;
+      }
+      a {
+        color: #c5afff;
+      }
+      p {
+        color: #b6c1d5;
+      }
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 24px;
+        background: #1b2030;
+        padding: 18px;
+        border-radius: 8px;
+      }
+      label {
+        display: grid;
+        min-width: 200px;
+      }
+      input {
+        accent-color: #a383ff;
+      }
+      button {
+        background: #302b47;
+        color: white;
+        border: 1px solid #70608e;
+        border-radius: 5px;
+        padding: 8px 14px;
+        cursor: pointer;
+      }
+      #stats {
+        color: #c6b1ff;
+        min-height: 50px;
+        font-variant-numeric: tabular-nums;
+      }
+      .viewer {
+        position: relative;
+        line-height: 0;
+      }
+      canvas {
+        width: 100%;
+        height: auto;
+        background: black;
+      }
+      .label {
+        position: absolute;
+        line-height: 1.3;
+        background: #161b28dd;
+        padding: 5px 8px;
+        border-radius: 4px;
+        pointer-events: none;
+      }
+      .a {
+        top: 8px;
+        left: 8px;
+      }
+      .b {
+        top: 8px;
+        left: calc(50% + 8px);
+      }
+      .c {
+        top: calc(50% + 8px);
+        left: 8px;
+      }
+      .d {
+        top: calc(50% + 8px);
+        left: calc(50% + 8px);
+      }
+      pre {
+        white-space: pre-wrap;
+        background: #1b2030;
+        padding: 16px;
+        border-radius: 8px;
+        font-size: 13px;
+      }
+      small {
+        color: #a5b4ce;
+      }
+    </style>
+  </head>
+  <body>
+    <a href="index.html">← Sampling and GPU comparison</a>
+    <h1>What happens to ordinary triangles?</h1>
+    <p>
+      Two overlapping owned triangles, varying clip W and a near-plane crossing.
+      The source image stays full-sized to isolate geometry/interpolation
+      errors. Increase subdivision to see its quality and triangle-count cost.
+    </p>
+    <div class="controls">
+      <label
+        >Warp strength <output id="strengthValue"></output
+        ><input
+          id="strength"
+          type="range"
+          min="0"
+          max="12"
+          step=".1"
+          value="4" /></label
+      ><label
+        >Uniform subdivision <output id="levelValue"></output
+        ><input
+          id="level"
+          type="range"
+          min="0"
+          max="7"
+          step="1"
+          value="0" /></label
+      ><label
+        >Gaze X<input
+          id="gx"
+          type="range"
+          min="-.8"
+          max=".8"
+          step=".01"
+          value="0" /></label
+      ><label
+        >Gaze Y<input
+          id="gy"
+          type="range"
+          min="-.8"
+          max=".8"
+          step=".01"
+          value="0" /></label
+      ><label
+        ><span
+          ><input id="bounded" type="checkbox" /> Conservative primitive
+          rectangles</span
+        ><small>Per-pixel intersection + original depth</small></label
+      ><label
+        ><span
+          ><input id="tight" type="checkbox" /> Refine rectangle bounds</span
+        ><small>Less overdraw; more CPU calculation</small></label
+      ><label
+        >Bound refinement cap <output id="boundDepthValue">3</output
+        ><input
+          id="boundDepth"
+          type="range"
+          min="0"
+          max="10"
+          step="1"
+          value="3"
+        /><small>Coverage stays conservative at the cap</small></label
+      ><button id="tests">Run mesh checks</button
+      ><button id="timings">Measure mesh paths</button>
+    </div>
+    <p id="stats">Initializing…</p>
+    <div class="viewer">
+      <canvas id="mesh" width="1280" height="960"></canvas
+      ><span class="label a">Ordinary hardware mesh</span
+      ><span class="label b">Analytic nonlinear reference + reconstruction</span
+      ><span class="label c" id="candidateLabel"
+        >Warped hardware mesh + reconstruction</span
+      ><span class="label d"
+        >Source errors: magenta = wrong surface; green = color error</span
+      >
+    </div>
+    <p>
+      Metrics compare the two warped source buffers at the same sample
+      locations. “Interior” excludes a one-pixel neighborhood of reference
+      surface boundaries. This tests curved coverage, depth ordering and UV
+      interpolation before color reconstruction. It does not prove correct
+      reconstructed depth or LMU compatibility.
+    </p>
+    <pre id="results">
+Level 0 warps only original vertices. Every subdivision level multiplies the clipped triangle count by four. Uniform subdivision avoids adaptive T-junctions but can become expensive.</pre
+    >
+    <small id="device"></small>
+    <script src="mapping.js"></script>
+    <script src="shaders.js"></script>
+    <script src="mesh-data.js"></script>
+    <script src="mesh.js"></script>
+  </body>
+</html>

@@ -1,26 +1,368 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Nonlinear Foveation Lab</title>
-<style>
-:root{color-scheme:dark;font:15px/1.45 system-ui,sans-serif;background:#101219;color:#e5e9f2}*{box-sizing:border-box}body{margin:0 auto;max-width:1600px;padding:24px}h1{font-size:28px;margin:0}h2{font-size:16px;margin:0 0 10px}.lede{color:#acb6ca;max-width:1100px;margin:8px 0 20px}.badge{color:#c1b0ff;font-size:12px;letter-spacing:.08em}.controls{display:grid;grid-template-columns:repeat(4,minmax(180px,1fr));gap:14px;background:#1a1e29;padding:18px;border:1px solid #313749;border-radius:10px}label{display:flex;flex-direction:column;gap:5px;color:#cbd3e3}input[type=range]{accent-color:#9d7dff;width:100%;margin:5px 0}select,button{font:inherit;background:#252b3b;border:1px solid #46506a;border-radius:6px;color:#f2f4fa;padding:8px 12px}button{cursor:pointer}button:hover{background:#353e55}button:disabled{opacity:.45;cursor:default}.check{display:block;font-size:13px;margin:7px 0}.check input{accent-color:#9d7dff}.value{font-variant-numeric:tabular-nums;color:#ccbaff}.actions{display:flex;flex-wrap:wrap;gap:10px;margin:16px 0}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0}.stat{padding:14px;background:#191e29;border-radius:8px;min-height:100px}.stat strong{font-size:22px;display:block;color:#cfbaff}.stat small{display:block;color:#a8b6cf}.viewer{position:relative;border:1px solid #384257;line-height:0;background:#000}canvas{width:100%;height:auto;display:block}.tile-label{position:absolute;line-height:1.3;background:#10131ddd;border:1px solid #566078;border-radius:5px;padding:5px 9px;font-size:13px;pointer-events:none}.a{top:10px;left:10px}.b{top:10px;left:calc(50% + 10px)}.c{top:calc(50% + 10px);left:10px}.d{top:calc(50% + 10px);left:calc(50% + 10px)}#status{color:#c5b3ff;min-height:24px}.details{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:18px}.panel{background:#191e29;border-radius:8px;padding:16px}pre{white-space:pre-wrap;font:13px/1.5 ui-monospace,monospace;color:#b8c9de;margin:8px 0}p{margin:8px 0}.muted{color:#a8b6cf;font-size:13px}a{color:#bba5ff}@media(max-width:850px){.controls{grid-template-columns:1fr 1fr}.details{grid-template-columns:1fr}.stats{grid-template-columns:1fr}body{padding:14px}}
-</style></head><body>
-<div class="badge">EXPERIMENTAL · STANDALONE · ONE EYE</div>
-<h1>Nonlinear Foveation Lab</h1>
-<p class="lede">Spend scene samples near gaze, then reconstruct a normal perspective image. This scene is evaluated directly at warped sample positions. It is an owned ray-scene experiment, not an LMU renderer or a game performance forecast.</p>
-<div class="controls">
- <label>Nonlinear strength <span id="strengthValue" class="value"></span><input id="strength" type="range" min="0" max="12" step="0.1" value="4"></label>
- <label>Source width / height scale <span id="scaleValue" class="value"></span><input id="scale" type="range" min="0.2" max="1" step="0.01" value="0.55"></label>
- <label>Quad focus width / height <span id="focusValue" class="value"></span><input id="focus" type="range" min="0.1" max="0.6" step="0.01" value="0.3"></label>
- <label>Output size per image<select id="resolution"><option value="384">384 × 288</option><option value="512">512 × 384</option><option value="768" selected>768 × 576</option><option value="1024">1024 × 768</option></select></label>
- <label>Extra material work <span id="workValue" class="value"></span><input id="work" type="range" min="0" max="64" step="1" value="8"></label>
- <label>Gaze X <span id="gazeXValue" class="value"></span><input id="gazeX" type="range" min="-0.8" max="0.8" step="0.01" value="0"></label>
- <label>Gaze Y <span id="gazeYValue" class="value"></span><input id="gazeY" type="range" min="-0.8" max="0.8" step="0.01" value="0"></label>
- <div><label class="check"><input id="pointer" type="checkbox" checked> Pointer sets gaze over an image</label><label class="check"><input id="animate" type="checkbox"> Scripted gaze + camera motion</label><label class="check"><input id="filter" type="checkbox" checked> Filter checker textures by footprint</label><label class="check"><input id="ids" type="checkbox"> Surface-ID colors</label><label class="check"><input id="density" type="checkbox"> Density map instead of source</label></div>
-</div>
-<div class="actions"><button id="central">Match 100% center density</button><button id="center">Center gaze</button><button id="quality">Measure color error</button><button id="benchmark">Measure GPU paths</button><button id="tests">Run correctness checks</button><button id="export">Save comparison image</button></div>
-<div class="stats"><div class="stat"><strong id="budget"></strong><span>scene samples vs full resolution</span><small id="budgetDetail"></small></div><div class="stat"><strong id="densityStat"></strong><span>central linear sample density</span><small id="densityDetail"></small></div><div class="stat"><strong id="quadStat"></strong><span>quad comparator budget</span><small id="quadDetail"></small></div></div>
-<div id="status" role="status">Initializing WebGL2…</div>
-<div class="viewer"><canvas id="view" width="1536" height="1152"></canvas><span class="tile-label a">Full-resolution reference</span><span class="tile-label b">Nonlinear render + reconstruction</span><span class="tile-label c" id="quadLabel">Quad-style context + focus</span><span class="tile-label d" id="sourceLabel">Warped source (stretched to fit)</span></div>
-<div class="details"><section class="panel"><h2>Measurements</h2><pre id="results">Use “Measure color error” or “Measure GPU paths”.</pre><p class="muted">Color error uses a four-sample-per-pixel reference in linear RGB. It is not a perceptual score. GPU queries include reconstruction/composition, exclude display/readback, and identify the actual renderer. Budget matching counts scene samples, not total GPU work.</p></section><section class="panel"><h2>What this proves—and what it doesn’t</h2><p class="muted">The inverse map selects each scene ray before shading, so fewer source pixels mean fewer scene evaluations. Reconstructing adds a full output pass. The rectangle-preserving asinh map is nonlinear, not strictly conformal; inspect its diagonal density transitions.</p><p class="muted">The ray-scene path bypasses curved-triangle rasterization. Native LMU geometry, depth reconstruction, motion vectors, temporal history, UI, post-processing and real eye-tracker latency remain separate research. Quad blending/guard bands are absent here and would add cost. No LMU FPS gain is claimed.</p><pre id="device"></pre></section></div>
-<script src="mapping.js"></script><script src="shaders.js"></script><script src="app.js"></script>
-</body></html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Nonlinear Foveation Lab</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font:
+          15px/1.45 system-ui,
+          sans-serif;
+        background: #101219;
+        color: #e5e9f2;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0 auto;
+        max-width: 1600px;
+        padding: 24px;
+      }
+      h1 {
+        font-size: 28px;
+        margin: 0;
+      }
+      h2 {
+        font-size: 16px;
+        margin: 0 0 10px;
+      }
+      .lede {
+        color: #acb6ca;
+        max-width: 1100px;
+        margin: 8px 0 20px;
+      }
+      .badge {
+        color: #c1b0ff;
+        font-size: 12px;
+        letter-spacing: 0.08em;
+      }
+      .controls {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(180px, 1fr));
+        gap: 14px;
+        background: #1a1e29;
+        padding: 18px;
+        border: 1px solid #313749;
+        border-radius: 10px;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        color: #cbd3e3;
+      }
+      input[type="range"] {
+        accent-color: #9d7dff;
+        width: 100%;
+        margin: 5px 0;
+      }
+      select,
+      button {
+        font: inherit;
+        background: #252b3b;
+        border: 1px solid #46506a;
+        border-radius: 6px;
+        color: #f2f4fa;
+        padding: 8px 12px;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:hover {
+        background: #353e55;
+      }
+      button:disabled {
+        opacity: 0.45;
+        cursor: default;
+      }
+      .check {
+        display: block;
+        font-size: 13px;
+        margin: 7px 0;
+      }
+      .check input {
+        accent-color: #9d7dff;
+      }
+      .value {
+        font-variant-numeric: tabular-nums;
+        color: #ccbaff;
+      }
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 16px 0;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin: 16px 0;
+      }
+      .stat {
+        padding: 14px;
+        background: #191e29;
+        border-radius: 8px;
+        min-height: 100px;
+      }
+      .stat strong {
+        font-size: 22px;
+        display: block;
+        color: #cfbaff;
+      }
+      .stat small {
+        display: block;
+        color: #a8b6cf;
+      }
+      .viewer {
+        position: relative;
+        border: 1px solid #384257;
+        line-height: 0;
+        background: #000;
+      }
+      canvas {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+      .tile-label {
+        position: absolute;
+        line-height: 1.3;
+        background: #10131ddd;
+        border: 1px solid #566078;
+        border-radius: 5px;
+        padding: 5px 9px;
+        font-size: 13px;
+        pointer-events: none;
+      }
+      .a {
+        top: 10px;
+        left: 10px;
+      }
+      .b {
+        top: 10px;
+        left: calc(50% + 10px);
+      }
+      .c {
+        top: calc(50% + 10px);
+        left: 10px;
+      }
+      .d {
+        top: calc(50% + 10px);
+        left: calc(50% + 10px);
+      }
+      #status {
+        color: #c5b3ff;
+        min-height: 24px;
+      }
+      .details {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        margin-top: 18px;
+      }
+      .panel {
+        background: #191e29;
+        border-radius: 8px;
+        padding: 16px;
+      }
+      pre {
+        white-space: pre-wrap;
+        font:
+          13px/1.5 ui-monospace,
+          monospace;
+        color: #b8c9de;
+        margin: 8px 0;
+      }
+      p {
+        margin: 8px 0;
+      }
+      .muted {
+        color: #a8b6cf;
+        font-size: 13px;
+      }
+      a {
+        color: #bba5ff;
+      }
+      @media (max-width: 850px) {
+        .controls {
+          grid-template-columns: 1fr 1fr;
+        }
+        .details {
+          grid-template-columns: 1fr;
+        }
+        .stats {
+          grid-template-columns: 1fr;
+        }
+        body {
+          padding: 14px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="badge">EXPERIMENTAL · STANDALONE · ONE EYE</div>
+    <h1>Nonlinear Foveation Lab</h1>
+    <a href="mesh.html">Explore the ordinary-mesh coverage problem →</a>
+    <p class="lede">
+      Spend scene samples near gaze, then reconstruct a normal perspective
+      image. This scene is evaluated directly at warped sample positions. It is
+      an owned ray-scene experiment, not an LMU renderer or a game performance
+      forecast.
+    </p>
+    <div class="controls">
+      <label
+        >Nonlinear strength <span id="strengthValue" class="value"></span
+        ><input
+          id="strength"
+          type="range"
+          min="0"
+          max="12"
+          step="0.1"
+          value="4"
+      /></label>
+      <label
+        >Source width / height scale <span id="scaleValue" class="value"></span
+        ><input
+          id="scale"
+          type="range"
+          min="0.2"
+          max="1"
+          step="0.01"
+          value="0.55"
+      /></label>
+      <label
+        >Quad focus width / height <span id="focusValue" class="value"></span
+        ><input
+          id="focus"
+          type="range"
+          min="0.1"
+          max="0.6"
+          step="0.01"
+          value="0.3"
+      /></label>
+      <label
+        >Output size per image<select id="resolution">
+          <option value="384">384 × 288</option>
+          <option value="512">512 × 384</option>
+          <option value="768" selected>768 × 576</option>
+          <option value="1024">1024 × 768</option>
+        </select></label
+      >
+      <label
+        >Extra material work <span id="workValue" class="value"></span
+        ><input id="work" type="range" min="0" max="64" step="1" value="8"
+      /></label>
+      <label
+        >Gaze X <span id="gazeXValue" class="value"></span
+        ><input
+          id="gazeX"
+          type="range"
+          min="-0.8"
+          max="0.8"
+          step="0.01"
+          value="0"
+      /></label>
+      <label
+        >Gaze Y <span id="gazeYValue" class="value"></span
+        ><input
+          id="gazeY"
+          type="range"
+          min="-0.8"
+          max="0.8"
+          step="0.01"
+          value="0"
+      /></label>
+      <div>
+        <label class="check"
+          ><input id="pointer" type="checkbox" checked /> Pointer sets gaze over
+          an image</label
+        ><label class="check"
+          ><input id="animate" type="checkbox" /> Scripted gaze + camera
+          motion</label
+        ><label class="check"
+          ><input id="filter" type="checkbox" checked /> Filter checker textures
+          by footprint</label
+        ><label class="check"
+          ><input id="ids" type="checkbox" /> Surface-ID colors</label
+        ><label class="check"
+          ><input id="density" type="checkbox" /> Density map instead of
+          source</label
+        >
+      </div>
+    </div>
+    <div class="actions">
+      <button id="central">Match 100% center density</button
+      ><button id="center">Center gaze</button
+      ><button id="quality">Measure color error</button
+      ><button id="benchmark">Measure GPU paths</button
+      ><button id="tests">Run correctness checks</button
+      ><button id="export">Save comparison image</button>
+    </div>
+    <div class="stats">
+      <div class="stat">
+        <strong id="budget"></strong
+        ><span>scene samples vs full resolution</span
+        ><small id="budgetDetail"></small>
+      </div>
+      <div class="stat">
+        <strong id="densityStat"></strong
+        ><span>central linear sample density</span
+        ><small id="densityDetail"></small>
+      </div>
+      <div class="stat">
+        <strong id="quadStat"></strong><span>quad comparator budget</span
+        ><small id="quadDetail"></small>
+      </div>
+    </div>
+    <div id="status" role="status">Initializing WebGL2…</div>
+    <div class="viewer">
+      <canvas id="view" width="1536" height="1152"></canvas
+      ><span class="tile-label a">Full-resolution reference</span
+      ><span class="tile-label b">Nonlinear render + reconstruction</span
+      ><span class="tile-label c" id="quadLabel"
+        >Quad-style context + focus</span
+      ><span class="tile-label d" id="sourceLabel"
+        >Warped source (stretched to fit)</span
+      >
+    </div>
+    <div class="details">
+      <section class="panel">
+        <h2>Measurements</h2>
+        <pre id="results">
+Use “Measure color error” or “Measure GPU paths”.</pre
+        >
+        <p class="muted">
+          Color error uses a four-sample-per-pixel reference in linear RGB. It
+          is not a perceptual score. GPU queries include
+          reconstruction/composition, exclude display/readback, and identify the
+          actual renderer. Budget matching counts scene samples, not total GPU
+          work.
+        </p>
+      </section>
+      <section class="panel">
+        <h2>What this proves—and what it doesn’t</h2>
+        <p class="muted">
+          The inverse map selects each scene ray before shading, so fewer source
+          pixels mean fewer scene evaluations. Reconstructing adds a full output
+          pass. The rectangle-preserving asinh map is nonlinear, not strictly
+          conformal; inspect its diagonal density transitions.
+        </p>
+        <p class="muted">
+          The ray-scene path bypasses curved-triangle rasterization. Native LMU
+          geometry, depth reconstruction, motion vectors, temporal history, UI,
+          post-processing and real eye-tracker latency remain separate research.
+          Quad blending/guard bands are absent here and would add cost. No LMU
+          FPS gain is claimed.
+        </p>
+        <pre id="device"></pre>
+      </section>
+    </div>
+    <script src="mapping.js"></script>
+    <script src="shaders.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

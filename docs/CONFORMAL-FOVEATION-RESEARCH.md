@@ -11,8 +11,11 @@ The proposed full D3D11 experiment below has **not** been implemented.
 An initial [standalone WebGL2 sampling fixture](../prototype/nonlinear-foveation/README.md)
 now implements the invertible mapping, direct nonuniform ray-scene sampling,
 color reconstruction and matched-budget quad-style comparison, with CPU/GPU
-correctness checks and scoped synthetic RTX 5090 measurements. It does not yet
-solve native mesh rasterization, depth reconstruction or LMU integration.
+correctness checks and scoped synthetic RTX 5090 measurements. An owned-mesh
+follow-up compares naive vertex warping, subdivision, and conservative primitive
+rectangles with exact fragment intersection/original depth. It demonstrates
+coverage correctness for its small fixture and the cost of subdivision/bounds;
+it does not solve native LMU mesh integration or reconstructed depth/history.
 Concurrent single-pass stereo (SPS) work is separate and is not included here.
 
 ## Finding and evidence status

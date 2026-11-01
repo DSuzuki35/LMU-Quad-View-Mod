@@ -62,7 +62,7 @@ reconstruction pass.
 ## Tests and measurements
 
 ```powershell
-node --test prototype/nonlinear-foveation/mapping.test.cjs
+node --test prototype/nonlinear-foveation/mapping.test.cjs prototype/nonlinear-foveation/mesh-data.test.cjs
 ```
 
 The UI's correctness button checks GPU identity images, extreme-gaze coverage,
@@ -75,6 +75,7 @@ Chrome/Edge profile with a local DevTools endpoint on port 19226, then run:
 
 ```powershell
 node prototype/nonlinear-foveation/gpu-smoke.cjs
+node prototype/nonlinear-foveation/mesh-smoke.cjs
 ```
 
 `CDP_URL` and `LAB_URL` override those endpoints. Node 22+ is needed for this
@@ -96,7 +97,7 @@ background load, repeated draws and this tiny scene limit interpretation.
 
 ## Observations on 2026-11-01
 
-Chrome/ANGLE reported NVIDIA RTX 5090, D3D11, not a software renderer. Five CPU
+Chrome/ANGLE reported NVIDIA RTX 5090, D3D11, not a software renderer. The first five CPU
 test groups passed; six identity image cases were byte-exact; extreme-gaze
 opaque-scene checks had no black/uncovered pixels. A gaze/camera excursion then
 return reproduced the original image exactly. Nine floating-point GPU probes had
@@ -122,12 +123,70 @@ game captures or a general GPU benchmark.
 
 ## Remaining engineering work
 
-This ray-scene fixture sidesteps native triangle rasterization. Warping only mesh
-vertices does not correctly rasterize curved projected edges or interpolate all
-attributes/depth. A subsequent owned-mesh test must quantify that problem and the
-cost of subdivision/conservative nonlinear rasterization before any LMU work.
+The ray-scene fixture sidesteps native triangle rasterization. The separate mesh
+experiment below quantifies that problem; its small owned material/geometry
+pipeline is not a replacement for LMU's native one.
 
 Depth reconstruction, visibility-aware color filtering, shared-edge handling,
 motion vectors/history, disocclusions, transparency, UI, post-processing, gaze
 latency and headset comfort remain unproven. The fixture reconstructs color only.
 Do not infer native LMU compatibility, CPU traversal savings, or an FPS increase.
+
+## Owned mesh experiment
+
+Open <http://127.0.0.1:18767/mesh.html>. Two overlapping triangles have different
+clip W values, smoothly varying UV colors, depth crossings, and near/side-plane
+clipping. Ordinary homogeneous clipping produces three triangles. Each source
+buffer is 640x480: this experiment deliberately keeps full resolution to isolate
+coverage, interpolation and depth from resolution savings.
+
+The analytic reference inverse-maps each source sample and intersects the original
+projected triangles. The ordinary hardware path agrees at zero warp. The candidate
+can either warp vertices, subdivide before warping, or draw one conservative
+rectangle per original clipped primitive. That last path performs original
+triangle intersection/perspective interpolation per fragment, discards outside
+coverage, and writes original depth for the hardware depth test.
+
+Metrics compare identical source sample positions **before** reconstruction.
+Alpha stores a primitive ID. Interior surface errors exclude one-pixel reference
+boundaries and the outermost image border. Color RMSE includes only matching,
+non-background interior surfaces. The magenta heatmap exposes surface errors;
+green exposes attribute errors. Neither metric validates reconstructed depth.
+
+At strength 4 and centered gaze on the same RTX 5090:
+
+| Candidate | Raster triangles | Wrong interior source pixels | Matched color RMSE /255 |
+| --- | ---: | ---: | ---: |
+| Warp original vertices | 3 | 16.33% | 10.26 |
+| Subdivision level 3 | 192 | 0.819% | 1.25 |
+| Subdivision level 6 | 12,288 | 0.00233% | 0.105 |
+| Conservative rectangles | 6 | 0% | 0.003 or less |
+
+The rectangle path also passed tests with gaze near image corners and strengths
+0.1/4/12. Its bounds enclose intervals of the radial scale `f(t)/t`, not merely
+the warped vertices. A one-source-pixel guard covers float/raster rounding.
+Optional edge refinement shrinks the rectangle: it continuously bounds boundary
+segments, retaining conservative intervals at a fixed recursion cap. It never
+uses sampled points alone to decide coverage. The desired tightness is a quarter
+source pixel; hitting the cap leaves a looser, still conservative bound.
+
+**Measure mesh paths** separates JavaScript CPU bound preparation from GPU drawing
+and reconstruction. It caches bounds for the GPU measurement, rotates order,
+uses two warmups and nine batches of 16 paths, and rejects disjoint clocks.
+Presentation, readback, CPU bounds and initial mesh upload are excluded from GPU
+times. The UI reports both costs. Zero CPU readings can mean browser timer
+quantization, not free computation.
+
+The initial refinement algorithm reduced centered rectangle area from 2.96x the
+source to 2.19x, but needed about 17.5 ms CPU for just three triangles at depth 10.
+A depth-3 cap used about 0.2 ms and left 2.50x area. GPU path medians were about
+0.001 ms ordinary, 0.007 ms vertex-warp/subdivision-3, and 0.010–0.011 ms for
+subdivision-6/rectangles including reconstruction. These tiny light-material,
+full-source runs demonstrate overhead, **not a foveation performance gain**.
+The unrestricted CPU refinement is unsuitable as a per-triangle game algorithm.
+
+There is no general-purpose shader rewriting here. LMU integration would still
+need primitive extraction, per-material interpolation and derivatives, clipping,
+transparency/order, multisampling, motion/depth history, UI/postprocessing, and
+an efficient conservative-bound strategy. This prototype supports further owned
+renderer research; it does not justify enabling a nonlinear LMU mode.
