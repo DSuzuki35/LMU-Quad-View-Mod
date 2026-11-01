@@ -21,7 +21,8 @@
 #include <windows.h>
 
 namespace {
-constexpr UINT width = 640, height = 480;
+// One fixture per process; selected once by main before any resources exist.
+UINT width = 640, height = 480;
 template <class T> struct Com {
     T *p = nullptr;
     Com() = default;
@@ -249,17 +250,69 @@ void saveBmp(const std::filesystem::path &file, const Image &image) {
               static_cast<std::streamsize>(bgra.size()));
     require(bool(out), "Could not export native image");
 }
+std::vector<uint8_t> cpuReconstruct(const Image &source, float strength, float gx, float gy,
+                                    float scale) {
+    const UINT sw = static_cast<UINT>(std::round(width * scale)),
+               sh = static_cast<UINT>(std::round(height * scale));
+    std::vector<uint8_t> result(width * height * 4);
+    for (UINT y = 0; y < height; y++)
+        for (UINT x = 0; x < width; x++) {
+            double px = 2 * (double(x) + .5) / width - 1, py = 1 - 2 * (double(y) + .5) / height;
+            const double dx = px - gx, dy = py - gy;
+            const double t = std::max(std::abs(dx) / (dx >= 0 ? 1 - double(gx) : 1 + double(gx)),
+                                      std::abs(dy) / (dy >= 0 ? 1 - double(gy) : 1 + double(gy)));
+            if (strength > 0 && t > 0) {
+                const double factor = std::asinh(strength * t) / (std::asinh(double(strength)) * t);
+                px = gx + dx * factor;
+                py = gy + dy * factor;
+            }
+            const double sx = std::clamp((px * .5 + .5) * sw - .5, 0., double(sw - 1));
+            const double sy = std::clamp((.5 - py * .5) * sh - .5, 0., double(sh - 1));
+            const UINT x0 = static_cast<UINT>(sx), y0 = static_cast<UINT>(sy),
+                       x1 = std::min(x0 + 1, sw - 1), y1 = std::min(y0 + 1, sh - 1);
+            const double fx = sx - x0, fy = sy - y0;
+            for (size_t c = 0; c < 4; c++) {
+                const auto sample = [&](UINT xx, UINT yy) {
+                    return double(source.rgba[(size_t(yy) * width + xx) * 4 + c]);
+                };
+                const double top = sample(x0, y0) * (1 - fx) + sample(x1, y0) * fx;
+                const double bottom = sample(x0, y1) * (1 - fx) + sample(x1, y1) * fx;
+                result[(size_t(y) * width + x) * 4 + c] =
+                    static_cast<uint8_t>(std::lround(top * (1 - fy) + bottom * fy));
+            }
+        }
+    return result;
+}
+unsigned maxDifference(const std::vector<uint8_t> &a, const std::vector<uint8_t> &b) {
+    require(a.size() == b.size(), "Image size mismatch");
+    unsigned maximum = 0;
+    for (size_t i = 0; i < a.size(); i++)
+        maximum = std::max(maximum, static_cast<unsigned>(std::abs(int(a[i]) - int(b[i]))));
+    return maximum;
+}
+double rgbRmse(const std::vector<uint8_t> &a, const std::vector<uint8_t> &b) {
+    require(a.size() == b.size(), "Image size mismatch");
+    double sum = 0;
+    for (size_t i = 0; i < a.size(); i += 4)
+        for (size_t c = 0; c < 3; c++) {
+            const double d = double(a[i + c]) - b[i + c];
+            sum += d * d;
+        }
+    return std::sqrt(sum / (double(a.size()) * .75));
+}
 enum class Path { ordinary, vertices, bounded, analytic };
 class Fixture {
     Com<ID3D11Device> device;
     Com<ID3D11DeviceContext> context;
     Com<ID3D11VertexShader> ordinaryVS, warpedVS, fullscreenVS;
     Com<ID3D11GeometryShader> boundsGS;
-    Com<ID3D11PixelShader> ordinaryPS, boundedPS, analyticPS;
+    Com<ID3D11PixelShader> ordinaryPS, boundedPS, analyticPS, reconstructPS;
     Com<ID3D11Buffer> vertices, constants;
     Com<ID3D11InputLayout> layout;
-    Com<ID3D11Texture2D> color, depth, colorRead, depthRead;
-    Com<ID3D11RenderTargetView> rtv;
+    Com<ID3D11Texture2D> color, depth, colorRead, depthRead, outputColor;
+    Com<ID3D11RenderTargetView> rtv, outputRtv;
+    Com<ID3D11ShaderResourceView> sourceView;
+    Com<ID3D11SamplerState> sampler;
     Com<ID3D11DepthStencilView> dsv;
     Com<ID3D11RasterizerState> raster;
     Com<ID3D11DepthStencilState> depthState;
@@ -335,10 +388,11 @@ class Fixture {
                       "CreateInputLayout");
             }
         }
-        for (const auto &entry : std::array<std::pair<const char *, Com<ID3D11PixelShader> *>, 3>{
+        for (const auto &entry : std::array<std::pair<const char *, Com<ID3D11PixelShader> *>, 4>{
                  {{"OrdinaryPS", &ordinaryPS},
                   {"BoundedPS", &boundedPS},
-                  {"AnalyticPS", &analyticPS}}}) {
+                  {"AnalyticPS", &analyticPS},
+                  {"ReconstructPS", &reconstructPS}}}) {
             Com<ID3DBlob> code;
             compile(entry.first, "ps_5_0", code);
             check(device->CreatePixelShader(code->GetBufferPointer(), code->GetBufferSize(),
@@ -381,9 +435,23 @@ class Fixture {
         texture.ArraySize = 1;
         texture.SampleDesc.Count = 1;
         texture.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        texture.BindFlags = D3D11_BIND_RENDER_TARGET;
+        texture.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
         check(device->CreateTexture2D(&texture, nullptr, &color.p), "Create color");
         check(device->CreateRenderTargetView(color.p, nullptr, &rtv.p), "Create RTV");
+        check(device->CreateShaderResourceView(color.p, nullptr, &sourceView.p),
+              "Create source SRV");
+        texture.BindFlags = D3D11_BIND_RENDER_TARGET;
+        check(device->CreateTexture2D(&texture, nullptr, &outputColor.p),
+              "Create reconstructed color");
+        check(device->CreateRenderTargetView(outputColor.p, nullptr, &outputRtv.p),
+              "Create output RTV");
+        D3D11_SAMPLER_DESC sampling{};
+        sampling.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sampling.AddressU = sampling.AddressV = sampling.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sampling.ComparisonFunc = D3D11_COMPARISON_NEVER;
+        sampling.MaxAnisotropy = 1;
+        sampling.MaxLOD = D3D11_FLOAT32_MAX;
+        check(device->CreateSamplerState(&sampling, &sampler.p), "Create reconstruction sampler");
         texture.Format = DXGI_FORMAT_R32_TYPELESS;
         texture.BindFlags = D3D11_BIND_DEPTH_STENCIL;
         check(device->CreateTexture2D(&texture, nullptr, &depth.p), "Create depth");
@@ -413,9 +481,11 @@ class Fixture {
         if (context.p)
             context->ClearState();
     }
-    void configure(float k, float gx, float gy, UINT tiles = 1, float work = 0) {
+    void configure(float k, float gx, float gy, UINT tiles = 1, float work = 0, float scale = 1) {
         values.config = {gx, gy, k, work};
         values.dimensions.w = float(tiles);
+        values.dimensions.x = std::max(1.f, std::round(width * scale));
+        values.dimensions.y = std::max(1.f, std::round(height * scale));
         context->UpdateSubresource(constants.p, 0, nullptr, &values, 0, 0);
     }
     void draw(Path path) {
@@ -425,7 +495,7 @@ class Fixture {
         context->OMSetRenderTargets(1, &rtv.p, dsv.p);
         context->OMSetDepthStencilState(depthState.p, 0);
         context->RSSetState(raster.p);
-        const D3D11_VIEWPORT viewport{0, 0, float(width), float(height), 0, 1};
+        const D3D11_VIEWPORT viewport{0, 0, values.dimensions.x, values.dimensions.y, 0, 1};
         context->RSSetViewports(1, &viewport);
         context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         const UINT stride = sizeof(Vertex), offset = 0;
@@ -449,6 +519,34 @@ class Fixture {
             const UINT tiles = static_cast<UINT>(values.dimensions.w);
             context->DrawInstanced(vertexCount, tiles * tiles, 0, 0);
         }
+    }
+    void reconstruct() {
+        context->OMSetRenderTargets(1, &outputRtv.p, nullptr);
+        const D3D11_VIEWPORT viewport{0, 0, float(width), float(height), 0, 1};
+        context->RSSetViewports(1, &viewport);
+        context->IASetInputLayout(nullptr);
+        context->VSSetShader(fullscreenVS.p, nullptr, 0);
+        context->GSSetShader(nullptr, nullptr, 0);
+        context->PSSetShader(reconstructPS.p, nullptr, 0);
+        context->PSSetConstantBuffers(0, 1, &constants.p);
+        context->PSSetShaderResources(0, 1, &sourceView.p);
+        context->PSSetSamplers(0, 1, &sampler.p);
+        context->Draw(3, 0);
+        ID3D11ShaderResourceView *empty = nullptr;
+        context->PSSetShaderResources(0, 1, &empty);
+    }
+    std::vector<uint8_t> readReconstruction() {
+        context->OMSetRenderTargets(0, nullptr, nullptr);
+        context->CopyResource(colorRead.p, outputColor.p);
+        std::vector<uint8_t> result(width * height * 4);
+        D3D11_MAPPED_SUBRESOURCE mapped{};
+        check(context->Map(colorRead.p, 0, D3D11_MAP_READ, 0, &mapped), "Map reconstruction");
+        for (UINT y = 0; y < height; y++)
+            std::memcpy(result.data() + size_t(y) * width * 4,
+                        static_cast<uint8_t *>(mapped.pData) + size_t(y) * mapped.RowPitch,
+                        width * 4);
+        context->Unmap(colorRead.p, 0);
+        return result;
     }
     Image read() {
         context->OMSetRenderTargets(0, nullptr, nullptr);
@@ -485,7 +583,7 @@ class Fixture {
         context->Flush();
         return queryData<D3D11_QUERY_DATA_PIPELINE_STATISTICS>(query.p);
     }
-    double time(Path path) {
+    double time(Path path, bool complete = false) {
         Com<ID3D11Query> disjoint, start, finish;
         D3D11_QUERY_DESC desc{D3D11_QUERY_TIMESTAMP_DISJOINT, 0};
         check(device->CreateQuery(&desc, &disjoint.p), "Create disjoint query");
@@ -494,8 +592,11 @@ class Fixture {
         check(device->CreateQuery(&desc, &finish.p), "Create finish query");
         context->Begin(disjoint.p);
         context->End(start.p);
-        for (int repeat = 0; repeat < 32; repeat++)
+        for (int repeat = 0; repeat < 32; repeat++) {
             draw(path);
+            if (complete)
+                reconstruct();
+        }
         context->End(finish.p);
         context->End(disjoint.p);
         context->Flush();
@@ -515,12 +616,27 @@ void printMetrics(const Metrics &m) {
 int main(int argc, char **argv) {
     try {
         require(argc >= 3, "Usage: native.exe shader.hlsl output-directory [--hardware]");
-        const bool hardware = argc >= 4 && std::string(argv[3]) == "--hardware";
+        bool hardware = false, large = false;
+        for (int i = 3; i < argc; i++) {
+            const std::string argument = argv[i];
+            if (argument == "--hardware")
+                hardware = true;
+            else if (argument == "--large")
+                large = true;
+            else
+                throw std::runtime_error("Unknown native probe argument: " + argument);
+        }
+        require(!large || hardware, "Large preset is hardware-only");
+        if (large) {
+            width = 2048;
+            height = 1536;
+        }
         const std::filesystem::path output = argv[2];
         std::filesystem::create_directories(output);
         Fixture fixture(argv[1], hardware);
         std::cout << std::setprecision(10) << "{\"adapter\":\"" << fixture.adapter
-                  << "\",\"hardware\":" << (hardware ? "true" : "false") << ",\"cases\":[\n";
+                  << "\",\"hardware\":" << (hardware ? "true" : "false") << ",\"width\":" << width
+                  << ",\"height\":" << height << ",\"cases\":[\n";
         bool comma = false;
         const auto triangles = makeScene();
         for (const float k : {0.f, .1f, 4.f, 12.f})
@@ -556,6 +672,10 @@ int main(int argc, char **argv) {
                 printMetrics(cpu);
                 std::cout << '}';
                 if (k == 0) {
+                    fixture.draw(Path::bounded);
+                    fixture.reconstruct();
+                    require(fixture.readReconstruction() == bounded.rgba,
+                            "Identity reconstruction is not byte-exact");
                     fixture.draw(Path::ordinary);
                     const auto ordinary = fixture.read();
                     const auto identity = compare(ordinary, reference);
@@ -582,6 +702,32 @@ int main(int argc, char **argv) {
                 }
                 std::cout << '}';
             }
+        std::cout << "],\"reconstruction\":[";
+        bool reconstructionComma = false;
+        for (const auto gaze :
+             std::array<std::array<float, 2>, 3>{{{0, 0}, {.8f, -.8f}, {-.7f, .6f}}}) {
+            fixture.configure(4, gaze[0], gaze[1], 1, 0, .55f);
+            fixture.draw(Path::bounded);
+            const auto source = fixture.read();
+            fixture.reconstruct();
+            const auto reconstructed = fixture.readReconstruction();
+            const unsigned maximum =
+                maxDifference(reconstructed, cpuReconstruct(source, 4, gaze[0], gaze[1], .55f));
+            require(maximum <= 2, "Native reconstruction differs from CPU bilinear reference");
+            const double error = rgbRmse(reconstructed, cpuReference(triangles, 0, 0, 0).rgba);
+            if (reconstructionComma)
+                std::cout << ',';
+            reconstructionComma = true;
+            std::cout << "{\"scale\":0.55,\"gaze\":[" << gaze[0] << ',' << gaze[1]
+                      << "],\"cpuMaximumCodeDifference\":" << maximum
+                      << ",\"ordinaryColorRmse255\":" << error << '}';
+            if (hardware && gaze[0] == 0) {
+                saveBmp(output / "hardware-reconstructed-55.bmp", Image{reconstructed, {}});
+                fixture.configure(0, 0, 0);
+                fixture.draw(Path::ordinary);
+                saveBmp(output / "hardware-ordinary.bmp", fixture.read());
+            }
+        }
         fixture.configure(4, 0, 0, 4);
         const auto tiledStats = fixture.statistics(Path::bounded);
         require(tiledStats.GSInvocations == 48 && tiledStats.GSPrimitives == 96,
@@ -681,7 +827,42 @@ int main(int argc, char **argv) {
                     std::cout << "]}";
                 }
         }
-        std::cout << "],\"timingScope\":\"Source rendering only, no reconstruction. One instanced "
+        std::cout << "],\"completePaths\":[";
+        if (hardware) {
+            bool completeComma = false;
+            for (const UINT tiles : {1u, 16u, 64u})
+                for (const float work : {0.f, 32.f, 128.f}) {
+                    std::array<std::vector<double>, 3> measured;
+                    for (int iteration = 0; iteration < 11; iteration++)
+                        for (size_t j = 0; j < 3; j++) {
+                            const size_t index = (static_cast<size_t>(iteration) + j) % 3;
+                            fixture.configure(4, 0, 0, tiles, work, index == 2 ? .55f : 1.f);
+                            const double ms = fixture.time(
+                                index == 0 ? Path::ordinary : Path::bounded, index != 0);
+                            if (iteration >= 2)
+                                measured[index].push_back(ms);
+                        }
+                    if (completeComma)
+                        std::cout << ',';
+                    completeComma = true;
+                    std::cout << "{\"inputTriangles\":" << 3 * tiles * tiles
+                              << ",\"materialWork\":" << work << ",\"paths\":[";
+                    const std::array<const char *, 3> labels{
+                        "ordinary", "boundedFullPlusReconstruction", "bounded55PlusReconstruction"};
+                    for (size_t i = 0; i < 3; i++) {
+                        auto &samples = measured[i];
+                        std::sort(samples.begin(), samples.end());
+                        if (i)
+                            std::cout << ',';
+                        std::cout << "{\"path\":\"" << labels[i] << "\",\"medianMs\":" << samples[4]
+                                  << ",\"minMs\":" << samples.front()
+                                  << ",\"maxMs\":" << samples.back() << '}';
+                    }
+                    std::cout << "]}";
+                }
+        }
+        std::cout << "],\"timingScope\":\"pipeline/scaling: source only; completePaths: source "
+                     "plus color reconstruction. Source allocations stay full size. One instanced "
                      "draw per path, no engine traversal. 2 warmups, 9 rotated "
                      "batches of 32. CPU creation/upload/readback excluded.\",\"passed\":true}\n";
         return 0;

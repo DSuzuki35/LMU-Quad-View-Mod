@@ -35,3 +35,11 @@ materials. Record GS/PS invocation counts and source-only GPU time; bounds remai
 on the GPU and all instances are one draw. This intentionally excludes engine
 traversal and per-object draw submission. Do not use WARP scaling timings as GPU
 evidence. The full-source benchmark remains a cost test, not a foveation speedup.
+
+Next increment: add native color reconstruction from a smaller logical source
+viewport into a separate full-sized target. Keep source/depth allocations full
+sized for this prototype, explicitly avoiding a memory-saving claim. Verify
+zero-warp/full-size reconstruction is byte-exact, export nonidentity outputs, and
+measure complete ordinary vs bounded+reconstruction paths at light/heavier shader
+costs and geometry counts. Add a hardware-only larger-output preset. Keep the
+source-only results separate; no reconstructed depth or matched-quality claim.

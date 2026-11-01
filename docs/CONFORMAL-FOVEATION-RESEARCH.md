@@ -22,8 +22,11 @@ variation than the quad comparator despite slightly lower spatial RMS. This
 reinforces the need to test stability, not just sample counts and still images.
 A native offscreen D3D11 probe now computes coarse bounds in a geometry shader,
 with original-depth fragment intersection, GPU/independent CPU comparisons,
-WARP and RTX 5090 checks, and source-only statistics/timings. It does not yet
-implement the proposed full native reconstruction/comparison pipeline.
+WARP and RTX 5090 checks, and source-only statistics/timings. It also reconstructs
+native color from a reduced logical source and separately times the complete
+color path, including a 2048x1536 hardware preset. Gains appear only in selected
+expensive-shading fixtures; the full native depth/quality/quad comparison and
+LMU integration pipeline remain unimplemented.
 Concurrent single-pass stereo (SPS) work is separate and is not included here.
 
 ## Finding and evidence status

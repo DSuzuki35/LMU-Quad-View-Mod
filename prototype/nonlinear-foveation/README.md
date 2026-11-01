@@ -254,6 +254,7 @@ Build with a Windows x64 MinGW-w64 C++17 toolchain (tested with LLVM-MinGW):
 ```powershell
 ./prototype/nonlinear-foveation/build-native.ps1
 # Or: ./prototype/nonlinear-foveation/build-native.ps1 -Compiler C:/path/to/g++.exe
+# Add -Large to also run the 2048x1536 hardware preset.
 ```
 
 The script runs WARP correctness first, then hardware on D3D11's default adapter.
@@ -315,3 +316,40 @@ primitive guards and raster scheduling contribute additional work; these counts
 alone do not isolate each cause. The scaling test confirms the GPU mechanism
 works across many primitives, while showing why it must be measured as a complete
 reduced-resolution pipeline before it can be called an optimization.
+
+### Complete native color path
+
+The probe now also reconstructs color into a separate full-sized output from a
+55%-width/height logical source viewport. It clamps filtering to the logical
+source's texel centers, including off-center gaze. Source and depth allocations
+remain full-sized in this first implementation; their clears are included in
+the measured path. **No memory saving or reconstructed depth is claimed.**
+
+Zero-warp/full-size reconstruction is byte-exact on WARP and hardware. At 55%,
+three gaze positions pass an independent double-precision CPU forward-map and
+bilinear-filter comparison with at most two UNORM8 code values of difference
+(sampler fractional precision and color quantization are included). These checks
+also pass in the 2048x1536 hardware preset. Returned ordinary geometry is visually
+aligned in the inspected exports; edge filtering and reduced peripheral samples
+still change quality.
+
+The JSON keeps `pipeline` / `scaling` source-only timings separate from
+`completePaths`, which includes source rendering and color reconstruction.
+At 2048x1536, strength 4, centered gaze, 55% source uses 951,470 logical source
+pixels vs 3,145,728 full output pixels, with nominal center linear density 105%.
+Representative RTX 5090 medians (ms):
+
+| Input triangles | Material work | Ordinary | Reduced source + reconstruction |
+| --- | ---: | ---: | ---: |
+| 3 | 0 | 0.0060 | 0.0212 |
+| 3 | 32 | 0.0203 | 0.0285 |
+| 3 | 128 | 0.0769 | 0.0645 |
+| 768 | 128 | 0.0860 | 0.0809 |
+| 12,288 | 128 | 0.1012 | 0.1495 |
+
+Only the expensive, less geometry-heavy cases won in this run. Work 128 is an
+artificial ALU loop, not a characterization of LMU's materials. Sampling quality
+is different, the native probe has no quad comparator yet, and sub-millisecond
+fixture timings are sensitive to clocks/load. This is evidence to continue
+targeted research, not evidence of an LMU FPS gain. Correct reconstructed depth,
+temporal stability and a realistic material/pass model remain required gates.

@@ -1,4 +1,4 @@
-param([string]$Compiler = 'g++.exe')
+param([string]$Compiler = 'g++.exe', [switch]$Large)
 $ErrorActionPreference = 'Stop'
 $output = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../mod/build/nonlinear/native'))
 New-Item -ItemType Directory -Path $output -Force | Out-Null
@@ -11,4 +11,11 @@ foreach ($mode in @('warp','hardware')) {
     & $executable @arguments | Set-Content -LiteralPath (Join-Path $output ($mode+'-report.json')) -Encoding UTF8
     if ($LASTEXITCODE -ne 0) { throw "Native nonlinear $mode checks failed" }
     Write-Host "Native nonlinear $mode checks passed"
+}
+if ($Large) {
+    $largeOutput = Join-Path $output 'large'
+    & $executable (Join-Path $PSScriptRoot 'native.hlsl') $largeOutput --hardware --large |
+        Set-Content -LiteralPath (Join-Path $output 'large-report.json') -Encoding UTF8
+    if ($LASTEXITCODE -ne 0) { throw 'Native nonlinear large hardware checks failed' }
+    Write-Host 'Native nonlinear 2048x1536 hardware checks passed'
 }

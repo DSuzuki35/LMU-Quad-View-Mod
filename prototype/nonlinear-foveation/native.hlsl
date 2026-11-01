@@ -26,6 +26,20 @@ float2 warp(float2 p, bool inverseMap) {
     float mapped = inverseMap ? sinh(a * t) / k : asinhPositive(k * t) / a;
     return config.xy + (p - config.xy) * (mapped / t);
 }
+Texture2D<float4> sourceColor : register(t0);
+SamplerState sourceSampler : register(s0);
+float4 ReconstructPS(float4 position : SV_Position) : SV_Target {
+    uint physicalWidth, physicalHeight;
+    sourceColor.GetDimensions(physicalWidth, physicalHeight);
+    float2 outputSize = float2(physicalWidth, physicalHeight);
+    float2 ndc = float2(2 * position.x / outputSize.x - 1, 1 - 2 * position.y / outputSize.y);
+    float2 sourceNdc = warp(ndc, false);
+    float2 sourcePixel = (sourceNdc * float2(.5, -.5) + .5) * dimensions.xy;
+    // This probe uses a small logical viewport in a full-sized allocation.
+    // Clamp to the logical source's texel centers, never the unused clear area.
+    sourcePixel = clamp(sourcePixel, .5, dimensions.xy - .5);
+    return sourceColor.SampleLevel(sourceSampler, sourcePixel / outputSize, 0);
+}
 float radialScale(float t) {
     float k = config.z;
     if (k < .0001)
