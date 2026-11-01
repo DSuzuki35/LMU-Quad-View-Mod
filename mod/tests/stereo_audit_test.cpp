@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "../stereo_audit.hpp"
+#include "../quad_math.hpp"
 #include <d3dcompiler.h>
 #include <cassert>
 #include <cstring>
@@ -8,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <locale>
+#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
@@ -27,6 +29,10 @@ struct NativeFixture {
     alignas(8) std::array<unsigned char,0x4a8> item{};
     alignas(8) std::array<unsigned char,0xd4> mesh{};
     alignas(8) std::array<unsigned char,0x110> shader{};
+    alignas(8) std::array<unsigned char,0x5d0> view{};
+    alignas(8) std::array<unsigned char,0x418> camera{};
+    int32_t cameraMode=0;
+    uintptr_t currentView=0;
     uint64_t bucketPointer=0,itemPointer=0,meshPointer=0;
     template<class T,size_t N> static void put(std::array<unsigned char,N>& bytes,size_t offset,T value){std::memcpy(bytes.data()+offset,&value,sizeof(value));}
     template<size_t N> static void vector(std::array<unsigned char,N>& bytes,size_t offset,uint64_t* pointer){
@@ -36,9 +42,13 @@ struct NativeFixture {
         bucketPointer=reinterpret_cast<uint64_t>(bucket.data());itemPointer=reinterpret_cast<uint64_t>(item.data());meshPointer=reinterpret_cast<uint64_t>(mesh.data());
         vector(scene,0xdb0,&bucketPointer);vector(bucket,0x4f0,&itemPointer);vector(item,0x490,&meshPointer);
         put(mesh,0,uint32_t(0x400000));put(mesh,0xcc,uint64_t(1));put(shader,0xf8,uint32_t(0x8000));put(shader,0x108,uint64_t(1));
+        currentView=reinterpret_cast<uintptr_t>(view.data());
+        const lmuqv::Matrix identity{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+        put(view,0x21c,int32_t(1));put(view,0x1dc,identity);put(view,0x360,identity);put(view,0x58c,identity);put(view,0x3a0,identity);
+        for(unsigned eye=0;eye<2;++eye){auto relative=identity;relative[12]=eye?0.03125f:-0.03125f;put(camera,0x70+eye*0x6c,relative);put(camera,0x148+eye*0x6c,identity);put(camera,0x220+eye*0x6c,identity);}
     }
     bool sameMemory(const NativeFixture& other)const{
-        return scene==other.scene&&bucket==other.bucket&&item==other.item&&mesh==other.mesh&&shader==other.shader&&
+        return scene==other.scene&&bucket==other.bucket&&item==other.item&&mesh==other.mesh&&shader==other.shader&&view==other.view&&camera==other.camera&&cameraMode==other.cameraMode&&currentView==other.currentView&&
             bucketPointer==other.bucketPointer&&itemPointer==other.itemPointer&&meshPointer==other.meshPointer;
     }
 };
@@ -63,7 +73,7 @@ bool nativeReadable(const void* p,size_t bytes){
     const auto extraBegin=reinterpret_cast<uintptr_t>(repeatedMeshes.data());
     return address>=extraBegin&&address-extraBegin<=sizeof(repeatedMeshes)&&bytes<=sizeof(repeatedMeshes)-(address-extraBegin);
 }
-lmuqv::StereoNativePassInfo nativeInfo(){return {nativeFixture.scene.data(),nativeFixture.shader.data(),0x51df1d,17,true,nativeReadable};}
+lmuqv::StereoNativePassInfo nativeInfo(){return {nativeFixture.scene.data(),nativeFixture.view.data(),0x51df1d,17,true,nativeReadable,nativeFixture.camera.data(),&nativeFixture.cameraMode,&nativeFixture.currentView};}
 }
 #include "stereo_resource_trace_test.hpp"
 int main(int argc,char** argv){
@@ -211,11 +221,49 @@ int main(int argc,char** argv){
     assert(nativeJson.find("\"begin_sequence\":1,\"end_sequence\":5")!=std::string::npos&&nativeJson.find("\"sequence\":4")!=std::string::npos);
     assert(nativeJson.find("does not preserve contents or native lifetimes")!=std::string::npos);
     drop(dsv);drop(depthTexture);drop(secondRtv);drop(secondTexture);
+    // One native main-view observation per eye, copied before consumers. A
+    // source mutation after capture must not alter the serialized left camera.
+    stereo_audit_frame(false);stereo_audit_frame(true);
+    NativeFixture::put(nativeFixture.camera,0x3f0,0.12345679f);
+    auto captureCameraPair=[&]{for(unsigned eye=0;eye<2;++eye){
+        StereoAuditScope scope{StereoAuditPass(eye)};StereoAuditGroup group(31);
+        NativeFixture::put(nativeFixture.view,0x5cc,int32_t(eye));
+        lmuqv::Matrix current{1,0,0,0,0,1,0,0,0,0,1,0,eye?0.0625f:0,0,0,1};
+        NativeFixture::put(nativeFixture.view,0x1dc,current);NativeFixture::put(nativeFixture.view,0x3a0,current);
+        const auto token=stereo_audit_native_pass_begin(info);assert(token.entered);draw();stereo_audit_native_pass_end(token);
+    }};
+    captureCameraPair();
+    NativeFixture::put(nativeFixture.camera,0x70,float(1234));
+    stereo_audit_frame_end();
+    // A second frame's non-finite input must serialize no invalid number and
+    // cannot reuse the preceding frame's right camera.
+    {StereoAuditScope scope{StereoAuditPass::outer0};StereoAuditGroup group(31);
+        NativeFixture::put(nativeFixture.camera,0x70,std::numeric_limits<float>::infinity());
+        const auto token=stereo_audit_native_pass_begin(info);assert(token.entered);draw();stereo_audit_native_pass_end(token);}
+    stereo_audit_frame_end();
+    std::string cameraJson;for(const auto& file:files(directory)){const auto data=read(file);if(data.find("\"camera_comparisons\":[{\"generation\"")!=std::string::npos&&data.find("\"available\":true")!=std::string::npos)cameraJson=data;}
+    assert(!cameraJson.empty()&&cameraJson.find("\"relative_eye\":[[1,0,0,0,0,1,0,0,0,0,1,0,-0.03125")!=std::string::npos);
+    assert(cameraJson.find("\"current_error\":0,\"projection_error\":0,\"far_projection_error\":0,\"derived_error\":0")!=std::string::npos);
+    assert(cameraJson.find("\"scheduling_eligible\":false")!=std::string::npos&&cameraJson.find("\"relative_eye\":[[1234")==std::string::npos);
+    assert(cameraJson.find("0.12345679104328156")!=std::string::npos&&cameraJson.find("non-finite camera numbers")!=std::string::npos);
+    assert(cameraJson.find("\"values\":null")!=std::string::npos&&cameraJson.find("\"current_error\":null")!=std::string::npos);
+    nativeFixture=fixtureBefore;
+    // A captured valid pair cannot establish uniqueness if the scope cap hides
+    // a later duplicate, even when other retained scopes use a different kind.
+    stereo_audit_frame(false);stereo_audit_frame(true);captureCameraPair();
+    {StereoAuditScope scope{StereoAuditPass::focus0};StereoAuditGroup group(31);
+        for(unsigned i=0;i<126;++i){const auto token=stereo_audit_native_pass_begin(info);assert(token.entered);stereo_audit_native_pass_end(token);}
+        assert(!stereo_audit_native_pass_begin(info).entered);}
+    stereo_audit_frame_end();stereo_audit_frame(false);stereo_audit_frame(true);
+    std::string truncatedJson;for(const auto& file:files(directory)){const auto data=read(file);if(data.find("\"scopes_copied\":128")!=std::string::npos&&data.find("\"packets_copied\":128")!=std::string::npos)truncatedJson=data;}
+    assert(truncatedJson.find("capture incomplete")!=std::string::npos&&truncatedJson.find("\"available\":true")==std::string::npos);
+    assert(truncatedJson.find("\"current_error\":null")!=std::string::npos);
     // A normal close on another thread saves stable buffered records, without
     // D3D context calls there; hook/resource cleanup waits for the open scope.
     stereo_audit_frame(false);stereo_audit_frame(true);
+    captureCameraPair();
     {StereoAuditScope scope(StereoAuditPass::focus0);StereoAuditGroup group(31);
-        // A stale token must not close this generation's index-zero scope.
+        // A stale token must not close a scope in this generation.
         auto invalid=info;invalid.readable=nullptr;const auto invalidToken=stereo_audit_native_pass_begin(invalid);assert(invalidToken.entered);stereo_audit_native_pass_end(stale);
         stereo_audit_native_pass_end(invalidToken);
         StereoNativePrepareInfo invalidMetadata{nativeFixture.shader.data(),0,false,nullptr};
@@ -223,10 +271,12 @@ int main(int argc,char** argv){
         throwNativeReader=true;auto aborted=stereo_audit_native_pass_begin(info);throwNativeReader=false;assert(aborted.entered);stereo_audit_native_pass_end(aborted);
         const auto afterAbort=nativeReads;assert(!stereo_audit_native_pass_begin(info).entered&&nativeReads==afterAbort);
         draw();std::thread close([]{stereo_audit_stop();});close.join();assert(!stereo_audit_enabled());}
-    assert(files(directory).size()==4&&contains("cleanup deferred"));draw();
+    assert(files(directory).size()==6&&contains("cleanup deferred"));draw();
     std::string invalidJson;for(const auto& file:files(directory)){const auto data=read(file);if(data.find("\"reason\":\"session_end\"")!=std::string::npos)invalidJson=data;}
     assert(invalidJson.find("\"aborted\":true")!=std::string::npos&&invalidJson.find("missing readable callback")!=std::string::npos);
-    assert(invalidJson.find("\"begin_sequence\":1,\"end_sequence\":2")!=std::string::npos&&invalidJson.find("\"shader_flags\":null")!=std::string::npos);
+    assert(invalidJson.find("\"begin_sequence\":7,\"end_sequence\":8")!=std::string::npos&&invalidJson.find("\"shader_flags\":null")!=std::string::npos);
+    assert(invalidJson.find("\"camera\":{\"complete\":false")!=std::string::npos&&invalidJson.find("\"current_error\":null")!=std::string::npos);
+    assert(invalidJson.find("capture incomplete")!=std::string::npos&&invalidJson.find("\"available\":true")==std::string::npos);
     // Confirm capture hooks never changed the resulting image.
     auto readDesc=td;readDesc.BindFlags=0;readDesc.Usage=D3D11_USAGE_STAGING;readDesc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;ID3D11Texture2D* staging=nullptr;assert(SUCCEEDED(device->CreateTexture2D(&readDesc,nullptr,&staging)));
     context->CopyResource(staging,texture);D3D11_MAPPED_SUBRESOURCE map{};assert(SUCCEEDED(context->Map(staging,0,D3D11_MAP_READ,0,&map)));uint32_t pixel=0;std::memcpy(&pixel,static_cast<const char*>(map.pData)+4*map.RowPitch+4*4,4);assert(pixel==0xff00ff00u);context->Unmap(staging,0);drop(staging);

@@ -22,6 +22,11 @@ struct StereoNativePassInfo {
     uint32_t flags=0;
     bool lastMainPass=false;
     bool(*readable)(const void*,size_t)=nullptr;
+    // Optional addresses only; bounded capture reads them inside the active
+    // owner-thread group-31 gate. Existing aggregate initializers remain valid.
+    const void* cameraState=nullptr;
+    const void* cameraMode=nullptr;
+    const void* currentView=nullptr;
 };
 struct StereoNativePassToken {bool entered=false;unsigned index=0;uint64_t generation=0;};
 StereoNativePassToken stereo_audit_native_pass_begin(const StereoNativePassInfo&);

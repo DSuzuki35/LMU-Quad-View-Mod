@@ -3,6 +3,7 @@
 #include "stereo_audit.hpp"
 #include "stereo_resource_trace.hpp"
 #include "native_stereo_packets.hpp"
+#include "native_stereo_camera.hpp"
 #include "stereo_instancing.hpp"
 #include "stereo_draw_proof.hpp"
 #include "diagnostics.hpp"
@@ -17,6 +18,7 @@
 #include <cstring>
 #include <cwchar>
 #include <filesystem>
+#include <iomanip>
 #include <limits>
 #include <locale>
 #include <memory>
@@ -94,6 +96,8 @@ struct NativePassRecord {
   unsigned buckets = 0, items = 0, meshes = 0, work = 0;
   size_t bytesRead = 0;
   NativeTargets before, after;
+  uint64_t generation = 0;
+  NativeStereoCameraSnapshot camera;
   std::vector<NativePacketRecord> packets;
 };
 struct NativePrepareRecord {
@@ -374,11 +378,127 @@ void write_native_targets(std::ostringstream &out,
   write_native_target(out, targets.depth);
   out << '}';
 }
+template<class T> void write_camera_numbers(std::ostringstream& out,const T& numbers) {
+  out << '[';
+  bool first = true;
+  for (const auto value : numbers) {
+    if (!first)
+      out << ',';
+    first = false;
+    out << value;
+  }
+  out << ']';
+}
+template <class T>
+void write_camera_eyes(std::ostringstream &out, const T &eyes) {
+  out << '[';
+  write_camera_numbers(out, eyes[0]);
+  out << ',';
+  write_camera_numbers(out, eyes[1]);
+  out << ']';
+}
+void write_native_camera(std::ostringstream &out,
+                         const NativeStereoCameraSnapshot &camera) {
+  out << "{\"complete\":" << (camera.complete ? "true" : "false")
+      << ",\"reason\":" << quoted(camera.reason)
+      << ",\"bytes_read\":" << camera.bytesRead << ",\"values\":";
+  if (!camera.complete) {
+    out << "null}";
+    return;
+  }
+  out << "{\"flags\":" << camera.flags << ",\"eye\":" << camera.eye
+      << ",\"transform_mode\":" << camera.transformMode
+      << ",\"camera_mode\":" << camera.cameraMode << ",\"current\":";
+  write_camera_numbers(out, camera.current);
+  out << ",\"projection\":";
+  write_camera_numbers(out, camera.projection);
+  out << ",\"far_projection\":";
+  write_camera_numbers(out, camera.farProjection);
+  out << ",\"derived\":";
+  write_camera_numbers(out, camera.derived);
+  out << ",\"translation\":";
+  write_camera_numbers(out, camera.translation);
+  out << ",\"euler\":";
+  write_camera_numbers(out, camera.euler);
+  out << ",\"relative_eye\":";
+  write_camera_eyes(out, camera.relativeEye);
+  out << ",\"engine_projection\":";
+  write_camera_eyes(out, camera.engineProjection);
+  out << ",\"engine_far_projection\":";
+  write_camera_eyes(out, camera.engineFarProjection);
+  out << ",\"scalars\":";
+  write_camera_eyes(out, camera.scalars);
+  out << "}}";
+}
+void write_camera_comparisons(std::ostringstream &out) {
+  // This operates only on owned copies, including when a close saves from a
+  // different thread. Native state is never read or reconstructed here.
+  std::vector<NativeStereoCameraObservation> observations;
+  observations.reserve(nativePasses.size());
+  for (const auto &record : nativePasses)
+    observations.push_back({record.generation, record.slot, record.scene,
+                            record.view, record.ended, record.camera});
+  // A dropped/aborted or still-open original sequence could conceal another
+  // same-eye scope. Never establish uniqueness from that truncated capture.
+  const bool completeCapture = !nativeScopesDropped && !nativeDiagnosticsFailed &&
+                               !openScopes && !sawScene;
+  out << ",\"camera_comparisons\":[";
+  bool first = true;
+  for (size_t i = 0; i < observations.size(); ++i) {
+    const auto &key = observations[i];
+    bool seen = false;
+    for (size_t j = 0; j < i; ++j) {
+      const auto &prior = observations[j];
+      if (key.generation == prior.generation &&
+          key.slot / 4 == prior.slot / 4 &&
+          (key.slot % 4) / 2 == (prior.slot % 4) / 2 &&
+          key.scene == prior.scene && key.view == prior.view) {
+        seen = true;
+        break;
+      }
+    }
+    if (seen)
+      continue;
+    const auto comparison = compare_native_stereo_cameras(
+        observations.data(), observations.size(), i, completeCapture);
+    if (!first)
+      out << ',';
+    first = false;
+    out << "{\"generation\":" << key.generation << ",\"frame\":" << key.slot / 4
+        << ",\"focus\":" << ((key.slot % 4) >= 2 ? "true" : "false")
+        << ",\"scene\":" << key.scene << ",\"view\":" << key.view
+        << ",\"available\":" << (comparison.available ? "true" : "false")
+        << ",\"reason\":" << quoted(comparison.reason)
+        << ",\"scheduling_eligible\":false";
+    if (!comparison.available) {
+      out << ",\"current_error\":null,\"projection_error\":null,\"far_"
+             "projection_error\":null,\"derived_error\":null,\"predicted\":"
+             "null}";
+      continue;
+    }
+    out << ",\"current_error\":" << comparison.currentError
+        << ",\"projection_error\":" << comparison.projectionError
+        << ",\"far_projection_error\":" << comparison.farProjectionError
+        << ",\"derived_error\":" << comparison.derivedError
+        << ",\"predicted\":{\"current\":";
+    write_camera_numbers(out, comparison.current);
+    out << ",\"projection\":";
+    write_camera_numbers(out, comparison.projection);
+    out << ",\"far_projection\":";
+    write_camera_numbers(out, comparison.farProjection);
+    out << ",\"derived\":";
+    write_camera_numbers(out, comparison.derived);
+    out << "}}";
+  }
+  out << ']';
+}
 void write_native_capture(std::ostringstream &out) {
   if (nativePasses.empty() && nativePreparations.empty() &&
       !nativeScopesDropped && !nativePreparationsDropped &&
       !nativeDiagnosticsFailed)
     return;
+  const auto priorPrecision = out.precision();
+  out << std::setprecision(std::numeric_limits<double>::max_digits10);
   out << ",\"native_passes\":{\"observation\":\"Ordered scalar observations "
          "only; copying identities does not preserve contents or native "
          "lifetimes; no consumer boundary or SPS eligibility is established\""
@@ -387,6 +507,8 @@ void write_native_capture(std::ostringstream &out) {
       << ",\"total_packet_limit\":" << maxNativePackets
       << ",\"pointer_work_per_scope_limit\":" << nativeStereoWorkLimit
       << ",\"native_bytes_per_scope_bound\":" << nativeStereoReadByteLimit
+      << ",\"camera_bytes_per_scope_bound\":" << nativeStereoCameraReadByteLimit
+      << ",\"scheduling_eligible\":false"
       << ",\"scopes_dropped\":" << nativeScopesDropped
       << ",\"preparations_dropped\":" << nativePreparationsDropped
       << ",\"scopes_copied\":" << nativePasses.size()
@@ -421,6 +543,8 @@ void write_native_capture(std::ostringstream &out) {
     write_native_targets(out, record.before);
     out << ",\"targets_end\":";
     write_native_targets(out, record.after);
+    out << ",\"camera\":";
+    write_native_camera(out,record.camera);
     out << ",\"packets\":[";
     bool firstPacket = true;
     for (const auto &packet : record.packets) {
@@ -475,7 +599,10 @@ void write_native_capture(std::ostringstream &out) {
              "callback\":null";
     out << '}';
   }
-  out << "]}";
+  out << ']';
+  write_camera_comparisons(out);
+  out << '}';
+  out.precision(priorPrecision);
 }
 std::string sha256(const void* data,SIZE_T size){
     if(!data||!size||size>16*1024*1024)return {};
@@ -809,6 +936,7 @@ stereo_audit_native_pass_begin(const StereoNativePassInfo &info) {
   try {
     Suspend pause;
     NativePassRecord record;
+    record.generation = nativeGeneration;
     record.slot = unsigned(activeSlot);
     record.beginSequence = ++auditSequence;
     record.caller = info.callerRva;
@@ -822,6 +950,8 @@ stereo_audit_native_pass_begin(const StereoNativePassInfo &info) {
     } else if (!info.view) {
       record.reason = NativeStereoCaptureReason::missingPointer;
     } else {
+      record.camera = capture_native_stereo_camera(info.view,info.cameraState,
+          info.cameraMode,info.currentView,info.readable);
       const auto capture =
           capture_native_stereo_packets(info.scene, info.readable);
       record.complete = capture.complete;

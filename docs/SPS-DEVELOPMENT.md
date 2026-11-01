@@ -248,3 +248,97 @@ immediately followed in the recorded sequence by a draw with that destination
 bound as pixel-shader SRV slot zero. This demonstrates live interception and
 identity correlation for this path. It does not prove complete dependency
 coverage, native ownership or safe cross-eye scheduling.
+
+## Active focus resolve capture (2026-11-01)
+
+With the headset awake, the follow-up diagnostic captured both focus eyes in
+two scene frames. It recorded 5,827 resource events: 5,782 draws, 20 copy regions,
+13 whole-resource copies, 4 dispatches and 8 resolves. All ten native group-31
+scopes were complete, including four focus scopes; resource events/uses had no
+drops, truncation or abort. The corresponding runtime log confirmed quad
+submission with both eye captures and `shouldRender=1`.
+
+The focus eyes shared observed 5208x2458 RGBA16_FLOAT color and D32_FLOAT depth
+resources with two samples. Each sampled focus group contained 44 meshes. This
+does not override the earlier evidence of different per-eye visibility lists.
+
+| Focus scope | Group 31 ends | Next group-32 draw | Color resolve | Next observed SRV use |
+| --- | ---: | ---: | ---: | ---: |
+| Frame 1, left | 4518 | 4521 | 4636 | 4637 |
+| Frame 1, right | 6961 | 6964 | 7079 | 7080 |
+| Frame 2, left | 12049 | 12052 | 12167 | 12168 |
+| Frame 2, right | 14539 | 14542 | 14657 | 14658 |
+
+These are capture-local submission sequence numbers. Each resolve converted
+the shared focus color resource to the same observed resolve destination,
+format RGBA16_FLOAT, subresource zero. The next recorded draw bound that
+destination at pixel-shader SRV slot zero. Between group 31 and the resolve,
+groups 32, 33, 14, 15, 23, 24, 25, 27 and 29 issued more draws into the focus
+color/depth resources. Further post-processing reused intermediate targets also
+observed in outer rendering, then wrote the resolve destination again before
+another shader read. A private HDR/depth pair alone cannot preserve this chain.
+
+The result closes the missing base-resolve observation for this focus path.
+It reinforces that delaying only opaque draws until the right eye is available
+would let their consumers run too early. Native SPS still needs a verified way
+to prepare/own both eyes before those consumers, or an explicitly owned and
+ordered consumer replay. The capture remains partial dependency evidence,
+not a completed scheduler or performance measurement.
+
+## Native camera and packet preparation findings (2026-11-01)
+
+Read-only inspection of the pinned game's active cockpit camera resolved its
+indirect update function, including its split unwind ranges and switch table.
+LMU already provides both eyes' projection, far-projection and relative-transform
+data in one native camera payload. A numeric opposite-eye prediction can
+therefore be investigated without calling the entire camera update twice.
+The native camera also applies mode-dependent offsets and optional extra view
+rotation; a prediction must reject paths it has not reproduced.
+
+An asynchronous numeric probe found a promising transform relationship for
+the sampled equal-orientation eyes, camera mode zero, transform mode one and
+zero additional view offsets. Repeated reads were consistent, but the probe
+was not synchronized to render frames. It establishes a hypothesis only.
+The next check compares owned numeric predictions with the native right eye
+within the same captured frame, retaining every native render operation.
+
+Packet inspection also identified the builder for the group bucket/item/mesh
+lists. Its membership flags and mesh-pointer arrays live on shared objects;
+building a second scene header does not make those lists independent. Item
+and bucket retain operations exist, but retaining them alone does not prove
+ownership of the upstream mesh-record array. A conditional material/geometry
+mutation path is another restriction on any first paired subset. These findings
+leave native packet lifetime, independent visibility and consumer ordering as
+required work before genuine SPS can remove a draw or preparation pass.
+
+## Same-frame camera comparison (2026-11-01)
+
+The bounded F8 audit now copies numeric camera inputs on the render thread and
+compares an outer-left prediction with the native outer-right result from the
+same captured frame, scene and main view. It rejects incomplete captures,
+duplicate eye scopes, changed payloads and unsupported camera modes instead of
+selecting an arbitrary pair. Disabled or idle capture does no new camera reads
+or prediction work. Snapshots own their numbers; they never invoke native
+methods on copied engine objects.
+
+Five two-frame captures in the offline Monza cockpit produced ten available
+outer comparisons. The runtime was awake during these captures and submitted
+both quad-view eye images. Projection and far-projection maximum absolute
+errors were zero in all ten comparisons. The largest current-transform and
+derived-matrix errors were both `6.103515625e-5`. These are absolute matrix-entry
+differences, not pixel errors or an established acceptance tolerance. This
+short sample supports the restricted camera hypothesis; it does not validate
+all head poses, canted views, other camera modes or visible image equivalence.
+
+Each capture recorded ten complete native pass scopes with no native scope
+drops or diagnostic abort. Eight main-view camera snapshots were complete;
+the two extra outer-left views were correctly excluded as non-main views.
+Focus snapshots were recorded, but focus comparisons explicitly reported
+`unsupported focus projection input`: the copied native payload supplies outer
+FOVs, while focus FOVs come from the separate OpenXR frame state.
+
+The native test suite and affected follow-up fixtures passed, including owned
+snapshot tests, analytic matrix-order cases, refusal cases and WARP JSON/draw
+checks. The independently reviewed diagnostic preserved native preparation
+and drawing. All comparisons still report `scheduling_eligible=false`.
+There is no SPS performance claim or 0.1.1 release from this camera result.

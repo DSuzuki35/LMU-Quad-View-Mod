@@ -512,7 +512,10 @@ void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
     // their lists. This observes scalars only; it does not retain or skip a draw.
     const StereoNativePassInfo nativePassInfo{
         scene, view, callerRva <= UINT32_MAX ? uint32_t(callerRva) : 0,
-        flags, lastMainPass, readable};
+        flags, lastMainPass, readable,
+        reinterpret_cast<const void*>(base+0x1B1BE30),
+        reinterpret_cast<const void*>(base+0x1A51400),
+        reinterpret_cast<const void*>(base+0x1A51370)};
     const auto nativePass = stereo_audit_native_pass_begin(nativePassInfo);
     const auto savedUploadCache=selectedUploadCache;const auto savedUploadContext=selectedUploadContext;
     std::unique_lock<std::recursive_mutex> uploadLock(nativeUploadMutex,std::defer_lock);
