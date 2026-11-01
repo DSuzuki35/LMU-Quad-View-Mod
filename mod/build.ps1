@@ -25,11 +25,11 @@ try {
     }
     & gcc -O2 -c vendor/minhook-1.3.4/src/hde/hde64.c -o build/mh_hde64.o
     if ($LASTEXITCODE -ne 0) { throw 'MinHook decoder compilation failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/engine_hooks_test.cpp nv_vrs.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ladvapi32 -o build/engine_hooks_test.exe
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/engine_hooks_test.cpp nv_vrs.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ladvapi32 -luser32 -o build/engine_hooks_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Engine hook tests compilation failed' }
     & .\build\engine_hooks_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Engine hook tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/native_outer_fallback_test.cpp nv_vrs.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ladvapi32 -o build/native_outer_fallback_test.exe
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/native_outer_fallback_test.cpp nv_vrs.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ladvapi32 -luser32 -o build/native_outer_fallback_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native fallback tests compilation failed' }
     & .\build\native_outer_fallback_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native fallback tests failed' }
@@ -37,13 +37,13 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'GPU timing tests compilation failed' }
     & .\build\gpu_timing_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'GPU timing tests failed' }
-    foreach ($test in @('pipeline_stats','benchmark_control')) {
-        & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static "tests/${test}_test.cpp" -ld3d11 -o "build/${test}_test.exe"
+    foreach ($test in @('pipeline_stats','benchmark_control','render_profile','swapchain_sampling')) {
+        & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" -ld3d11 -o "build/${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests compilation failed" }
         & ".\build\${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests failed" }
     }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/benchmark_engine_test.cpp nv_vrs.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ladvapi32 -o build/benchmark_engine_test.exe
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/benchmark_engine_test.cpp nv_vrs.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ladvapi32 -luser32 -o build/benchmark_engine_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Benchmark engine tests compilation failed' }
     & .\build\benchmark_engine_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Benchmark engine tests failed' }
@@ -80,7 +80,21 @@ try {
         & .\build\xr_layer_tests.exe @testArgs
         if ($LASTEXITCODE -ne 0) { throw "Outer blur tests failed: $testArgs" }
     }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -shared -I ../prototype/third_party xr_layer.cpp engine_bridge.cpp nv_vrs.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ladvapi32 -o $LayerOutput
+    foreach($testArgs in @(@('--runtime-settings','--sampled-inputs'),@('--runtime-settings','--sampled-inputs','--srgb'),@('--runtime-settings','--sampled-inputs','--debug-focus'),@('--runtime-overlay','--sampled-inputs','--srgb'),@('--runtime-settings','--reject-sampled-inputs'),@('--runtime-settings','--reject-sampled-inputs','--srgb'))){
+        & .\build\xr_layer_tests.exe @testArgs
+        if($LASTEXITCODE -ne 0){throw 'Sampled-input XR tests failed'}
+    }
+    foreach($testArgs in @(@('--runtime-settings','--profile-on-close'),@('--runtime-settings','--profile-close-other-thread','--sampled-inputs'))){
+        & .\build\xr_layer_tests.exe @testArgs
+        if($LASTEXITCODE -ne 0){throw 'Capture save-on-close XR tests failed'}
+    }
+    & .\build\xr_layer_tests.exe --runtime-settings --profile-menu-frames
+    if ($LASTEXITCODE -ne 0) { throw 'XR menu/scene profiling boundary tests failed' }
+    & .\build\xr_layer_tests.exe --runtime-settings --diagnostics-off
+    if ($LASTEXITCODE -ne 0) { throw 'Diagnostics-off XR tests failed' }
+    & .\build\render_profile_test.exe --diagnostics-off
+    if ($LASTEXITCODE -ne 0) { throw 'Diagnostics-off profiler tests failed' }
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -shared -I ../prototype/third_party xr_layer.cpp engine_bridge.cpp nv_vrs.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ladvapi32 -luser32 -o $LayerOutput
     if ($LASTEXITCODE -ne 0) { throw 'Layer compilation failed' }
     Get-FileHash -LiteralPath $LayerOutput -Algorithm SHA256 | Select-Object Hash
 } finally { Pop-Location }

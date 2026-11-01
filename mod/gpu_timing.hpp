@@ -10,9 +10,9 @@ namespace lmuqv {
 using GpuTimingLog=void(*)(void* user,const char* message);
 struct GpuTimingStats {
     unsigned samples=0;
-    uint64_t issued=0,disjoint=0,dropped=0,failures=0;
+    uint64_t issued=0,disjoint=0,dropped=0,failures=0,pending=0;
     bool done=false;
-    double mean_ms=0,p50_ms=0,p90_ms=0,min_ms=0,max_ms=0;
+    double mean_ms=0,p50_ms=0,p90_ms=0,p95_ms=0,p99_ms=0,min_ms=0,max_ms=0;
 };
 namespace gpu_detail {
 struct NativeTimingBackend {
@@ -33,7 +33,8 @@ struct NativeTimingBackend {
 }
 // All methods, including reset/destruction, belong to the owning render thread.
 // Callback must not throw or re-enter this object. No GPU waits or Flush occur here.
-template<class Backend> class BasicGpuTiming {
+template<class Backend,unsigned TargetSamples=60> class BasicGpuTiming {
+    static_assert(TargetSamples>0,"GPU timing sample budget must be positive");
 public:
     using Context=typename Backend::Context;
     BasicGpuTiming()=default;
@@ -113,6 +114,18 @@ public:
         bool complete=true;for(unsigned slot=0;slot<4;++slot)if((mask_&(1u<<slot))&&!stats_[slot].done)complete=false;
         if(complete){done_=true;free_resources();}
     }
+    // Finish a timed capture without waiting for pending queries. Report only
+    // completed samples; explicitly count the uncollected tail as dropped.
+    void finish(){
+        if(!enabled_||done_)return;
+        if(active_>=0){end_active();active_=-1;}
+        for(auto& entry:entries_)if(entry.state!=State::free)discard(entry,false,true);
+        for(unsigned slot=0;slot<4;++slot)if((mask_&(1u<<slot))&&!stats_[slot].done){
+            if(stats_[slot].samples)report(slot);
+            else stats_[slot].done=true;
+        }
+        done_=true;free_resources();
+    }
     void reset(){
         free_resources();stats_={};values_={};outstanding_={};enabled_=false;done_=false;faulted_=false;mask_=0xf;callback_=nullptr;user_=nullptr;
     }
@@ -120,8 +133,16 @@ public:
     bool enabled() const{return enabled_;}
     bool faulted() const{return faulted_;}
     GpuTimingStats stats(unsigned slot) const{return slot<4?stats_[slot]:GpuTimingStats{};}
+    // CPU-only snapshot of completed values; safe under the profiler's mutex
+    // during teardown on another thread. Does not call the D3D11 context.
+    GpuTimingStats snapshot(unsigned slot)const{
+        if(slot>=4)return {};
+        auto result=stats_[slot];result.pending=outstanding_[slot];
+        if(result.samples)distribution(slot,result);
+        return result;
+    }
 private:
-    static constexpr unsigned RingSize=16,TargetSamples=60,MaxAttempts=240,MaxPolls=120;
+    static constexpr unsigned RingSize=16,MaxAttempts=TargetSamples*4,MaxPolls=120;
     static constexpr const char* names_[4]={"outer0","outer1","focus0","focus1"};
     using Device=typename Backend::Device;
     using Query=typename Backend::Query;
@@ -178,12 +199,19 @@ private:
         free_resources();faulted_=true;enabled_=false;
         char line[256]{};std::snprintf(line,sizeof(line),"gpu_timing unavailable reason=%s",reason);emit(line);
     }
+    void distribution(unsigned slot,GpuTimingStats& stats)const{
+        auto sorted=values_[slot];const auto n=stats.samples;
+        std::sort(sorted.begin(),sorted.begin()+n);
+        double sum=0;for(unsigned i=0;i<n;++i)sum+=sorted[i];
+        auto percentile=[&](unsigned percent){return sorted[(n*percent+99)/100-1];};
+        stats.mean_ms=sum/n;stats.p50_ms=percentile(50);stats.p90_ms=percentile(90);
+        stats.p95_ms=percentile(95);stats.p99_ms=percentile(99);
+        stats.min_ms=sorted[0];stats.max_ms=sorted[n-1];
+    }
     void report(unsigned slot){
-        auto& stats=stats_[slot];auto sorted=values_[slot];std::sort(sorted.begin(),sorted.end());
-        double sum=0;for(double value:sorted)sum+=value;
-        stats.mean_ms=sum/TargetSamples;stats.p50_ms=sorted[29];stats.p90_ms=sorted[53];stats.min_ms=sorted.front();stats.max_ms=sorted.back();stats.done=true;
+        auto& stats=stats_[slot];distribution(slot,stats);stats.done=true;
         char line[640]{};
-        std::snprintf(line,sizeof(line),"gpu_timing slot=%s samples=%u mean_ms=%.6f p50_ms=%.6f p90_ms=%.6f min_ms=%.6f max_ms=%.6f disjoint=%llu dropped=%llu failures=%llu",names_[slot],stats.samples,stats.mean_ms,stats.p50_ms,stats.p90_ms,stats.min_ms,stats.max_ms,static_cast<unsigned long long>(stats.disjoint),static_cast<unsigned long long>(stats.dropped),static_cast<unsigned long long>(stats.failures));emit(line);
+        std::snprintf(line,sizeof(line),"gpu_timing slot=%s samples=%u mean_ms=%.6f p50_ms=%.6f p90_ms=%.6f p95_ms=%.6f p99_ms=%.6f min_ms=%.6f max_ms=%.6f disjoint=%llu dropped=%llu failures=%llu",names_[slot],stats.samples,stats.mean_ms,stats.p50_ms,stats.p90_ms,stats.p95_ms,stats.p99_ms,stats.min_ms,stats.max_ms,static_cast<unsigned long long>(stats.disjoint),static_cast<unsigned long long>(stats.dropped),static_cast<unsigned long long>(stats.failures));emit(line);
     }
 };
 using GpuTiming=BasicGpuTiming<gpu_detail::NativeTimingBackend>;

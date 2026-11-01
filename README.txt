@@ -1,3 +1,13 @@
+VECTORXR AND DIAGNOSTICS
+
+VectorXR is an optional provider alongside Native and QVFR. Install it separately,
+enable its LMU Quadviews profile, select VectorXR in Rendering, and configure
+resolution/focus in its app. See PORTABLE-VECTORXR.txt.
+
+Setup -> Enable diagnostics and logging: untick and relaunch to stop all mod logs,
+run metadata and profiling. The setting is saved. Provider/runtime logging is
+separate. Re-enable it for performance captures; see RENDER-PROFILING.txt.
+
 LMU QUAD VIEW MOD - DIRECT LAUNCHER TEST BUILD
 
 Extract the WHOLE ZIP into a new writable folder outside LMU.

@@ -84,7 +84,14 @@ class GuiLayoutTests {
         foreach(var name in new[]{"BrandTitle","CoffeeButton","SaveButton","LaunchButton"}) {
             var control=Named(form,name);TextFits(control);FullyVisible(control);
         }
+        if(pageName=="RenderingPage") {
+            var provider=(ComboBox)Named(form,"ProviderSelector");
+            foreach(var item in provider.Items)Check(TextRenderer.MeasureText(item.ToString(),provider.Font).Width+SystemInformation.VerticalScrollBarWidth<provider.Width,"Provider name is clipped");
+        }
         NoNativeScrollBars(form);
+        var freeNotice=Named(form,"FreeNotice");
+        foreach(var line in freeNotice.Text.Split('\n'))Check(TextRenderer.MeasureText(line,freeNotice.Font).Width<=freeNotice.Width,"Optional donation notice is clipped");
+        Check(freeNotice.Height>=TextRenderer.MeasureText("Text",freeNotice.Font).Height*3,"Optional donation notice height is clipped");
         Screenshot(form,Path.Combine(output,stem+"-"+pageName+"-top.png"));
         Check(scroll.TabStop&&scroll.AccessibleRole==AccessibleRole.ScrollBar,"Custom scrollbar is not keyboard/accessibility reachable");
         if(scroll.Maximum>0) {
@@ -111,6 +118,36 @@ class GuiLayoutTests {
             Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
             string output=args.Length>0?Path.GetFullPath(args[0]):Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"gui-qa");
             Directory.CreateDirectory(output);
+            using(var form=new Launcher()) {
+                var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+                var original=new LauncherSettings {Backend="QVFR",OuterPercent=10,InnerPercent=208,FocusWidthPercent=23,FocusHeightPercent=50,FocusAspectRatio=2.19283709218806m};
+                typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{original});
+                var width=(PercentSetting)typeof(Launcher).GetField("focusWidth",flags).GetValue(form);
+                var height=(PercentSetting)typeof(Launcher).GetField("focusHeight",flags).GetValue(form);
+                Check(Math.Abs(width.Value-50.435253m)<.00001m,"Legacy width was not displayed in equal-axis units");
+                var unchanged=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
+                Check(Math.Abs(unchanged.FocusWidthPercent-23)<.000001m,"Opening settings changed the existing box");
+                width.Value=height.Value=50;
+                var normalized=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
+                Check(Math.Abs(normalized.FocusWidthPercent-22.801511m)<.00001m&&normalized.FocusHeightPercent==50,"Equal UI axes did not reach the provider correctly");
+                Check(normalized.FocusAspectRatio==original.FocusAspectRatio,"Calibration lost on save");
+                var vector=new LauncherSettings {Backend="VectorXR",FoveationMode="fixed",RenderProfiling=true,RenderProfileSeconds=180,VectorXrManifest=@"E:\VectorXR\layer.json",QuadViewsManifest=@"E:\QVFR\layer.json"};
+                typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{vector});
+                var vectorValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
+                Check(vectorValues.RenderProfiling,"Profiling GUI setting lost");
+                Check(vectorValues.RenderProfileSeconds==180&&Named(form,"RenderProfileSeconds").Enabled,"Capture length GUI setting lost/disabled");
+                ((CheckBox)Named(form,"DiagnosticsEnabled")).Checked=false;
+                var quietValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
+                Check(!quietValues.DiagnosticsEnabled&&!Named(form,"RenderProfileSeconds").Enabled,"Diagnostics-off did not disable captures");
+                ((CheckBox)Named(form,"DiagnosticsEnabled")).Checked=true;
+                Check(Named(form,"RenderProfileSeconds").Enabled,"Re-enabling diagnostics lost saved capture preference");
+                Check(vectorValues.Backend=="VectorXR"&&vectorValues.VectorXrManifest==vector.VectorXrManifest&&vectorValues.QuadViewsManifest==vector.QuadViewsManifest,"VectorXR GUI settings roundtrip");
+                Check(!Named(form,"OuterResolution").Enabled&&!Named(form,"InnerResolution").Enabled,"VectorXR misleadingly enables QVFR resolution controls");
+                Check(Named(form,"VectorXrManifest").Enabled&&!Named(form,"QvfrManifest").Enabled,"Wrong manifest picker enabled for VectorXR");
+                ((ComboBox)Named(form,"ProviderSelector")).SelectedIndex=1;
+                var switched=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
+                Check(switched.VectorXrManifest==vector.VectorXrManifest&&switched.QuadViewsManifest==vector.QuadViewsManifest,"Switching provider lost a manifest path");
+            }
             foreach(float scale in new[]{1f,1.5f,2f})foreach(bool minimum in new[]{false,true}) {
                 using(var form=new Launcher()) {
                     form.Opacity=0;form.ShowInTaskbar=false;form.StartPosition=FormStartPosition.Manual;form.Location=new Point(-16000,-16000);

@@ -20,6 +20,7 @@ bool xr_copy_outer(unsigned eye, ID3D11Texture2D* source);
 ID3D11RenderTargetView* xr_outer_rtv(unsigned eye);
 void xr_scene_focus_complete(unsigned eye);
 void log_line(const char* message);
+void flush_log();
 
 // Engine side, called after successful xrCreateSession and before xrDestroySession.
 // No hook in trace mode. Never patch on unrecognized executable/build.

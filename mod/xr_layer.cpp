@@ -6,6 +6,8 @@
 #include "xr_sizes.hpp"
 #include "focus_box.hpp"
 #include "outer_resample.hpp"
+#include "render_profile.hpp"
+#include "swapchain_sampling.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdarg>
@@ -24,6 +26,7 @@ std::recursive_mutex stateMutex;
 std::mutex logMutex;
 template<class T> T structure(XrStructureType type) { T value{}; value.type=type; return value; }
 void logf(const char* format, ...) {
+    if(!lmuqv::diagnostics_enabled())return;
     char text[2048]{};
     va_list args; va_start(args,format); std::vsnprintf(text,sizeof(text),format,args); va_end(args);
     lmuqv::log_line(text);
@@ -104,6 +107,7 @@ struct State {
     std::unordered_map<XrSwapchain,AppChain> appChains;
     unsigned nextAppEye=0;
     bool runtimeSettings=false,runtimeSizesReady=false,rawFovLogged=false;
+    bool sampledInputs=false;
     bool requestEyeTracking=true;
     bool eyeTrackingActive=false,foveationResolved=false;
     XrSystemId foveationSystem=XR_NULL_SYSTEM_ID;
@@ -288,6 +292,15 @@ XrResult selectRuntimeSizes(const std::array<XrViewConfigurationView,4>& runtime
     logf("Runtime selected exact outer0=%ux%u outer1=%ux%u common focus=%ux%u; no percentage scaling",s.runtimeOuterWidth[0],s.runtimeOuterHeight[0],s.runtimeOuterWidth[1],s.runtimeOuterHeight[1],width,height);
     return XR_SUCCESS;
 }
+XrResult createInputSwapchain(XrSession session,const XrSwapchainCreateInfo& info,XrSwapchain* chain,const char* role){
+    lmuqv::SamplingAttempt attempt;
+    const auto result=lmuqv::create_sampled_input(next.CreateSwapchain,session,info,chain,
+        s.quad&&s.sampledInputs&&s.device,attempt);
+    if(attempt.requested)logf("sampled_input role=%s size=%ux%u accepted=%d retry_original=%d sampled_result=%d result=%d original_usage=%llu requested_usage=%llu",
+        role,info.width,info.height,attempt.accepted,attempt.retried,attempt.sampledResult,result,
+        static_cast<unsigned long long>(info.usageFlags),static_cast<unsigned long long>(info.usageFlags|XR_SWAPCHAIN_USAGE_SAMPLED_BIT));
+    return result;
+}
 bool createOuter(const XrSwapchainCreateInfo& info) {
     if(s.outer[0].chain && s.outer[1].chain) return true;
     if(!s.device || info.sampleCount!=1 || info.arraySize!=1 || info.faceCount!=1 || info.mipCount!=1 ||
@@ -302,7 +315,7 @@ bool createOuter(const XrSwapchainCreateInfo& info) {
     for(unsigned i=0;i<2;++i) {
         auto& eye=s.outer[i];
         if(s.runtimeSettings){own.width=s.runtimeOuterWidth[i];own.height=s.runtimeOuterHeight[i];}
-        XrResult r=next.CreateSwapchain(s.session,&own,&eye.chain);
+        XrResult r=createInputSwapchain(s.session,own,&eye.chain,i?"outer1":"outer0");
         if(XR_FAILED(r)) { logf("create outer %u result=%d",i,r);destroyOuter();return false; }
         eye.width=own.width;eye.height=own.height;
         uint32_t count=0;r=next.EnumerateSwapchainImages(eye.chain,0,&count,nullptr);
@@ -358,6 +371,7 @@ XrResult XRAPI_CALL layerDestroyInstance(XrInstance instance) {
     if(s.session) {lmuqv::engine_stop();clearSession();}
     XrResult r=next.DestroyInstance(instance);
     if(XR_SUCCEEDED(r)) s=State{};
+    lmuqv::flush_log();
     return r;
 }
 XrResult XRAPI_CALL layerEnumerateViewConfigurations(XrInstance instance,XrSystemId system,uint32_t cap,uint32_t* count,XrViewConfigurationType* out) {
@@ -476,6 +490,7 @@ XrResult XRAPI_CALL layerWaitFrame(XrSession session,const XrFrameWaitInfo* info
 }
 XrResult XRAPI_CALL layerBeginFrame(XrSession session,const XrFrameBeginInfo* info) {
     XrResult r=next.BeginFrame(session,info);
+    lmuqv::renderProfile.xr_frame_begin();
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     // Flush an abandoned/discarded frame before accepting new engine captures.
     bool released=releaseOuters();
@@ -529,7 +544,7 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
 }
 XrResult XRAPI_CALL layerCreateSwapchain(XrSession session,const XrSwapchainCreateInfo* info,XrSwapchain* chain) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    XrResult r=next.CreateSwapchain(session,info,chain);
+    XrResult r=createInputSwapchain(session,*info,chain,"app");
     logf("xrCreateSwapchain %ux%u format=%lld samples=%u array=%u usage=%llu result=%d",info->width,info->height,static_cast<long long>(info->format),info->sampleCount,info->arraySize,static_cast<unsigned long long>(info->usageFlags),r);
     if(XR_SUCCEEDED(r)){
         AppChain app{};app.info=*info;app.info.next=nullptr;
@@ -695,7 +710,9 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
         layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(&p));++submitted;
     }
     auto modified=*info;modified.layerCount=static_cast<uint32_t>(layers.size());modified.layers=layers.empty()?nullptr:layers.data();
-    XrResult r=next.EndFrame(session,&modified);
+    XrResult r;
+    {lmuqv::ProfileScope submitProfile(lmuqv::ProfileSlot::provider_submit);r=next.EndFrame(session,&modified);}
+    lmuqv::renderProfile.xr_frame_end(s.context);
     if(s.pixelEnabled&&!s.pixelDone&&s.pixelFrame==s.frames&&s.pixelFrame){
         logf("pixel_stats_complete mask=%u successMask=%u frame=%llu quadProjections=%u releaseOkay=%d result=%d captureRequested=%d captureSuccessMask=%u",s.pixelMask,s.pixelSuccessMask,static_cast<unsigned long long>(s.pixelFrame),submitted,released,r,s.capture.requested,s.captureMask);s.pixelDone=true;
     }
@@ -755,6 +772,10 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
     if(quad)logf("Foveation request mode=%s; actual eye-tracking availability is determined by the downstream provider",requestEyeTracking?"auto":"fixed");
     char runtimeSetting[8]{};GetEnvironmentVariableA("LMU_QV_USE_RUNTIME_SETTINGS",runtimeSetting,sizeof(runtimeSetting));
     s.runtimeSettings=quad&&!std::strcmp(runtimeSetting,"1");
+    char sampledSetting[8]{};
+    const auto sampledLength=GetEnvironmentVariableA("LMU_QV_VECTORXR_DIRECT_INPUTS",sampledSetting,sizeof(sampledSetting));
+    s.sampledInputs=quad&&sampledLength==1&&sampledSetting[0]=='1';
+    if(s.sampledInputs)logf("sampled_input enabled for eligible color swapchains; requests SAMPLED usage; downstream copy fallback retained");
     if(s.runtimeSettings)logf("Runtime settings enabled: runtime FOV unchanged; exact runtime outer and common focus dimensions; legacy percentage controls ignored");
     if(!s.runtimeSettings){
     char outerPercent[128]{},focusPercent[128]{};
@@ -774,9 +795,9 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
     if(quad)logf("Focus box width=%g%% height=%g%% (tangent-space extents around runtime focus center)",s.focusBox.width.percent,s.focusBox.height.percent);
     }
     char pixelEnv[8]{};GetEnvironmentVariableA("LMU_QV_PIXEL_STATS",pixelEnv,sizeof(pixelEnv));
-    s.pixelRequireScene=quad&&!std::strcmp(pixelEnv,"scene");
-    s.pixelEnabled=quad&&(!std::strcmp(pixelEnv,"1")||s.pixelRequireScene);
-    s.capture=lmuqv::capture_detail::config(environmentWide(L"LMU_QV_CAPTURE_DIR"),environmentWide(L"LMU_QV_CAPTURE_TRIGGER"));
+    s.pixelRequireScene=lmuqv::diagnostics_enabled()&&quad&&!std::strcmp(pixelEnv,"scene");
+    s.pixelEnabled=lmuqv::diagnostics_enabled()&&quad&&(!std::strcmp(pixelEnv,"1")||s.pixelRequireScene);
+    s.capture=lmuqv::diagnostics_enabled()?lmuqv::capture_detail::config(environmentWide(L"LMU_QV_CAPTURE_DIR"),environmentWide(L"LMU_QV_CAPTURE_TRIGGER")):lmuqv::capture_detail::Config{};
     if(quad&&s.capture.requested){
         s.pixelEnabled=true;s.pixelRequireScene=true;
         logf("capture_config valid=%d existingDirectory=%s trigger=%s (four fixed BMP names; CREATE_NEW; scene gate)",s.capture.valid,s.capture.directory.u8string().c_str(),s.capture.trigger.u8string().c_str());
@@ -803,8 +824,7 @@ ID3D11RenderTargetView* xr_outer_rtv(unsigned eye) {
     if(!outer.acquired||!outer.waited||outer.index>=outer.rtvs.size())return nullptr;
     return outer.rtvs[outer.index];
 }
-void log_line(const char* message) {
-    std::lock_guard<std::mutex> lock(logMutex);
+HANDLE logFileHandle(){
     static HANDLE file=[](){
         wchar_t path[32768]{};DWORD n=GetEnvironmentVariableW(L"LMU_QV_LOG",path,32768);
         std::filesystem::path target;
@@ -818,10 +838,20 @@ void log_line(const char* message) {
         std::error_code error;std::filesystem::create_directories(target.parent_path(),error);
         return CreateFileW(target.c_str(),FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
     }();
-    if(file==INVALID_HANDLE_VALUE)return;
+    return file;
+}
+void log_line(const char* message) {
+    if(!diagnostics_enabled())return;
+    std::lock_guard<std::mutex> lock(logMutex);
+    const auto file=logFileHandle();if(file==INVALID_HANDLE_VALUE)return;
     char line[2304]{};SYSTEMTIME now{};GetSystemTime(&now);
     int count=std::snprintf(line,sizeof(line),"%02u:%02u:%02u.%03u [%lu] %s\r\n",now.wHour,now.wMinute,now.wSecond,now.wMilliseconds,GetCurrentThreadId(),message?message:"");
     DWORD written{};WriteFile(file,line,static_cast<DWORD>((std::min)(count,int(sizeof(line)-1))),&written,nullptr);
+}
+void flush_log(){
+    if(!diagnostics_enabled())return;
+    std::lock_guard<std::mutex> lock(logMutex);
+    const auto file=logFileHandle();if(file!=INVALID_HANDLE_VALUE)FlushFileBuffers(file);
 }
 bool xr_runtime_sizes(unsigned eye,uint32_t& outerWidth,uint32_t& outerHeight,uint32_t& focusWidth,uint32_t& focusHeight){
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
@@ -852,8 +882,10 @@ bool xr_copy_outer(unsigned eye,ID3D11Texture2D* source) {
         logf("outer resample incompatible source eye=%u format=%u bindFlags=%u",eye,src.Format,src.BindFlags);return false;
     }
     ID3D11Device* sourceDevice{};source->GetDevice(&sourceDevice);bool same=sourceDevice==s.device;if(sourceDevice)sourceDevice->Release();if(!same){logf("outer copy rejected different device");return false;}
+    ProfileScope waitProfile(profile_eye(ProfileSlot::outer_wait0,eye));
     if(!outer.acquired){auto acquire=structure<XrSwapchainImageAcquireInfo>(XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO);XrResult r=next.AcquireSwapchainImage(outer.chain,&acquire,&outer.index);if(XR_FAILED(r)){logf("acquire outer %u result=%d",eye,r);return false;}outer.acquired=true;}
     if(!outer.waited){auto wait=structure<XrSwapchainImageWaitInfo>(XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO);wait.timeout=XR_INFINITE_DURATION;XrResult r=next.WaitSwapchainImage(outer.chain,&wait);if(r!=XR_SUCCESS){logf("wait outer %u result=%d (acquisition retained)",eye,r);return false;}outer.waited=true;}
+    waitProfile.end();
     bool copied=false;
     if(outer.index<outer.images.size()&&outer.images[outer.index].texture){
         ID3D11Texture2D* destination=outer.images[outer.index].texture;D3D11_TEXTURE2D_DESC dst{};destination->GetDesc(&dst);

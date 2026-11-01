@@ -4,9 +4,9 @@
 #undef NOMINMAX
 static std::uintptr_t syntheticCaller=0;
 static void* testReturnAddress(unsigned){return reinterpret_cast<void*>(syntheticCaller);}
-#define __builtin_return_address testReturnAddress
+#define LMU_CALLER_ADDRESS testReturnAddress(0)
 #include "../engine_bridge.cpp"
-#undef __builtin_return_address
+#undef LMU_CALLER_ADDRESS
 #include <iostream>
 #include <cstdlib>
 
@@ -19,6 +19,7 @@ bool xr_copy_outer(unsigned,ID3D11Texture2D*){return false;}
 void xr_scene_focus_complete(unsigned){}
 ID3D11RenderTargetView* xr_outer_rtv(unsigned){return nullptr;}
 void log_line(const char*){}
+void flush_log(){}
 }
 static void original(void*,bool){++lmuqv::originalCalls;}
 static XrResult XRAPI_CALL enumerateOriginal(XrInstance,XrSystemId,XrViewConfigurationType,uint32_t cap,uint32_t* count,XrViewConfigurationView* views){

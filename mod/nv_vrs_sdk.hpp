@@ -8,14 +8,18 @@
 #include <memory>
 // NVIDIA's nested SAL headers otherwise undefine annotations too early under MinGW.
 // Preserve annotations during the official include, then use its own cleanup once.
+#if defined(__GNUC__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wattributes"
 #pragma GCC diagnostic ignored "-Wpedantic"
 #define __NVAPI_EMPTY_SAL
+#endif
 #include "vendor/nvapi/nvapi.h"
+#if defined(__GNUC__)
 #undef __NVAPI_EMPTY_SAL
 #include "vendor/nvapi/nvapi_lite_salend.h"
 #pragma GCC diagnostic pop
+#endif
 namespace lmuqv::nv_vrs_detail {
 struct Api {
     HMODULE module=nullptr;bool initialized=false;
