@@ -125,10 +125,23 @@ struct NativePrepareRecord {
 };
 std::vector<NativePassRecord> nativePasses;
 std::vector<NativePrepareRecord> nativePreparations;
+struct NativeClassifyRecord {
+  unsigned slot = 0;
+  uint64_t generation = 0;
+  uint32_t candidate = 0, view = 0, entryMxcsr = 0, postMxcsr = 0, returned = 0;
+  uint32_t stored = 0;
+  bool ended = false, storedAvailable = false;
+  size_t bytesRead = 0;
+  NativeStereoClassifySnapshot pre, post;
+};
+std::vector<NativeClassifyRecord> nativeClassifications;
+std::array<uint64_t, framesWanted * 4> classifyAttempts{}, classifyDrops{};
+uint64_t classifyTotalAttempts = 0, classifyTotalDrops = 0;
+bool classifyFailed = false;
+std::atomic<bool> classifyHookAvailable{false};
 std::unordered_map<const void *, uint32_t> nativeObjects;
 uint64_t nativeGeneration = 0, auditSequence = 0;
-unsigned nativePacketCount = 0, nativeScopesDropped = 0,
-         nativePreparationsDropped = 0;
+unsigned nativePacketCount = 0, nativeScopesDropped = 0, nativePreparationsDropped = 0;
 bool nativeDiagnosticsFailed = false;
 StereoResourceTrace resourceTrace;
 void reset_native_capture() {
@@ -143,6 +156,11 @@ void reset_native_capture() {
   nativePreparations.clear();
   nativeObjects.clear();
   nativeMeshes.clear();
+  nativeClassifications.clear();
+  classifyAttempts = {};
+  classifyDrops = {};
+  classifyTotalAttempts = classifyTotalDrops = 0;
+  classifyFailed = false;
 }
 uint32_t native_identity(std::unordered_map<const void *, uint32_t> &identities,
                          const void *pointer, size_t limit) {
@@ -844,7 +862,170 @@ bool export_program(const Program& p,std::string& relative){
     }
     DWORD written=0;const bool okay=WriteFile(file,p.bytecode.data(),DWORD(p.bytecode.size()),&written,nullptr)&&written==p.bytecode.size()&&FlushFileBuffers(file);CloseHandle(file);return okay;
 }
+void write_classify_input(std::ostringstream &out, const NativeStereoClassifySnapshot &snapshot) {
+  const auto &in = snapshot.input;
+  const auto mask = snapshot.copiedFields;
+  const auto number = [&](float value, unsigned bit) {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, 4);
+    if (!(mask & (1u << bit)) || (bits & 0x7f800000u) == 0x7f800000u)
+      out << "null";
+    else
+      out << std::setprecision(9) << value;
+  };
+  const auto integer = [&](auto value, unsigned bit) {
+    if (mask & (1u << bit))
+      out << value;
+    else
+      out << "null";
+  };
+  out << "{\"copied_fields\":" << mask << ",\"candidate_flags\":";
+  integer(in.candidateFlags, 0);
+  out << ",\"owner_flags\":";
+  integer(in.ownerFlags, 5);
+  out << ",\"owner_scale\":";
+  number(in.ownerScale, 6);
+  out << ",\"radius\":";
+  number(in.radius, 1);
+  out << ",\"near_coefficient\":";
+  number(in.nearCoefficient, 2);
+  out << ",\"far_coefficient\":";
+  number(in.farCoefficient, 3);
+  out << ",\"plane_count\":";
+  integer(in.planeCount, 4);
+  out << ",\"position\":[";
+  number(in.position.x, 7);
+  out << ',';
+  number(in.position.y, 7);
+  out << ',';
+  number(in.position.z, 7);
+  out << "],\"view_position\":[";
+  number(in.viewPosition.x, 8);
+  out << ',';
+  number(in.viewPosition.y, 8);
+  out << ',';
+  number(in.viewPosition.z, 8);
+  out << "],\"view_scale\":";
+  number(in.viewScale, 9);
+  out << ",\"bias\":";
+  number(in.bias, 14);
+  out << ",\"skip_distance_bounds\":" << (in.skipDistanceBounds ? "true" : "false")
+      << ",\"planes\":[";
+  for (unsigned i = 0; i < 4; ++i) {
+    if (i)
+      out << ',';
+    out << '[';
+    const auto &p = in.planes[i];
+    number(p.x, 10 + i);
+    out << ',';
+    number(p.y, 10 + i);
+    out << ',';
+    number(p.z, 10 + i);
+    out << ',';
+    number(p.w, 10 + i);
+    out << ']';
+  }
+  out << "]}";
+}
+NativeStereoClassifyComparison classification_comparison(const NativeClassifyRecord &record) {
+  if (!record.ended) {
+    NativeStereoClassifyComparison out;
+    out.reason = "invocation incomplete";
+    return out;
+  }
+  return compare_native_stereo_classify(record.pre, record.post, record.entryMxcsr,
+                                        record.postMxcsr, record.returned);
+}
+void write_native_classification(std::ostringstream &out) {
+  NativeStereoFpGuard defaults(true);
+  const auto priorPrecision = out.precision();
+  uint64_t available = 0, refused = 0, returnedMismatch = 0, storedMismatch = 0;
+  uint64_t unfinishedInvocations = 0, incompleteSnapshots = 0;
+  for (const auto &record : nativeClassifications) {
+    const auto c = classification_comparison(record);
+    if (c.available)
+      ++available;
+    else
+      ++refused;
+    returnedMismatch += c.returnedMismatch;
+    storedMismatch += c.storedMismatch;
+    unfinishedInvocations += !record.ended;
+    incompleteSnapshots += !record.pre.complete || !record.post.complete;
+  }
+  const bool captureIncomplete = !classifyHookAvailable || classifyFailed || classifyTotalDrops ||
+                                 unfinishedInvocations || incompleteSnapshots || openScopes ||
+                                 completedFrames < framesWanted;
+  out << ",\"native_classification\":{\"hook_available\":"
+      << (classifyHookAvailable ? "true" : "false")
+      << ",\"scheduling_eligible\":false,\"visibility_validated\":false,\"bounded_observation\":true"
+      << ",\"capture_incomplete\":" << (captureIncomplete ? "true" : "false")
+      << ",\"unfinished_invocations\":" << unfinishedInvocations
+      << ",\"incomplete_snapshots\":" << incompleteSnapshots
+      << ",\"coverage\":\"bounded "
+         "original-invocation observations only; visibility and lifetime unproven\""
+      << ",\"attempt_limit_per_slot\":" << nativeStereoClassifySlotLimit
+      << ",\"attempt_limit_total\":" << nativeStereoClassifyTotalLimit
+      << ",\"native_byte_limit_per_attempt\":" << nativeStereoClassifyReadByteLimit
+      << ",\"diagnostic_failed\":" << (classifyFailed ? "true" : "false")
+      << ",\"attempts\":" << classifyTotalAttempts << ",\"dropped\":" << classifyTotalDrops
+      << ",\"available\":" << available << ",\"refused\":" << refused
+      << ",\"returned_mismatch\":" << returnedMismatch << ",\"stored_mismatch\":" << storedMismatch
+      << ",\"slots\":[";
+  for (unsigned i = 0; i < classifyAttempts.size(); ++i) {
+    if (i)
+      out << ',';
+    out << "{\"slot\":" << i << ",\"attempts\":" << classifyAttempts[i]
+        << ",\"dropped\":" << classifyDrops[i] << '}';
+  }
+  out << "],\"records\":[";
+  bool first = true;
+  for (const auto &r : nativeClassifications) {
+    if (!first)
+      out << ',';
+    first = false;
+    const auto c = classification_comparison(r);
+    out << "{\"slot\":" << r.slot << ",\"generation\":" << r.generation
+        << ",\"candidate\":" << r.candidate << ",\"view\":" << r.view
+        << ",\"entry_mxcsr\":" << r.entryMxcsr << ",\"post_mxcsr\":";
+    if (r.ended)
+      out << r.postMxcsr;
+    else
+      out << "null";
+    out << ",\"native_return\":";
+    if (r.ended)
+      out << r.returned;
+    else
+      out << "null";
+    out << ",\"native_store\":";
+    if (r.storedAvailable)
+      out << r.stored;
+    else
+      out << "null";
+    out << ",\"available\":" << (c.available ? "true" : "false")
+        << ",\"returned_mismatch\":" << (c.returnedMismatch ? "true" : "false")
+        << ",\"stored_mismatch\":" << (c.storedMismatch ? "true" : "false")
+        << ",\"reason\":" << quoted(c.reason) << ",\"bytes_read\":" << r.bytesRead
+        << ",\"predicted_return\":";
+    if (c.available)
+      out << c.predicted.returnedFlags;
+    else
+      out << "null";
+    out << ",\"predicted_store\":";
+    if (c.available)
+      out << c.predicted.storedCandidateFlags;
+    else
+      out << "null";
+    out << ",\"pre\":";
+    write_classify_input(out, r.pre);
+    out << ",\"post\":";
+    write_classify_input(out, r.post);
+    out << '}';
+  }
+  out << "]}";
+  out.precision(priorPrecision);
+}
 void save_impl(const char* reason){
+    NativeStereoFpGuard defaultFp(true);
     if(!capturing)return;capturing=false;pairProof.finish();
     SYSTEMTIME time{};GetSystemTime(&time);wchar_t name[128]{};std::swprintf(name,std::size(name),L"stereo-audit-%04u%02u%02u-%02u%02u%02u-%llx.json",time.wYear,time.wMonth,time.wDay,time.wHour,time.wMinute,time.wSecond,static_cast<unsigned long long>(started));
     const auto path=directory/name;
@@ -864,7 +1045,7 @@ void save_impl(const char* reason){
         out<<"],\"layout\":"<<r.layout<<",\"layout_known\":"<<r.layoutKnown<<",\"instance_slots\":"<<r.instanceSlots<<",\"layout_steps\":"<<r.layoutSteps<<",\"vertex_signature\":"<<r.vertexSignature<<",\"index\":["<<r.index.id<<','<<r.index.version<<','<<r.indexFormat<<','<<r.indexOffset<<"],\"topology\":"<<r.topology<<",\"buffer_epoch\":"<<r.bufferEpoch<<",\"ps_srv_signature\":"<<r.pixelResources<<",\"ps_sampler_signature\":"<<r.pixelSamplers<<",\"predicate\":["<<r.predicate<<','<<r.predicateValue<<"],\"cb\":[";
         for(unsigned i=0;i<r.constants.size();++i){if(i)out<<',';out<<'['<<r.constants[i].id<<','<<r.constants[i].version<<']';}
         out<<"],\"target_signature\":"<<r.targetSignature<<",\"rt\":["<<r.rtWidth<<','<<r.rtHeight<<','<<r.rtFormat<<','<<r.rtSamples<<','<<r.rtCount<<"],\"blend\":"<<r.blend<<",\"class_instances\":"<<r.classes<<",\"api_ticks\":"<<r.apiTicks<<",\"snapshot_ticks\":"<<r.snapshotTicks<<",\"native_mesh\":"<<r.nativeMesh<<",\"native_prepare_ticks\":"<<r.nativeBindTicks<<",\"native_to_draw_ticks\":"<<r.nativePrepareTicks<<",\"active_queries\":"<<r.activeQueries<<",\"active_query_mask\":"<<r.activeQueryMask<<",\"proof_ticks\":"<<r.proofTicks<<'}';}
-    out<<']';write_native_capture(out);resourceTrace.write(out);const auto& proof=pairProof.result();
+    out<<']';write_native_capture(out);write_native_classification(out);resourceTrace.write(out);const auto& proof=pairProof.result();
     out<<",\"stereo_pair_proof\":{\"requested\":"<<unsigned(proofRequested)<<",\"status\":"<<quoted(proof.status.c_str())<<",\"reason\":"<<quoted(proof.reason.c_str())<<",\"route\":"<<quoted(proof.route.c_str());
     out<<",\"key\":"<<proof.key<<",\"observed\":"<<proof.observed<<",\"query_skips\":"<<proof.querySkips<<",\"timing_query_overlaps\":"<<proof.timingQueryOverlaps<<",\"opaque_candidates\":"<<proofCandidates<<",\"shader_rejections\":"<<proofShaderRejected;
     out<<",\"eligible_draws\":["<<proofEligible[0]<<','<<proofEligible[1]<<"],\"used_sampler_masks\":["<<proof.samplerSlots[0]<<','<<proof.samplerSlots[1]<<"],\"width\":"<<proof.width<<",\"height\":"<<proof.height<<",\"reference_depth_format\":"<<proof.depthFormat<<",\"native_cpu_preparation_shared\":false";
@@ -879,7 +1060,15 @@ void save_impl(const char* reason){
     char line[640]{};std::snprintf(line,sizeof(line),"stereo_audit %s reason=%s frames=%u records=%zu file=%s; diagnostic overhead is included; game rendering remains legacy",okay?"complete":"save_failed",reason,completedFrames,records.size(),path.filename().u8string().c_str());emit(line);
     if(proofRequested){std::snprintf(line,sizeof(line),"stereo_pair_proof status=%s route=%s covered=%llu/%llu color_different=%llu/%llu depth_different=%llu/%llu reason=%s; private targets only; native CPU sharing disabled",proof.status.c_str(),proof.route.c_str(),static_cast<unsigned long long>(proof.covered[0]),static_cast<unsigned long long>(proof.covered[1]),static_cast<unsigned long long>(proof.colorDifferent[0]),static_cast<unsigned long long>(proof.colorDifferent[1]),static_cast<unsigned long long>(proof.depthDifferent[0]),static_cast<unsigned long long>(proof.depthDifferent[1]),proof.reason.c_str());emit(line);}
 }
-void save(const char* reason){try{save_impl(reason);}catch(...){capturing=false;emit("stereo_audit save failed: serialization allocation error; rendering remains legacy");}}
+void save(const char *reason) {
+  NativeStereoFpGuard preserve;
+  try {
+    save_impl(reason);
+  } catch (...) {
+    capturing = false;
+    emit("stereo_audit save failed: serialization allocation error; rendering remains legacy");
+  }
+}
 void cleanup_methods(){
     requestTrigger.reset();
     watchedContext=nullptr;watchedDevice=nullptr;for(unsigned i=0;i<installed;++i)MH_DisableHook(targets[i]);for(unsigned i=0;i<installed;++i)MH_RemoveHook(targets[i]);installed=0;drop(selected);drop(device);deferredStop=false;
@@ -893,6 +1082,112 @@ void cleanup_factories(){
 void cleanup(){cleanup_methods();cleanup_factories();}
 } // namespace
 bool stereo_audit_enabled(){return enabled.load(std::memory_order_relaxed);}
+void stereo_audit_native_classify_hook_available(bool available) noexcept {
+  classifyHookAvailable = available;
+}
+StereoNativeClassifyToken stereo_audit_native_classify_begin(const StereoNativeClassifyInfo &info,
+                                                             uint32_t entryMxcsr) noexcept {
+  NativeStereoFpGuard preserve;
+  if (!enabled.load(std::memory_order_relaxed) || !capturing.load(std::memory_order_relaxed) ||
+      GetCurrentThreadId() != owner.load(std::memory_order_relaxed) || activeSlot < 0 ||
+      activeSlot >= int(framesWanted * 4) || suspended || info.callerRva != 0x41c8b4)
+    return {};
+  try {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    try {
+      if (!enabled || !capturing)
+        return {};
+      const unsigned slot = unsigned(activeSlot);
+      if (classifyFailed || classifyAttempts[slot] >= nativeStereoClassifySlotLimit ||
+          classifyTotalAttempts >= nativeStereoClassifyTotalLimit) {
+        ++classifyDrops[slot];
+        ++classifyTotalDrops;
+        return {};
+      }
+      ++classifyAttempts[slot];
+      ++classifyTotalAttempts;
+      Suspend pause;
+      NativeClassifyRecord record;
+      record.slot = slot;
+      record.generation = nativeGeneration;
+      record.entryMxcsr = entryMxcsr;
+      record.candidate = native_identity(nativeObjects, info.args.candidate, maxNativeObjects);
+      record.view = native_identity(nativeObjects, info.args.view, maxNativeObjects);
+      record.pre = capture_native_stereo_classify(info.args, info.readable, record.bytesRead);
+      StereoNativeClassifyToken token{true,
+                                      unsigned(nativeClassifications.size()),
+                                      slot,
+                                      nativeGeneration,
+                                      info,
+                                      record.pre.positionIdentity,
+                                      record.pre.ownerIdentity};
+      record.pre.positionIdentity = record.pre.ownerIdentity = 0;
+      nativeClassifications.push_back(record);
+      return token;
+    } catch (...) {
+      classifyFailed = true;
+      return {};
+    }
+  } catch (...) {
+    // Lock acquisition failed; no capture transaction was entered. Never
+    // publish an unsynchronized failure into a possibly different generation.
+    return {};
+  }
+}
+void stereo_audit_native_classify_end(const StereoNativeClassifyToken &token, uint32_t returned,
+                                      uint32_t postMxcsr) noexcept {
+  NativeStereoFpGuard preserve;
+  if (!token.entered || !enabled.load(std::memory_order_relaxed) ||
+      !capturing.load(std::memory_order_relaxed) || suspended ||
+      GetCurrentThreadId() != owner.load(std::memory_order_relaxed))
+    return;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    try {
+      if (!enabled || !capturing || token.generation != nativeGeneration ||
+          token.index >= nativeClassifications.size())
+        return;
+      auto &record = nativeClassifications[token.index];
+      if (record.ended || activeSlot != int(record.slot) || record.slot != token.slot)
+        return;
+      Suspend pause;
+      record.ended = true;
+      record.returned = returned;
+      record.postMxcsr = postMxcsr;
+      if (!record.pre.complete) {
+        record.post.reason = "pre snapshot refused";
+        return;
+      }
+      native_classify_detail::Reader reader(token.invocation.readable, record.bytesRead,
+                                            record.post.reason);
+      try {
+        record.storedAvailable = reader.read(
+            reinterpret_cast<uintptr_t>(token.invocation.args.candidate), 0, record.stored);
+      } catch (...) {
+        record.post.reason = "post reader exception";
+        return;
+      }
+      if (!record.storedAvailable)
+        return;
+      record.post = capture_native_stereo_classify(token.invocation.args, token.invocation.readable,
+                                                   record.bytesRead);
+      if (record.post.complete && (record.post.positionIdentity != token.positionIdentity ||
+                                   record.post.ownerIdentity != token.ownerIdentity)) {
+        record.post.complete = false;
+        record.post.reason = "pointer chain changed during native invocation";
+      }
+      if (record.post.complete && record.post.input.candidateFlags != record.stored) {
+        record.post.complete = false;
+        record.post.reason = "candidate stored flags changed during post snapshot";
+      }
+      record.post.positionIdentity = record.post.ownerIdentity = 0;
+    } catch (...) {
+      classifyFailed = true;
+    }
+  } catch (...) {
+    // No state was touched when lock acquisition failed.
+  }
+}
 bool stereo_audit_prepare(bool enable,const wchar_t* output,void(*log)(const char*)){
     stereo_audit_stop();std::lock_guard<std::recursive_mutex> lock(mutex);logger=log;
     if(installed||factoryInstalled||!enable||!diagnostics_enabled())return false;

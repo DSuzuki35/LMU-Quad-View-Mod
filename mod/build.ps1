@@ -29,11 +29,11 @@ try {
     }
     & gcc -O2 -c vendor/minhook-1.3.4/src/hde/hde64.c -o build/mh_hde64.o
     if ($LASTEXITCODE -ne 0) { throw 'MinHook decoder compilation failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/engine_hooks_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/engine_hooks_test.exe
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/engine_hooks_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/engine_hooks_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Engine hook tests compilation failed' }
     & .\build\engine_hooks_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Engine hook tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/native_outer_fallback_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/native_outer_fallback_test.exe
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/native_outer_fallback_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/native_outer_fallback_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native fallback tests compilation failed' }
     & .\build\native_outer_fallback_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native fallback tests failed' }
@@ -47,11 +47,15 @@ try {
         & ".\build\${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests failed" }
     }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -ffp-contract=off -static tests/native_stereo_classify_test.cpp -o build/native_stereo_classify_test.exe
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Werror -static tests/native_stereo_classify_test.cpp -o build/native_stereo_classify_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native classifier model compilation failed' }
     & .\build\native_stereo_classify_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native classifier model tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/stereo_audit_test.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/stereo_audit_test.exe
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Werror -static tests/native_stereo_classify_capture_test.cpp -o build/native_stereo_classify_capture_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native classifier capture compilation failed' }
+    & .\build\native_stereo_classify_capture_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native classifier capture tests failed' }
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/stereo_audit_test.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/stereo_audit_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Stereo audit tests compilation failed' }
     & .\build\stereo_audit_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Stereo audit tests failed' }
@@ -85,7 +89,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Frame submission tests failed' }
     & .\build\frame_submission_test.exe --profile
     if ($LASTEXITCODE -ne 0) { throw 'Frame submission profiling tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/benchmark_engine_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/benchmark_engine_test.exe
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/benchmark_engine_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/benchmark_engine_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Benchmark engine tests compilation failed' }
     & .\build\benchmark_engine_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Benchmark engine tests failed' }
@@ -136,7 +140,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Diagnostics-off XR tests failed' }
     & .\build\render_profile_test.exe --diagnostics-off
     if ($LASTEXITCODE -ne 0) { throw 'Diagnostics-off profiler tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -shared -I ../prototype/third_party xr_layer.cpp engine_bridge.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o build/version.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o $LayerOutput
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Werror -static -shared -I ../prototype/third_party xr_layer.cpp engine_bridge.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o build/version.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o $LayerOutput
     if ($LASTEXITCODE -ne 0) { throw 'Layer compilation failed' }
     Get-FileHash -LiteralPath $LayerOutput -Algorithm SHA256 | Select-Object Hash
 } finally { Pop-Location }

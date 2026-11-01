@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <cstddef>
+#include "native_stereo_classify_capture.hpp"
 namespace lmuqv {
 inline constexpr std::array<unsigned,25> stereo_audit_vtable{12,13,20,21,38,39,40,41,42,14,15,48,47,46,12,15,13,16,17,18,11,58,27,28,57};
 enum class StereoAuditPass:unsigned {outer0,outer1,focus0,focus1,none};
@@ -29,6 +30,23 @@ struct StereoNativePassInfo {
     const void* currentView=nullptr;
 };
 struct StereoNativePassToken {bool entered=false;unsigned index=0;uint64_t generation=0;};
+struct StereoNativeClassifyInfo {
+  NativeStereoClassifyCaptureArgs args;
+  uint32_t callerRva = 0;
+  bool (*readable)(const void *, size_t) = nullptr;
+};
+struct StereoNativeClassifyToken {
+  bool entered = false;
+  unsigned index = 0, slot = 0;
+  uint64_t generation = 0;
+  StereoNativeClassifyInfo invocation;
+  uintptr_t positionIdentity = 0, ownerIdentity = 0;
+};
+StereoNativeClassifyToken stereo_audit_native_classify_begin(const StereoNativeClassifyInfo &,
+                                                             uint32_t entryMxcsr) noexcept;
+void stereo_audit_native_classify_end(const StereoNativeClassifyToken &, uint32_t returned,
+                                      uint32_t postMxcsr) noexcept;
+void stereo_audit_native_classify_hook_available(bool) noexcept;
 StereoNativePassToken stereo_audit_native_pass_begin(const StereoNativePassInfo&);
 void stereo_audit_native_pass_end(const StereoNativePassToken&);
 StereoNativePrepareToken stereo_audit_native_prepare_begin(const void* mesh,const StereoNativePrepareInfo* info=nullptr);
