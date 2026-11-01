@@ -13,7 +13,7 @@
 #include <xmmintrin.h>
 
 namespace lmuqv {
-inline constexpr size_t nativeStereoClassifyReadByteLimit = 384;
+inline constexpr size_t nativeStereoClassifyReadByteLimit = 448;
 inline constexpr unsigned nativeStereoClassifySlotLimit = 512,
                           nativeStereoClassifyTotalLimit = 4096;
 // Save x87 state as well as the exact SSE controls and sticky flags. All
@@ -78,9 +78,17 @@ struct NativeStereoClassifySnapshot {
   NativeStereoClassifyInput input{};
   uintptr_t positionIdentity = 0, ownerIdentity = 0;
   // Bits 0..9: candidate flags, radius, near, far, count, owner flags/scale,
-  // position, view position/scale. Bits 10..13 are planes; bit 14 is bias.
+  // position, view position/scale. Plane bits and added fields use the mapping below.
   uint32_t copiedFields = 0;
 };
+// Preserve the original plane/bias bits in existing local capture files.
+inline constexpr unsigned nativeStereoClassifyBiasBit = 14;
+inline constexpr unsigned nativeStereoClassifyViewModeBit = 17;
+inline constexpr unsigned nativeStereoClassifySecondaryPositionBit = 18;
+inline constexpr unsigned nativeStereoClassifySecondaryRadiusBit = 19;
+inline constexpr unsigned native_stereo_classify_plane_bit(unsigned index) noexcept {
+  return index < 4 ? 10 + index : 15 + (index - 4);
+}
 namespace native_classify_detail {
 class Reader {
   bool (*readable_)(const void *, size_t);
@@ -131,7 +139,11 @@ inline bool equal_input(NativeStereoClassifyInput a, NativeStereoClassifyInput b
          std::memcmp(&a.viewPosition, &b.viewPosition, sizeof(a.viewPosition)) == 0 &&
          std::memcmp(&a.viewScale, &b.viewScale, sizeof(float) * 2) == 0 &&
          a.skipDistanceBounds == b.skipDistanceBounds &&
-         std::memcmp(a.planes.data(), b.planes.data(), sizeof(a.planes)) == 0;
+         std::memcmp(a.planes.data(), b.planes.data(), sizeof(a.planes)) == 0 &&
+         a.viewMode == b.viewMode &&
+         std::memcmp(&a.secondaryViewPosition, &b.secondaryViewPosition,
+                     sizeof(a.secondaryViewPosition)) == 0 &&
+         std::memcmp(&a.secondaryViewRadius, &b.secondaryViewRadius, sizeof(float)) == 0;
 }
 } // namespace native_classify_detail
 inline NativeStereoClassifySnapshot
@@ -141,7 +153,7 @@ capture_native_stereo_classify(const NativeStereoClassifyCaptureArgs &args,
   NativeStereoClassifySnapshot out;
   std::memcpy(&out.input.bias, &args.bias, sizeof(float));
   out.input.skipDistanceBounds = args.skipDistanceBounds;
-  out.copiedFields = 1u << 14;
+  out.copiedFields = 1u << nativeStereoClassifyBiasBit;
   try {
     native_classify_detail::Reader r(readable, bytes, out.reason);
     const auto candidate = reinterpret_cast<uintptr_t>(args.candidate),
@@ -174,7 +186,7 @@ capture_native_stereo_classify(const NativeStereoClassifyCaptureArgs &args,
       out.reason = "unsupported skip distance bounds";
       return out;
     }
-    if (in.planeCount < 0 || in.planeCount > 4) {
+    if (in.planeCount < 0 || in.planeCount > 6) {
       out.reason = "unsupported plane count";
       return out;
     }
@@ -190,9 +202,22 @@ capture_native_stereo_classify(const NativeStereoClassifyCaptureArgs &args,
         !copy(out.positionIdentity, 0, in.position, 7) || !copy(view, 0x34, in.viewPosition, 8) ||
         !copy(view, 0x114, in.viewScale, 9))
       return out;
-    for (int32_t i = 0; i < in.planeCount; ++i)
-      if (!copy(view, 0x178 + size_t(i) * 16, in.planes[size_t(i)], 10 + unsigned(i)))
+    if (in.planeCount > 4) {
+      if (!copy(view, 0x3e8, in.viewMode, nativeStereoClassifyViewModeBit) ||
+          !copy(view, 0x58, in.secondaryViewPosition, nativeStereoClassifySecondaryPositionBit) ||
+          !copy(view, 0x100, in.secondaryViewRadius, nativeStereoClassifySecondaryRadiusBit))
         return out;
+    }
+    for (int32_t i = 0; i < in.planeCount; ++i) {
+      if (!copy(view, 0x178 + size_t(i) * 16, in.planes[size_t(i)],
+                native_stereo_classify_plane_bit(unsigned(i))))
+        return out;
+    }
+    // The sixth plane is selected by every mode other than exactly one.
+    if (in.planeCount == 5 && in.viewMode != 1) {
+      if (!copy(view, 0x178 + 5 * 16, in.planes[5], native_stereo_classify_plane_bit(5)))
+        return out;
+    }
     out.complete = true;
     out.reason = "complete";
   } catch (...) {

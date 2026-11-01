@@ -738,6 +738,7 @@ void renderHook(void* unknown, bool laterPass) {
     suspendUnexpectedVrs();
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     ID3D11DeviceContext* profileContext=nullptr;
+    ViewSnapshot* auditExpectedView=nullptr;
     unsigned profileEye=0;
     if((renderProfile.enabled()||stereo_audit_enabled())&&!insideHook&&installed.load()&&caller==base+0xcd1763&&xr_quad_active()){
         auto* before=*address<ViewSnapshot*>(0x1a51370);
@@ -747,6 +748,7 @@ void renderHook(void* unknown, bool laterPass) {
             auto* context=*reinterpret_cast<ID3D11DeviceContext**>(renderer+0x76f68);
             if(readable(context,sizeof(void*))){
                 profileContext=context;profileEye=unsigned(before->eye_index);
+                auditExpectedView=before;
                 if(profileEye==0){
                     const bool key=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F9)&0x8000);
                     renderProfile.frame(context,key);
@@ -804,7 +806,7 @@ void renderHook(void* unknown, bool laterPass) {
         nativeOuterExpected=*address<ViewSnapshot*>(0x1a51370);
     const bool profileOuterGpu=profileContext&&renderProfile.gpu_start(profileContext,profileEye);
     ProfileScope outerProfile(profile_eye(ProfileSlot::outer0,profileEye),profileContext!=nullptr);
-    StereoAuditScope outerAudit(profileContext?stereo_audit_eye(false,profileEye):StereoAuditPass::none);
+    StereoAuditScope outerAudit(profileContext?stereo_audit_eye(false,profileEye):StereoAuditPass::none,auditExpectedView);
     renderOriginal(unknown,laterPass);
     outerAudit.end();
     outerProfile.end();
@@ -882,7 +884,7 @@ void renderHook(void* unknown, bool laterPass) {
     const bool focusCounted=measureFocus&&benchmark&&pipelineStats.start(timingContext,eye+2);
     const bool profileFocusGpu=profileContext&&renderProfile.gpu_start(profileContext,eye+2);
     ProfileScope focusSceneProfile(profile_eye(ProfileSlot::focus_scene0,eye));
-    StereoAuditScope focusAudit(stereo_audit_eye(true,eye));
+    StereoAuditScope focusAudit(stereo_audit_eye(true,eye),view);
     reinterpret_cast<SceneFn>(base+0x5de200)(scene,false,true);
     focusAudit.end();
     focusSceneProfile.end();

@@ -77,9 +77,58 @@ int main() {
     bytes = 0;
     post = snapshot(fixture.args(), bytes);
     assert(compare_native_stereo_classify(pre, post, 0x1f80, 0x1f80, 0x20).storedMismatch);
-    assert(!compare_native_stereo_classify(pre, post, 0x9f80, 0x1f80, 0x20).available);
+    assert(!compare_native_stereo_classify(pre, post, 0x9f80, 0x1f80, 0x20)
+                .available);
     Fixture::put(fixture.candidate, 0, uint32_t(0x70020));
   }
+
+  // Exact live offsets, including the extra selected plane for count five.
+  for (int count : {5, 6})
+    for (int mode : {1, 0, -7}) {
+      Fixture::put(fixture.candidate, 0x104, int32_t(count));
+      Fixture::put(fixture.view, 0x3e8, int32_t(mode));
+      Fixture::put(fixture.view, 0x58, fixture.position);
+      Fixture::put(fixture.view, 0x100, 3.f);
+      for (unsigned i = 4; i < 6; ++i)
+        Fixture::put(fixture.view, 0x178 + i * 16,
+                     NativeStereoClassifyPlane{0, 0, 0, -3});
+      size_t used = 0;
+      auto before = snapshot(fixture.args(), used);
+      const auto singleBytes = count == 5 && mode == 1 ? 188u : 204u;
+      assert(before.complete && used == singleBytes &&
+             before.input.viewMode == mode &&
+             before.input.secondaryViewPosition.x == 3 &&
+             before.input.secondaryViewRadius == 3);
+      const uint32_t mask = (1u << 20) - 1u;
+      assert(before.copiedFields ==
+             (count == 5 && mode == 1 ? mask & ~(1u << 16) : mask));
+      Fixture::put(fixture.candidate, 0, uint32_t(0x20));
+      auto after = snapshot(fixture.args(), used);
+      assert(used == singleBytes * 2 &&
+             used + 4 <= nativeStereoClassifyReadByteLimit);
+      assert(compare_native_stereo_classify(before, after, 0x1fbf, 0x1f80, 0x20)
+                 .available);
+      // Every used added field and plane is part of the exact-bit stability
+      // proof.
+      for (size_t offset :
+           {size_t(0x3e8), size_t(0x58), size_t(0x5c), size_t(0x60),
+            size_t(0x100), size_t(0x1b8), size_t(0x1c8)}) {
+        uint32_t original = 0;
+        std::memcpy(&original, fixture.view.data() + offset, 4);
+        Fixture::put(fixture.view, offset, original ^ 1u);
+        used = 0;
+        after = snapshot(fixture.args(), used);
+        const auto c =
+            compare_native_stereo_classify(before, after, 0x1f80, 0x1f80, 0x20);
+        assert(c.available == (count == 5 && mode == 1 && offset == 0x1c8));
+        Fixture::put(fixture.view, offset, original);
+      }
+      Fixture::put(fixture.candidate, 0, uint32_t(0x70020));
+      assert(before.input.secondaryViewRadius == 3 &&
+             before.input.planes[4].w == -3);
+    }
+  Fixture::put(fixture.candidate, 0x104, int32_t(4));
+
   size_t bytes = 0;
   auto pre = snapshot(fixture.args(), bytes);
   assert(pre.complete);
@@ -98,7 +147,7 @@ int main() {
   bad.skipDistanceBounds = true;
   bytes = 0;
   assert(!snapshot(bad, bytes).complete);
-  for (int count : {-1, 5}) {
+  for (int count : {-1, 7}) {
     Fixture::put(fixture.candidate, 0x104, int32_t(count));
     bytes = 0;
     assert(!snapshot(fixture.args(), bytes).complete);
@@ -128,9 +177,9 @@ int main() {
   bytes = 0;
   assert(!snapshot(fixture.args(), bytes).complete);
   throwing = false;
-  bytes = 384;
+  bytes = 448;
   reads = 0;
-  assert(!snapshot(fixture.args(), bytes).complete && reads == 0 && bytes == 384);
+  assert(!snapshot(fixture.args(), bytes).complete && reads == 0 && bytes == 448);
   // Wrong main view and a parented view refuse before candidate inspection.
   bad = fixture.args();
   bad.view = fixture.owner.data();

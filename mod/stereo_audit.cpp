@@ -137,6 +137,11 @@ struct NativeClassifyRecord {
 std::vector<NativeClassifyRecord> nativeClassifications;
 std::array<uint64_t, framesWanted * 4> classifyAttempts{}, classifyDrops{};
 uint64_t classifyTotalAttempts = 0, classifyTotalDrops = 0;
+std::array<uint64_t, framesWanted * 4> classifyExcludedViews{}, classifyMissingExpectedViews{};
+uint64_t classifyTotalExcludedViews = 0, classifyTotalMissingExpectedViews = 0;
+// Identity selection only: snapshot reads still prove current main/null parent.
+thread_local const void* expectedClassifyMainView = nullptr;
+thread_local uint64_t expectedClassifyGeneration = 0;
 bool classifyFailed = false;
 std::atomic<bool> classifyHookAvailable{false};
 std::unordered_map<const void *, uint32_t> nativeObjects;
@@ -161,6 +166,11 @@ void reset_native_capture() {
   classifyDrops = {};
   classifyTotalAttempts = classifyTotalDrops = 0;
   classifyFailed = false;
+  classifyExcludedViews = {};
+  classifyMissingExpectedViews = {};
+  classifyTotalExcludedViews = classifyTotalMissingExpectedViews = 0;
+  expectedClassifyMainView = nullptr;
+  expectedClassifyGeneration = 0;
 }
 uint32_t native_identity(std::unordered_map<const void *, uint32_t> &identities,
                          const void *pointer, size_t limit) {
@@ -863,6 +873,7 @@ bool export_program(const Program& p,std::string& relative){
     DWORD written=0;const bool okay=WriteFile(file,p.bytecode.data(),DWORD(p.bytecode.size()),&written,nullptr)&&written==p.bytecode.size()&&FlushFileBuffers(file);CloseHandle(file);return okay;
 }
 void write_classify_input(std::ostringstream &out, const NativeStereoClassifySnapshot &snapshot) {
+  const auto priorPrecision = out.precision();
   const auto &in = snapshot.input;
   const auto mask = snapshot.copiedFields;
   const auto number = [&](float value, unsigned bit) {
@@ -908,24 +919,35 @@ void write_classify_input(std::ostringstream &out, const NativeStereoClassifySna
   out << "],\"view_scale\":";
   number(in.viewScale, 9);
   out << ",\"bias\":";
-  number(in.bias, 14);
+  number(in.bias, nativeStereoClassifyBiasBit);
+  out << ",\"view_mode\":";
+  integer(in.viewMode, nativeStereoClassifyViewModeBit);
+  out << ",\"secondary_view_position\":[";
+  number(in.secondaryViewPosition.x, nativeStereoClassifySecondaryPositionBit);
+  out << ',';
+  number(in.secondaryViewPosition.y, nativeStereoClassifySecondaryPositionBit);
+  out << ',';
+  number(in.secondaryViewPosition.z, nativeStereoClassifySecondaryPositionBit);
+  out << "],\"secondary_view_radius\":";
+  number(in.secondaryViewRadius, nativeStereoClassifySecondaryRadiusBit);
   out << ",\"skip_distance_bounds\":" << (in.skipDistanceBounds ? "true" : "false")
       << ",\"planes\":[";
-  for (unsigned i = 0; i < 4; ++i) {
+  for (unsigned i = 0; i < in.planes.size(); ++i) {
     if (i)
       out << ',';
     out << '[';
     const auto &p = in.planes[i];
-    number(p.x, 10 + i);
+    number(p.x, native_stereo_classify_plane_bit(i));
     out << ',';
-    number(p.y, 10 + i);
+    number(p.y, native_stereo_classify_plane_bit(i));
     out << ',';
-    number(p.z, 10 + i);
+    number(p.z, native_stereo_classify_plane_bit(i));
     out << ',';
-    number(p.w, 10 + i);
+    number(p.w, native_stereo_classify_plane_bit(i));
     out << ']';
   }
   out << "]}";
+  out.precision(priorPrecision);
 }
 NativeStereoClassifyComparison classification_comparison(const NativeClassifyRecord &record) {
   if (!record.ended) {
@@ -953,6 +975,7 @@ void write_native_classification(std::ostringstream &out) {
     incompleteSnapshots += !record.pre.complete || !record.post.complete;
   }
   const bool captureIncomplete = !classifyHookAvailable || classifyFailed || classifyTotalDrops ||
+                                 classifyTotalMissingExpectedViews ||
                                  unfinishedInvocations || incompleteSnapshots || openScopes ||
                                  completedFrames < framesWanted;
   out << ",\"native_classification\":{\"hook_available\":"
@@ -968,6 +991,8 @@ void write_native_classification(std::ostringstream &out) {
       << ",\"native_byte_limit_per_attempt\":" << nativeStereoClassifyReadByteLimit
       << ",\"diagnostic_failed\":" << (classifyFailed ? "true" : "false")
       << ",\"attempts\":" << classifyTotalAttempts << ",\"dropped\":" << classifyTotalDrops
+      << ",\"excluded_view_calls\":" << classifyTotalExcludedViews
+      << ",\"missing_expected_view_calls\":" << classifyTotalMissingExpectedViews
       << ",\"available\":" << available << ",\"refused\":" << refused
       << ",\"returned_mismatch\":" << returnedMismatch << ",\"stored_mismatch\":" << storedMismatch
       << ",\"slots\":[";
@@ -975,7 +1000,9 @@ void write_native_classification(std::ostringstream &out) {
     if (i)
       out << ',';
     out << "{\"slot\":" << i << ",\"attempts\":" << classifyAttempts[i]
-        << ",\"dropped\":" << classifyDrops[i] << '}';
+        << ",\"dropped\":" << classifyDrops[i]
+        << ",\"excluded_view_calls\":" << classifyExcludedViews[i]
+        << ",\"missing_expected_view_calls\":" << classifyMissingExpectedViews[i] << '}';
   }
   out << "],\"records\":[";
   bool first = true;
@@ -1098,6 +1125,16 @@ StereoNativeClassifyToken stereo_audit_native_classify_begin(const StereoNativeC
       if (!enabled || !capturing)
         return {};
       const unsigned slot = unsigned(activeSlot);
+      if (!expectedClassifyMainView || expectedClassifyGeneration != nativeGeneration) {
+        ++classifyMissingExpectedViews[slot];
+        ++classifyTotalMissingExpectedViews;
+        return {};
+      }
+      if (info.args.view != expectedClassifyMainView) {
+        ++classifyExcludedViews[slot];
+        ++classifyTotalExcludedViews;
+        return {};
+      }
       if (classifyFailed || classifyAttempts[slot] >= nativeStereoClassifySlotLimit ||
           classifyTotalAttempts >= nativeStereoClassifyTotalLimit) {
         ++classifyDrops[slot];
@@ -1238,18 +1275,43 @@ void stereo_audit_frame(bool keyDown){
     if(proofRequested)try{pairProof.begin();}catch(...){proofRequested=false;emit("stereo_pair_proof unavailable: allocation failed; ordinary audit retained");}
     emit(pressed?"stereo_audit start trigger=hotkey; collecting two scene frames, no game draw suppression or stereo conversion":"stereo_audit start trigger=file; collecting two scene frames, no game draw suppression or stereo conversion");
 }
-StereoAuditToken stereo_audit_begin(StereoAuditPass pass){
-    if(!enabled||unsigned(pass)>=4||suspended)return {};
-    std::lock_guard<std::recursive_mutex> lock(mutex);
-    if(!capturing||GetCurrentThreadId()!=owner||completedFrames>=framesWanted||activeSlot>=0)return {};
-    activeSlot=int(completedFrames*4+unsigned(pass));group=-1;nativeMesh=0;nativeStarted=0;nativeBindTicks=0;nativeFirstDraw=false;++openScopes;sawScene=true;
-    return {true,unsigned(activeSlot),ticks()};
+StereoAuditToken stereo_audit_begin(StereoAuditPass pass, const void* expectedMainView){
+  if (!enabled || unsigned(pass) >= 4 || suspended)
+    return {};
+  std::lock_guard<std::recursive_mutex> lock(mutex);
+  if (!capturing || GetCurrentThreadId() != owner ||
+      completedFrames >= framesWanted || activeSlot >= 0)
+    return {};
+  activeSlot = int(completedFrames * 4 + unsigned(pass));
+  group = -1;
+  nativeMesh = 0;
+  nativeStarted = 0;
+  nativeBindTicks = 0;
+  nativeFirstDraw = false;
+  ++openScopes;
+  sawScene = true;
+  expectedClassifyMainView = expectedMainView;
+  expectedClassifyGeneration = nativeGeneration;
+  return {true, unsigned(activeSlot), ticks(), nativeGeneration};
 }
-void stereo_audit_end(StereoAuditToken& token){
-    if(!token.entered)return;std::lock_guard<std::recursive_mutex> lock(mutex);
-    if(capturing)passes[token.slot].wallTicks+=uint64_t(ticks()-token.started);
-    activeSlot=-1;group=-1;if(openScopes)--openScopes;token.entered=false;
-    if(deferredStop&&!openScopes)cleanup();
+void stereo_audit_end(StereoAuditToken &token) {
+  if (!token.entered)
+    return;
+  std::lock_guard<std::recursive_mutex> lock(mutex);
+  if (GetCurrentThreadId() != owner || token.generation != nativeGeneration ||
+      activeSlot != int(token.slot))
+    return;
+  expectedClassifyMainView = nullptr;
+  expectedClassifyGeneration = 0;
+  if (capturing)
+    passes[token.slot].wallTicks += uint64_t(ticks() - token.started);
+  activeSlot = -1;
+  group = -1;
+  if (openScopes)
+    --openScopes;
+  token.entered = false;
+  if (deferredStop && !openScopes)
+    cleanup();
 }
 int stereo_audit_group(int value){if(!enabled)return -1;const auto previous=group;group=value;nativeMesh=0;nativeStarted=0;nativeBindTicks=0;nativeFirstDraw=false;return previous;}
 StereoNativePassToken

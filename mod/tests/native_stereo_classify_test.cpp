@@ -151,7 +151,7 @@ static void restricted_domain() {
     auto in = base();
     in.skipDistanceBounds = true;
     refused(in, Reason::UnsupportedMode, "skip-distance mode");
-    for (const auto count : {-1, 5, std::numeric_limits<std::int32_t>::max()}) {
+    for (const auto count : {-1, 7, std::numeric_limits<std::int32_t>::max()}) {
         in = base(); in.planeCount = count;
         refused(in, Reason::UnsupportedMode, "unsupported plane count");
     }
@@ -239,7 +239,7 @@ static void intermediate_overflow() {
     refused(in, Reason::NonFiniteArithmetic, "owner-scaled near overflow");
     in = base(); in.farCoefficient = high; in.viewScale = 2;
     refused(in, Reason::NonFiniteArithmetic, "view-scaled far overflow");
-    in = base(); in.nearCoefficient = high; in.farCoefficient = high; in.viewScale = 2;
+    in = base(); in.ownerScale = 0.5f; in.nearCoefficient = high; in.farCoefficient = 1; in.viewScale = 4;
     refused(in, Reason::NonFiniteArithmetic, "view-scaled near overflow");
     for (unsigned axis = 0; axis < 3; ++axis) {
         in = base(); in.planeCount = 1; in.position = {2, 2, 2};
@@ -264,7 +264,178 @@ static void intermediate_overflow() {
     flags(in, 0x50000, "distance rejection bypasses dot overflow");
 }
 
-static bool equal_input(const Input& a, const Input& b) {
+static Input six_base(int count = 6, int mode = 1) {
+    auto in = base();
+    in.planeCount = count;
+    in.viewMode = mode;
+    in.secondaryViewPosition = in.position;
+    in.secondaryViewRadius = 2;
+    for (auto &p : in.planes)
+        p.w = -2;
+    return in;
+}
+static void six_planes() {
+    for (int count : {5, 6})
+        for (int mode : {1, 0, -9, INT32_MAX}) {
+            auto in = six_base(count, mode);
+            flags(in, 0, "five/six planes inside");
+            in.candidateFlags = 0x1237abcd;
+            in.planes[mode == 1 ? 4 : 5].w = 2;
+            auto out = classify_native_stereo_numbers(in);
+            require(out.available && out.returnedFlags == 0x40000 &&
+                        out.storedCandidateFlags == (in.candidateFlags & 0xfff8ffffu),
+                    "special literal return and cleared store");
+            in.ownerFlags = 0x80000000;
+            out = classify_native_stereo_numbers(in);
+            require(out.available && out.returnedFlags == 0x40000, "sign cannot bypass special");
+            in.position.x = 20;
+            flags(in, (in.candidateFlags & 0xfff8ffffu) | 0x50000, "distance first");
+        }
+    auto in = six_base(5, 1);
+    in.planes[5].w = std::numeric_limits<float>::quiet_NaN();
+    flags(in, 0, "count five mode one ignores sixth");
+    in.viewMode = 0;
+    refused(in, Reason::NonFiniteInput, "selected sixth validated for count five");
+    in = six_base();
+    in.ownerFlags = 0x80000000;
+    for (float w : {std::nextafter(1.f, 0.f), 1.f}) {
+        in.planes[4].w = w;
+        flags(in, 0, "special boundary continues");
+    }
+    in.planes[4].w = std::nextafter(1.f, 2.f);
+    auto out = classify_native_stereo_numbers(in);
+    require(out.available && out.returnedFlags == 0x40000 && out.storedCandidateFlags == 0,
+            "adjacent special rejects");
+    in = six_base();
+    in.ownerFlags = 0x80000000;
+    for (float x : {8.f, std::nextafter(8.f, 7.f)}) {
+        in.secondaryViewPosition.x = x;
+        flags(in, 0, "sphere equality and inside");
+    }
+    in.secondaryViewPosition.x = std::nextafter(8.f, 9.f);
+    flags(in, 0x40000, "sphere adjacent outside before sign");
+    in.ownerFlags = 0;
+    in.planes[0].w = 0;
+    flags(in, 0x40000, "sphere before normal intersection");
+    in = six_base(5, 0);
+    in.planes[4].w = 2;
+    flags(in, 0x40000, "normal fifth");
+    in = six_base();
+    in.planes[5].w = 2;
+    flags(in, 0x40000, "normal sixth");
+    in.planes[0].w = 0;
+    flags(in, 0x20000, "first intersection");
+    in = six_base();
+    in.position = {1, 4096, 1};
+    in.farCoefficient = 10000;
+    in.secondaryViewPosition = in.position;
+    in.radius = 0.5f;
+    in.ownerFlags = 0x80000000;
+    in.planes[4] = {1, 4096, -16777216, -1};
+    flags(in, 0, "special grouped dot");
+    in.position = {-0x1.000004p0f, 0x1.000002p0f, 0};
+    in.secondaryViewPosition = in.position;
+    in.planes[4] = {1, 0x1.000002p0f, 0, 0};
+    in.radius = 0;
+    flags(in, 0, "special no contraction");
+    in = six_base();
+    in.ownerFlags = 0x80000000;
+    in.position = {1, 4096, 1.5f};
+    in.secondaryViewPosition = {};
+    in.farCoefficient = 10000;
+    in.radius = 4096;
+    in.secondaryViewRadius = 0;
+    flags(in, 0x40000, "sphere squared distance without sqrt rounding");
+    // Both small squares disappear in (y*y + x*x) + z*z. Adding them
+    // together first would reject this exact radius-squared boundary.
+    in.position = {0.5f, 2048, 0.5f};
+    in.radius = 2048;
+    flags(in, 0, "secondary sphere preserves y/x then z grouping");
+}
+static void six_validation() {
+    const float high = std::numeric_limits<float>::max();
+    for (float bad :
+         {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+          -std::numeric_limits<float>::infinity()}) {
+        for (unsigned i = 0; i < 4; ++i) {
+            auto in = six_base();
+            std::array<float *, 4> fields{&in.secondaryViewPosition.x, &in.secondaryViewPosition.y,
+                                          &in.secondaryViewPosition.z, &in.secondaryViewRadius};
+            *fields[i] = bad;
+            refused(in, Reason::NonFiniteInput, "new fields validated upfront");
+            for (int count = 0; count <= 4; ++count) {
+                in.planeCount = count;
+                in.planes[4].w = bad;
+                in.planes[5].w = bad;
+                flags(in, 0, "old counts ignore added fields");
+            }
+        }
+        for (int plane : {4, 5})
+            for (unsigned i = 0; i < 4; ++i) {
+                auto in = six_base();
+                std::array<float *, 4> fields{&in.planes[plane].x, &in.planes[plane].y,
+                                              &in.planes[plane].z, &in.planes[plane].w};
+                *fields[i] = bad;
+                refused(in, Reason::NonFiniteInput, "new declared planes upfront");
+            }
+    }
+    auto in = six_base();
+    in.secondaryViewRadius = -1;
+    refused(in, Reason::InvalidDomain, "negative secondary radius");
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        in = six_base();
+        in.position = {2, 2, 2};
+        std::array<float *, 3> fields{&in.planes[4].x, &in.planes[4].y, &in.planes[4].z};
+        *fields[axis] = high;
+        refused(in, Reason::NonFiniteArithmetic, "special product overflow");
+    }
+    for (auto p :
+         {NativeStereoClassifyPlane{high, high, 0, 0}, {0, 0, high, high}, {0, high, high, 0}}) {
+        in = six_base();
+        in.position = {1, 1, 1};
+        in.planes[4] = p;
+        refused(in, Reason::NonFiniteArithmetic, "special sums overflow");
+    }
+    in = six_base();
+    in.radius = high;
+    in.secondaryViewRadius = high;
+    refused(in, Reason::NonFiniteArithmetic, "secondary radius sum overflow");
+    in = six_base();
+    in.secondaryViewRadius = high;
+    refused(in, Reason::NonFiniteArithmetic, "secondary radius square overflow");
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        in = six_base();
+        in.position = {0, 0, 0};
+        in.bias = 5;
+        std::array<float *, 3> fields{&in.secondaryViewPosition.x, &in.secondaryViewPosition.y,
+                                      &in.secondaryViewPosition.z};
+        *fields[axis] = high;
+        refused(in, Reason::NonFiniteArithmetic, "secondary square overflow");
+    }
+    in = six_base();
+    in.position = {high, 0, 0};
+    in.viewPosition = in.position;
+    in.bias = 5;
+    in.secondaryViewPosition.x = -high;
+    refused(in, Reason::NonFiniteArithmetic, "secondary subtraction overflow");
+    in = six_base();
+    in.secondaryViewPosition = {0x1.8p63f, 0x1.8p63f, 0};
+    refused(in, Reason::NonFiniteArithmetic, "secondary xy overflow");
+    in.secondaryViewPosition = {0x1.4p63f, 0x1.4p63f, 0x1.4p63f};
+    refused(in, Reason::NonFiniteArithmetic, "secondary final sum overflow");
+    in = six_base();
+    in.secondaryViewRadius = high;
+    in.planes[4].w = 2;
+    auto out = classify_native_stereo_numbers(in);
+    require(out.available && out.returnedFlags == 0x40000 && out.storedCandidateFlags == 0,
+            "special skips sphere overflow");
+    in.farCoefficient = 1;
+    in.nearCoefficient = 0;
+    in.planes[4].x = high;
+    flags(in, 0x50000, "distance skips special overflow");
+}
+
+static bool equal_input(const Input &a, const Input &b) {
     if (a.candidateFlags != b.candidateFlags || a.ownerFlags != b.ownerFlags ||
         a.ownerScale != b.ownerScale || a.nearCoefficient != b.nearCoefficient ||
         a.farCoefficient != b.farCoefficient || a.radius != b.radius ||
@@ -272,22 +443,29 @@ static bool equal_input(const Input& a, const Input& b) {
         a.position.y != b.position.y || a.position.z != b.position.z ||
         a.viewPosition.x != b.viewPosition.x || a.viewPosition.y != b.viewPosition.y ||
         a.viewPosition.z != b.viewPosition.z || a.viewScale != b.viewScale ||
-        a.bias != b.bias || a.skipDistanceBounds != b.skipDistanceBounds) return false;
+        a.viewMode != b.viewMode || a.secondaryViewRadius != b.secondaryViewRadius ||
+        a.secondaryViewPosition.x != b.secondaryViewPosition.x ||
+        a.secondaryViewPosition.y != b.secondaryViewPosition.y ||
+        a.secondaryViewPosition.z != b.secondaryViewPosition.z || a.bias != b.bias ||
+        a.skipDistanceBounds != b.skipDistanceBounds)
+        return false;
     for (std::size_t i = 0; i < a.planes.size(); ++i) {
         if (a.planes[i].x != b.planes[i].x || a.planes[i].y != b.planes[i].y ||
-            a.planes[i].z != b.planes[i].z || a.planes[i].w != b.planes[i].w) return false;
+            a.planes[i].z != b.planes[i].z || a.planes[i].w != b.planes[i].w)
+            return false;
     }
     return true;
 }
 static void immutable_and_repeatable() {
-    auto in = base(); in.candidateFlags = 0x1237ABCD; in.planeCount = 4;
+    auto in = six_base();
+    in.candidateFlags = 0x1237ABCD;
     const auto before = in;
     const auto first = classify_native_stereo_numbers(in);
     for (unsigned i = 0; i < 100; ++i) {
         const auto next = classify_native_stereo_numbers(in);
         require(next.available == first.available && next.reason == first.reason &&
-                next.returnedFlags == first.returnedFlags &&
-                next.storedCandidateFlags == first.storedCandidateFlags,
+                    next.returnedFlags == first.returnedFlags &&
+                    next.storedCandidateFlags == first.storedCandidateFlags,
                 "repeated evaluation changed output");
         require(equal_input(in, before), "evaluation mutated owned inputs");
     }
@@ -299,6 +477,8 @@ int main() {
     restricted_domain();
     finite_input_validation();
     intermediate_overflow();
+    six_planes();
+    six_validation();
     immutable_and_repeatable();
     std::cout << "native stereo numeric classifier: " << checks << " checks passed\n";
 }

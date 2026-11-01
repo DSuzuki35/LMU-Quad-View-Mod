@@ -23,5 +23,8 @@
 ### Task 2: Review, live evidence and publication
 
 - [x] Independent scoped review of implementation/test evidence; resolve blocking findings.
-- [ ] Stage separate diagnostic build, verify hashes, run offline Monza file-trigger capture and inspect available/refused/mismatched records for each observed eye. Close LMU when inputs collected.
-- [ ] Document exact limitations and evidence, commit and push prerequisite to the SPS branch. Continue native preparation/ownership; no release claim.
+- [x] Stage separate diagnostic build, verify hashes, run offline Monza file-trigger capture and inspect available/refused/mismatched records for each observed eye. Close LMU when inputs collected.
+- [x] Document exact limitations and evidence, commit and push prerequisite to the SPS branch. Continue native preparation/ownership; no release claim.
+
+
+Live result: the hook operated, but no comparisons qualified. Six-plane calls and earlier non-main views require the [targeted follow-up](2026-11-01-sps-six-plane-classifier.md). This diagnostic task did not implement native SPS.

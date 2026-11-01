@@ -8,7 +8,7 @@ namespace lmuqv {
 inline constexpr std::array<unsigned,25> stereo_audit_vtable{12,13,20,21,38,39,40,41,42,14,15,48,47,46,12,15,13,16,17,18,11,58,27,28,57};
 enum class StereoAuditPass:unsigned {outer0,outer1,focus0,focus1,none};
 inline StereoAuditPass stereo_audit_eye(bool focus,unsigned eye){return StereoAuditPass((focus?2:0)+eye);}
-struct StereoAuditToken {bool entered=false;unsigned slot=0;long long started=0;};
+struct StereoAuditToken {bool entered=false;unsigned slot=0;long long started=0;uint64_t generation=0;};
 struct StereoNativePrepareToken {bool entered=false;unsigned slot=0;long long started=0;uint64_t generation=0;unsigned metadataIndex=~0u;};
 struct StereoNativePrepareInfo {
     const void* shader=nullptr;
@@ -59,14 +59,15 @@ bool stereo_audit_prepare(bool,const wchar_t* directory,void(*log)(const char*))
 bool stereo_audit_enabled();
 void stereo_audit_frame(bool keyDown);
 void stereo_audit_frame_end();
-StereoAuditToken stereo_audit_begin(StereoAuditPass);
+StereoAuditToken stereo_audit_begin(StereoAuditPass, const void* expectedMainView=nullptr);
 void stereo_audit_end(StereoAuditToken&);
 int stereo_audit_group(int group);
 void stereo_audit_stop();
 class StereoAuditScope {
     StereoAuditToken token_;
 public:
-    explicit StereoAuditScope(StereoAuditPass pass):token_(stereo_audit_begin(pass)){}
+    explicit StereoAuditScope(StereoAuditPass pass, const void* expectedMainView=nullptr)
+        :token_(stereo_audit_begin(pass,expectedMainView)){}
     ~StereoAuditScope(){end();}
     void end(){stereo_audit_end(token_);}
     StereoAuditScope(const StereoAuditScope&)=delete;

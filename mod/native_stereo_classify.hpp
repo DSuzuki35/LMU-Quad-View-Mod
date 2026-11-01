@@ -14,7 +14,10 @@ struct NativeStereoClassifyInput {
     NativeStereoClassifyFloat3 position{}, viewPosition{};
     float viewScale{1}, bias{};
     bool skipDistanceBounds{};
-    std::array<NativeStereoClassifyPlane, 4> planes{};
+    std::array<NativeStereoClassifyPlane, 6> planes{};
+    std::int32_t viewMode{};
+    NativeStereoClassifyFloat3 secondaryViewPosition{};
+    float secondaryViewRadius{};
 };
 enum class NativeStereoClassifyReason {
     None, UnsupportedMode, NonFiniteInput, InvalidDomain, NonFiniteArithmetic
@@ -30,11 +33,13 @@ struct NativeStereoClassifyResult {
 // Future capture must take position from the classifier's R8 argument (normally
 // the pointer at candidate+0x110), not sorting coordinates at candidate+0xEC.
 //
-// Domain: planeCount 0..4, normal distance bounds; all scalar/vector inputs and
-// planes[0..planeCount) finite; radius/near/bias >= 0; scales/far > 0; final
+// Domain: planeCount 0..6, normal distance bounds; all scalar/vector inputs and
+// declared planes finite; radius/near/bias >= 0; scales/far > 0; final
 // float near*viewScale < far*viewScale. Input validation is deliberately upfront,
 // including active planes bypassed by owner sign or an earlier return. Unused
-// planes are ignored. This narrower domain is not an engine-domain claim.
+// planes are ignored, except the selected special plane for counts > 4.
+// Those counts additionally require finite secondary position/radius, radius >= 0.
+// Added fields are ignored for counts 0..4. This is not an engine-domain claim.
 // Only reached arithmetic is evaluated; any nonfinite intermediate refuses.
 // Unavailable results have zero flag fields: always check available/reason.
 //
@@ -54,7 +59,7 @@ inline NativeStereoClassifyResult classify_native_stereo_numbers(
     const auto refuse = [](Reason reason) noexcept {
         return NativeStereoClassifyResult{false, reason, 0, 0};
     };
-    if (in.skipDistanceBounds || in.planeCount < 0 || in.planeCount > 4)
+    if (in.skipDistanceBounds || in.planeCount < 0 || in.planeCount > 6)
         return refuse(Reason::UnsupportedMode);
     if (!std::isfinite(in.ownerScale) || !std::isfinite(in.nearCoefficient) ||
         !std::isfinite(in.farCoefficient) || !std::isfinite(in.radius) ||
@@ -68,6 +73,19 @@ inline NativeStereoClassifyResult classify_native_stereo_numbers(
         if (!std::isfinite(plane.x) || !std::isfinite(plane.y) ||
             !std::isfinite(plane.z) || !std::isfinite(plane.w))
             return refuse(Reason::NonFiniteInput);
+    }
+    // Count five may select plane five even though it is outside the normal loop.
+    const std::size_t specialIndex = in.viewMode == 1 ? 4 : 5;
+    if (in.planeCount > 4) {
+        const auto& plane = in.planes[specialIndex];
+        if (!std::isfinite(plane.x) || !std::isfinite(plane.y) ||
+            !std::isfinite(plane.z) || !std::isfinite(plane.w) ||
+            !std::isfinite(in.secondaryViewPosition.x) ||
+            !std::isfinite(in.secondaryViewPosition.y) ||
+            !std::isfinite(in.secondaryViewPosition.z) ||
+            !std::isfinite(in.secondaryViewRadius))
+            return refuse(Reason::NonFiniteInput);
+        if (in.secondaryViewRadius < 0) return refuse(Reason::InvalidDomain);
     }
     if (in.ownerScale <= 0 || in.viewScale <= 0 || in.farCoefficient <= 0 ||
         in.nearCoefficient < 0 || in.radius < 0 || in.bias < 0)
@@ -109,6 +127,41 @@ inline NativeStereoClassifyResult classify_native_stereo_numbers(
     if (!(effectiveNear < effectiveFar)) return refuse(Reason::InvalidDomain);
     if (d > effectiveFar) return classified(0x50000u);
     if (d <= effectiveNear) return classified(0x50000u);
+    if (in.planeCount > 4) {
+        const auto& plane = in.planes[specialIndex];
+        const float py = in.position.y * plane.y;
+        const float px = in.position.x * plane.x;
+        const float pz = in.position.z * plane.z;
+        if (!std::isfinite(py) || !std::isfinite(px) || !std::isfinite(pz))
+            return refuse(Reason::NonFiniteArithmetic);
+        const float xy = py + px;
+        const float zw = pz + plane.w;
+        if (!std::isfinite(xy) || !std::isfinite(zw))
+            return refuse(Reason::NonFiniteArithmetic);
+        const float dot = xy + zw;
+        if (!std::isfinite(dot)) return refuse(Reason::NonFiniteArithmetic);
+        // The special-plane path has distinct native return and stored flags.
+        if (dot > in.radius) return {true, Reason::None, 0x40000u, f};
+        const float sphereRadius = in.radius + in.secondaryViewRadius;
+        if (!std::isfinite(sphereRadius)) return refuse(Reason::NonFiniteArithmetic);
+        const float sx = in.position.x - in.secondaryViewPosition.x;
+        const float sy = in.position.y - in.secondaryViewPosition.y;
+        const float sz = in.position.z - in.secondaryViewPosition.z;
+        if (!std::isfinite(sx) || !std::isfinite(sy) || !std::isfinite(sz))
+            return refuse(Reason::NonFiniteArithmetic);
+        const float syy = sy * sy;
+        const float sxx = sx * sx;
+        const float szz = sz * sz;
+        if (!std::isfinite(syy) || !std::isfinite(sxx) || !std::isfinite(szz))
+            return refuse(Reason::NonFiniteArithmetic);
+        const float syx = syy + sxx;
+        if (!std::isfinite(syx)) return refuse(Reason::NonFiniteArithmetic);
+        const float distanceSquared = syx + szz;
+        if (!std::isfinite(distanceSquared)) return refuse(Reason::NonFiniteArithmetic);
+        const float radiusSquared = sphereRadius * sphereRadius;
+        if (!std::isfinite(radiusSquared)) return refuse(Reason::NonFiniteArithmetic);
+        if (distanceSquared > radiusSquared) return classified(0x40000u);
+    }
     // Sign-bit test avoids implementation-defined uint32 -> int32 conversion.
     if ((in.ownerFlags & 0x80000000u) || in.planeCount == 0) return classified(0);
     for (std::int32_t i = 0; i < in.planeCount; ++i) {
