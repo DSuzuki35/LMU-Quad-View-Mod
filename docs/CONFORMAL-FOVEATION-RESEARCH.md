@@ -7,7 +7,12 @@ Branch: `codex/conformal-foveated-research`.
 This document investigates allocating more eye-texture samples near gaze and
 progressively fewer toward the periphery, then reconstructing an ordinary eye
 image. It changes no renderer, launcher, runtime, game installation, or settings.
-The proposed offline experiment below has **not** been implemented or measured.
+The proposed full D3D11 experiment below has **not** been implemented.
+An initial [standalone WebGL2 sampling fixture](../prototype/nonlinear-foveation/README.md)
+now implements the invertible mapping, direct nonuniform ray-scene sampling,
+color reconstruction and matched-budget quad-style comparison, with CPU/GPU
+correctness checks and scoped synthetic RTX 5090 measurements. It does not yet
+solve native mesh rasterization, depth reconstruction or LMU integration.
 Concurrent single-pass stereo (SPS) work is separate and is not included here.
 
 ## Finding and evidence status
