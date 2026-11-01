@@ -51,3 +51,16 @@ unavailable, must be reported accurately rather than implied by synthetic tests.
 Version is 0.1.1 in root VERSION, generated binaries and package. Update release
 notes and usage docs with signs, units, both modes, zero reset and no SPS claim.
 Publish reviewed changes and portable ZIP through the authorized GitHub release.
+
+## Final UI refinements requested before publication
+
+Right-align the sidebar's LMU, QUAD VIEW and OPENXR RENDERING labels to one
+shared edge. Add approximately six logical pixels between numeric values and
+spinner arrows, including percentage controls, smoothing and capture duration.
+Preserve native editing/spinner behavior and sufficient width for signed and
+maximum values across supported DPI layouts. Inspect the final rendered result.
+
+The CLI's invariant double formatting may use scientific notation for tiny
+offsets. Accept general decimal/exponent notation in the offset parser while
+retaining finite, range and full-string validation. Legacy size parsing is
+unchanged. This closes the independent review's minor formatting mismatch.

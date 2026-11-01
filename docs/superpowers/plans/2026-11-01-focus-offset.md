@@ -55,6 +55,9 @@ choice; pure helper validates then commits atomically as specified in design.
 
 - [ ] Root updates VERSION/README/CHANGELOG/portable docs, records SPS0.2.0 scope.
 - [ ] Independent feature/whole-change review; resolve important findings.
+- [ ] Incorporate the user's final brand alignment/numeric spacing refinements
+  and close the tiny CLI-offset formatting mismatch; scoped independent review
+  of the follow-up diff and affected tests, then rebuild the release archive.
 - [ ] Verify built GUI and package archive/extraction/hash/version; record exact
   synthetic versus live validation scope. Commit and push reviewed release branch.
 - [ ] Merge through GitHub and publish v0.1.1 with portable ZIP and release notes;
