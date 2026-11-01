@@ -31,7 +31,9 @@ consumers share that shifted FOV. No SPS experiments are merged into this branch
 Files: mod/focus_box.hpp, mod/xr_layer.cpp, mod/tests/focus_box_test.cpp,
 mod/xr_layer_tests.cpp, mod/launcher/QvfrSettings.cs, LaunchService.cs, Launcher.cs,
 SettingsTests.cs, LaunchServiceTests.cs, GuiLayoutTests.cs, mod/launch.ps1.
-May update mod/build.ps1 to run added integration test modes. No unrelated edits.
+May update mod/build.ps1 and mod/build-msvc.ps1 to run added integration test modes.
+Preserve CLI regression coverage in mod/tests/focus_offset_launch_test.ps1.
+No unrelated edits.
 
 Interfaces: settings FocusOffsetXPercent and FocusOffsetYPercent (decimal);
 environment LMU_QV_FOCUS_OFFSET_X_PERCENT and LMU_QV_FOCUS_OFFSET_Y_PERCENT;
