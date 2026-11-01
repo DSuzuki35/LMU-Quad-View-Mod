@@ -20,6 +20,9 @@ __pycache__/
 /analysis/
 **/runtime/
 *.log
+stereo-audit-*.json
+*.dxbc
+**/stereo-shaders/
 /*-run.json
 /*.csv
 /*.XRFTBinLog

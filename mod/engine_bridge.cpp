@@ -6,6 +6,7 @@
 #include "ui_d3d_state.hpp"
 #include "gpu_timing.hpp"
 #include "render_profile.hpp"
+#include "stereo_audit.hpp"
 #include "pipeline_stats.hpp"
 #include "benchmark_control.hpp"
 #include "code_anchors.hpp"
@@ -13,6 +14,8 @@
 #include "vrs_scope_policy.hpp"
 #include "native_outer_bank.hpp"
 #include "native_outer_anchors.hpp"
+#include "native_upload_reuse.hpp"
+#include "native_upload_batch.hpp"
 #include "xr_sizes.hpp"
 #include "native_xr_views.hpp"
 #include "resource_diagnostics.hpp"
@@ -25,6 +28,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <vector>
 
 namespace lmuqv {
@@ -40,6 +44,25 @@ using MainPassFn = void (*)(void*, void*, void*, std::uint32_t, bool);
 using WorldSortFn = void (*)(void*, void*, void*, std::int32_t, std::uint32_t, bool, void*);
 using NativeViewFn = void (*)(void*,void*,void*,bool,bool);
 using FovScaleFn = const float* (*)(void*);
+using NativePrepareFn=int(*)(void*,void*,void*,std::uint32_t,bool);
+NativePrepareFn nativePrepareOriginal{};bool nativePrepareHooked=false;
+constexpr std::uintptr_t nativePrepareRva=0x5629e0;
+constexpr std::array<std::uint8_t,20> nativePrepareAnchor{0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x30};
+using NativeUploadFn=void(*)(void*,void*,ID3D11DeviceContext*,void*);
+NativeUploadFn nativeUploadOriginal{};std::atomic<bool> nativeUploadHooked{false},nativeUploadOptIn{false};
+constexpr std::uintptr_t nativeUploadRva=0x5cac50;
+constexpr std::array<std::uint8_t,20> nativeUploadAnchor{0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x40};
+NativeUploadReuse nativeUploadReuse;
+NativeUploadBatch nativeUploadBatch;std::atomic<bool> nativeUploadBatchOptIn{false};
+uint64_t batchFailureLogged=0;unsigned batchFailureMessages=0;
+void logUploadBatchStats(const char* stage){
+    if(!diagnostics_enabled())return;const auto& c=nativeUploadBatch.counters();const auto& reuse=nativeUploadReuse.counters();char line[1024]{};
+    std::snprintf(line,sizeof(line),"cpu_upload_batch %s scopes=%llu outer_calls=%llu focus_calls=%llu unchanged_maps_skipped=%llu unchanged_bytes_skipped=%llu native_maps_replaced=%llu batch_maps=%llu restoration_maps=%llu net_maps_removed=%lld native_bytes_replaced=%llu batch_bytes=%llu large_maps=%llu invalidations=%llu failures=%llu last_failure=%s range=%llu hr=%08lx; native draws unchanged; counters are not a frametime benchmark",stage,
+        static_cast<unsigned long long>(c.scopes),static_cast<unsigned long long>(c.outerCalls),static_cast<unsigned long long>(c.focusCalls),static_cast<unsigned long long>(reuse.skipped),static_cast<unsigned long long>(reuse.bytesSkipped),static_cast<unsigned long long>(c.nativeMapsReplaced),static_cast<unsigned long long>(c.batchMaps),static_cast<unsigned long long>(c.restoreMaps),static_cast<long long>(reuse.skipped)+static_cast<long long>(c.nativeMapsReplaced)-static_cast<long long>(c.batchMaps)-static_cast<long long>(c.restoreMaps),static_cast<unsigned long long>(c.nativeBytesReplaced),static_cast<unsigned long long>(c.batchBytes),static_cast<unsigned long long>(c.largeMaps),static_cast<unsigned long long>(c.invalidations),static_cast<unsigned long long>(c.mapFailures),nativeUploadBatch.failure_reason(),static_cast<unsigned long long>(nativeUploadBatch.failure_range()),static_cast<unsigned long>(nativeUploadBatch.failure_hr()));log_line(line);
+}
+std::recursive_mutex nativeUploadMutex;
+thread_local void* selectedUploadCache=nullptr;
+thread_local ID3D11DeviceContext* selectedUploadContext=nullptr;
 
 #pragma pack(push,1)
 struct UiArgs { std::uint32_t mode; TransformRecord transform[2]; };
@@ -482,6 +505,22 @@ void mainPassHook(void* renderer,void* scene,void* view,std::uint32_t flags,bool
 }
 void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
                    std::uint32_t flags,bool lastMainPass,void* optionalMaterial) {
+    StereoAuditGroup auditGroup(group);
+    const auto savedUploadCache=selectedUploadCache;const auto savedUploadContext=selectedUploadContext;
+    std::unique_lock<std::recursive_mutex> uploadLock(nativeUploadMutex,std::defer_lock);
+    bool uploadScope=false;
+    if(selectedUploadCache){nativeUploadBatch.end();nativeUploadReuse.end();} // Nested groups invalidate exclusive scope assumptions.
+    const bool batchEligible=nativeUploadBatchOptIn&&view&&(view==focusView||view==nativeOuterExpected);
+    const bool reuseEligible=nativeUploadOptIn&&view==focusView&&focusView;
+    if((batchEligible||reuseEligible)&&nativeUploadHooked&&group==31&&!selectedUploadCache){
+        const auto object=reinterpret_cast<std::uintptr_t>(renderer);
+        if(readable(reinterpret_cast<void*>(object+0x77fc8),0x2660)&&readable(reinterpret_cast<void*>(object+0x77940),0x200)&&readable(reinterpret_cast<void*>(object+0x76f68),sizeof(void*))){
+            auto* context=*reinterpret_cast<ID3D11DeviceContext**>(object+0x76f68);
+            if(readable(context,sizeof(void*))){uploadLock.lock();selectedUploadCache=reinterpret_cast<void*>(object+0x77fc8);selectedUploadContext=context;
+                if(batchEligible)nativeUploadBatch.begin(selectedUploadCache,context,diagnostics_enabled(),view==focusView);
+                nativeUploadReuse.begin(selectedUploadCache,context,diagnostics_enabled());uploadScope=true;}
+        }
+    }
     const bool profileSort=renderProfile.collecting()&&view&&(view==nativeOuterExpected||view==focusView);
     const auto sortEye=profileSort?unsigned(static_cast<ViewSnapshot*>(view)->eye_index):0;
     ProfileScope sortProfile(profile_eye(focusView?ProfileSlot::sort_focus0:ProfileSlot::sort_outer0,sortEye),profileSort&&sortEye<2);
@@ -529,11 +568,34 @@ void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
     const auto generation=vrsInterruptionGeneration;
     ++outerSortDepth;
     worldSortOriginal(renderer,scene,view,group,flags,lastMainPass,optionalMaterial);
+    if(uploadScope){nativeUploadBatch.end();nativeUploadReuse.end();}selectedUploadCache=savedUploadCache;selectedUploadContext=savedUploadContext;
     --outerSortDepth;
     if(began && generation==vrsInterruptionGeneration) {
         if(worldVrs.end_outer(outerVrsContext))++worldVrsCounters.applied[eye];
         else failWorldVrs("end_failure; feature disabled; scope not applied; restoration not confirmed");
     }
+}
+int nativePrepareHook(void* shader,void* view,void* mesh,std::uint32_t flags,bool reset){
+    const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
+    // Two verified world-sort submission sites. This hook observes the complete
+    // original preparation and forwards its exact result; no setup is skipped.
+    const bool known=caller==base+0x51f67e||caller==base+0x51f5c4;
+    const auto token=known?stereo_audit_native_prepare_begin(mesh):StereoNativePrepareToken{};
+    const int result=nativePrepareOriginal(shader,view,mesh,flags,reset);
+    stereo_audit_native_prepare_end(token);return result;
+}
+void nativeUploadHook(void* cache,void* device,ID3D11DeviceContext* context,void* bindings){
+    const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
+    if(!selectedUploadCache){nativeUploadOriginal(cache,device,context,bindings);return;}
+    // Keep bindings/bookkeeping and every changed upload in the native routine.
+    // Unexpected native writers end reuse for the rest of this group.
+    if(caller!=base+0x5b6034||cache!=selectedUploadCache||context!=selectedUploadContext){nativeUploadBatch.end();nativeUploadReuse.end();nativeUploadOriginal(cache,device,context,bindings);return;}
+    const auto token=nativeUploadReuse.before(cache,context);
+    if(nativeUploadBatchOptIn){const auto result=nativeUploadBatch.run(cache,device,context,bindings,nativeUploadOriginal);nativeUploadReuse.after(cache,context,token);
+        if(nativeUploadBatch.failure_serial()!=batchFailureLogged){batchFailureLogged=nativeUploadBatch.failure_serial();if(diagnostics_enabled()&&batchFailureMessages++<8){char line[256]{};std::snprintf(line,sizeof(line),"cpu_upload_batch fallback reason=%s range=%llu hr=%08lx; native upload path restored",nativeUploadBatch.failure_reason(),static_cast<unsigned long long>(nativeUploadBatch.failure_range()),static_cast<unsigned long>(nativeUploadBatch.failure_hr()));log_line(line);}}
+        // Keep the game's upload statistic accurate for our actual Map calls.
+        *address<std::uint32_t>(0x1b1a55c)+=result.maps;return;}
+    nativeUploadOriginal(cache,device,context,bindings);nativeUploadReuse.after(cache,context,token);
 }
 void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool later){
     // A nested view must see the unmodified native bank. Resume the outer bank
@@ -639,7 +701,7 @@ void renderHook(void* unknown, bool laterPass) {
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     ID3D11DeviceContext* profileContext=nullptr;
     unsigned profileEye=0;
-    if(renderProfile.enabled()&&!insideHook&&installed.load()&&caller==base+0xcd1763&&xr_quad_active()){
+    if((renderProfile.enabled()||stereo_audit_enabled())&&!insideHook&&installed.load()&&caller==base+0xcd1763&&xr_quad_active()){
         auto* before=*address<ViewSnapshot*>(0x1a51370);
         const auto renderer=*address<std::uintptr_t>(0x1b12be8);
         if(readable(before,sizeof(*before))&&before->eye_index>=0&&before->eye_index<=1&&
@@ -650,6 +712,8 @@ void renderHook(void* unknown, bool laterPass) {
                 if(profileEye==0){
                     const bool key=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F9)&0x8000);
                     renderProfile.frame(context,key);
+                    const bool auditKey=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F8)&0x8000);
+                    stereo_audit_frame(auditKey);
                 }
             }
         }
@@ -698,11 +762,13 @@ void renderHook(void* unknown, bool laterPass) {
     auto* savedNativeExpected=nativeOuterExpected;
     auto* savedNativeSource=nativeOuterSource;
     nativeOuterExpected=nullptr;nativeOuterSource=nullptr;
-    if(nativeOuterOptIn&&!nativeOuterFailed&&!insideHook&&installed.load()&&xr_quad_active()&&caller==base+0xcd1763)
+    if(((nativeOuterOptIn&&!nativeOuterFailed)||nativeUploadBatchOptIn)&&!insideHook&&installed.load()&&xr_quad_active()&&caller==base+0xcd1763)
         nativeOuterExpected=*address<ViewSnapshot*>(0x1a51370);
     const bool profileOuterGpu=profileContext&&renderProfile.gpu_start(profileContext,profileEye);
     ProfileScope outerProfile(profile_eye(ProfileSlot::outer0,profileEye),profileContext!=nullptr);
+    StereoAuditScope outerAudit(profileContext?stereo_audit_eye(false,profileEye):StereoAuditPass::none);
     renderOriginal(unknown,laterPass);
+    outerAudit.end();
     outerProfile.end();
     if(profileOuterGpu)renderProfile.gpu_stop(profileContext);
     auto* smallOuterSource=nativeOuterSource;
@@ -778,7 +844,9 @@ void renderHook(void* unknown, bool laterPass) {
     const bool focusCounted=measureFocus&&benchmark&&pipelineStats.start(timingContext,eye+2);
     const bool profileFocusGpu=profileContext&&renderProfile.gpu_start(profileContext,eye+2);
     ProfileScope focusSceneProfile(profile_eye(ProfileSlot::focus_scene0,eye));
+    StereoAuditScope focusAudit(stereo_audit_eye(true,eye));
     reinterpret_cast<SceneFn>(base+0x5de200)(scene,false,true);
+    focusAudit.end();
     focusSceneProfile.end();
     if(profileFocusGpu)renderProfile.gpu_stop(profileContext);
     if(focusCounted) pipelineStats.stop(timingContext);
@@ -797,6 +865,7 @@ void renderHook(void* unknown, bool laterPass) {
     insideHook=false;
     focusRestoreProfile.end();
     auto rendered=++focusCalls;
+    if(nativeUploadBatchOptIn&&diagnostics_enabled()&&rendered%1200==0){logUploadBatchStats("checkpoint");flush_log();}
     if(diagnostics_enabled()&&(rendered<=8 || rendered%600==0)) {
         char msg[256];std::snprintf(msg,sizeof(msg),"engine focus eye=%u count=%llu proj00=%.5f outer00=%.5f overrides=%u masksSkipped=%u",
             eye,static_cast<unsigned long long>(rendered),inner[0],outerProjection[0],projectionOverrides,skippedMasks);log_line(msg);
@@ -911,10 +980,17 @@ unsigned engine_game_eye(XrSwapchain chain){
     return left!=right?(left?0u:1u):2u;
 }
 
-bool engine_start() {
+bool engine_start(ID3D11DeviceContext* context) {
     if(installed.load()) return true;
     char mode[32]{};GetEnvironmentVariableA("LMU_QV_MODE",mode,sizeof(mode));
     const bool stereoTiming=!std::strcmp(mode,"stereo-timing");
+    char auditSetting[8]{};const auto auditLength=GetEnvironmentVariableA("LMU_QV_STEREO_AUDIT",auditSetting,sizeof(auditSetting));
+    wchar_t auditDirectory[32768]{};const auto auditDirectoryLength=GetEnvironmentVariableW(L"LMU_QV_STEREO_AUDIT_DIR",auditDirectory,32768);
+    bool auditRequested=diagnostics_enabled()&&!stereoTiming&&auditLength==1&&auditSetting[0]=='1'&&auditDirectoryLength&&auditDirectoryLength<32768;
+    char uploadSetting[8]{};nativeUploadOptIn=!stereoTiming&&GetEnvironmentVariableA("LMU_QV_CPU_UPLOAD_REUSE",uploadSetting,sizeof(uploadSetting))==1&&uploadSetting[0]=='1';nativeUploadReuse.reset();
+    char batchSetting[8]{};nativeUploadBatchOptIn=!stereoTiming&&GetEnvironmentVariableA("LMU_QV_CPU_UPLOAD_BATCH",batchSetting,sizeof(batchSetting))==1&&batchSetting[0]=='1';
+    batchFailureLogged=0;batchFailureMessages=0;
+    if(nativeUploadBatchOptIn){nativeUploadOptIn=false;if(auditRequested){auditRequested=false;log_line("cpu_upload_batch: draw audit/proof disabled for this run; ordinary render profiling remains available");}}
     if(std::strcmp(mode,"quad") && !stereoTiming) {log_line("engine: trace mode; no native hooks");return true;}
     base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     if(!correctDiskBuild() || !matches(0xd58a70,render_anchor) ||
@@ -968,7 +1044,7 @@ bool engine_start() {
     if(!parseVrsDefaultRate(worldVrsOptIn,defaultRate,defaultRateLength,worldVrsDefaultRate)) {
         log_line("engine: LMU_QV_OUTER_SHADING_RATE must be exactly 1, 2 or 4; hooks refused");return false;
     }
-    if((worldVrsOptIn||nativeOuterOptIn) && (!matches(0x51d8a0,vrs_scope::kMainPassAnchor) ||
+    if((worldVrsOptIn||nativeOuterOptIn||auditRequested||nativeUploadOptIn||nativeUploadBatchOptIn) && (!matches(0x51d8a0,vrs_scope::kMainPassAnchor) ||
        !matches(0x51f040,vrs_scope::kWorldSortAnchor))) {
         log_line("engine: VRS code anchor mismatch; hooks refused");return false;
     }
@@ -993,7 +1069,7 @@ bool engine_start() {
         timingTrigger=trigger;
         log_line("engine GPU timing: waiting for explicit trigger file");
     }
-    const std::size_t hookCount=stereoTiming?1:(nativeOuterOptIn?std::size(hooks):(worldVrsOptIn?9:(nativeRuntimeSettings?7:5)));
+    const std::size_t hookCount=stereoTiming?1:(nativeOuterOptIn?std::size(hooks):((worldVrsOptIn||auditRequested||nativeUploadOptIn||nativeUploadBatchOptIn)?9:(nativeRuntimeSettings?7:5)));
     if(hookCount>6&&!matches(0x8c2d30,nativeEnumerateAnchor)){
         log_line("engine: native XR enumeration anchor mismatch; hooks refused");return false;
     }
@@ -1014,6 +1090,28 @@ bool engine_start() {
     }
     innerHistory[0]={};innerHistory[1]={};
     installedHookCount=hookCount;
+    stereo_audit_configure(context,auditRequested,auditDirectory,log_line);
+    const std::array<std::uint8_t,5> prepareCall0{0xe8,0x1c,0x34,0x04,0x00},prepareCall1{0xe8,0x62,0x33,0x04,0x00};
+    if(stereo_audit_enabled()&&matches(nativePrepareRva,nativePrepareAnchor)&&matches(0x51f5bf,prepareCall0)&&matches(0x51f679,prepareCall1)){
+        if(MH_CreateHook(address<void>(nativePrepareRva),reinterpret_cast<void*>(&nativePrepareHook),reinterpret_cast<void**>(&nativePrepareOriginal))==MH_OK){
+            if(MH_EnableHook(address<void>(nativePrepareRva))==MH_OK){nativePrepareHooked=true;log_line("stereo_audit native per-mesh preparation hook enabled; pointer identities anonymized; original preparation retained");}
+            else MH_RemoveHook(address<void>(nativePrepareRva));
+        }
+    }
+    if(auditRequested&&!nativePrepareHooked)log_line("stereo_audit native preparation hook unavailable; paired private proof requires this identity source");
+    const std::array<std::uint8_t,5> uploadCall{0xe8,0x1c,0x4c,0x01,0x00};
+    const std::array<std::uint8_t,15> uploadBindAnchor{0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x20,0x57,0x48,0x83,0xec,0x20};
+    const std::array<std::uint8_t,6> lightUploadSize{0x41,0xb8,0x80,0x0a,0x00,0x00};
+    if(nativeUploadBatchOptIn&&(!matches(0x5cae5c,lightUploadSize)||!nativeUploadBatch.configure(context))){nativeUploadBatchOptIn=false;log_line("cpu_upload_batch unavailable: native layout or D3D11.1 constant-buffer offsets unsupported; native uploads retained");}
+    if((nativeUploadOptIn||nativeUploadBatchOptIn)&&matches(nativeUploadRva,nativeUploadAnchor)&&matches(0x5b602f,uploadCall)&&matches(0x5c3f20,uploadBindAnchor)){
+        if(MH_CreateHook(address<void>(nativeUploadRva),reinterpret_cast<void*>(&nativeUploadHook),reinterpret_cast<void**>(&nativeUploadOriginal))==MH_OK){
+            if(MH_EnableHook(address<void>(nativeUploadRva))==MH_OK){nativeUploadHooked=true;
+                log_line(nativeUploadBatchOptIn?"cpu_upload_batch enabled: outer/focus opaque group 31; unchanged-upload filtering + adaptive small-CB batching; large CBs stay native; native shaders/draws retained; experimental":"cpu_upload_reuse enabled: focus opaque group 31; byte-identical native VS constants only; all draws/bindings retained; experimental");}
+            else MH_RemoveHook(address<void>(nativeUploadRva));
+        }
+    }
+    if(nativeUploadOptIn&&!nativeUploadHooked){nativeUploadOptIn=false;log_line("cpu_upload_reuse unavailable: native code anchor/hook mismatch; ordinary rendering retained");}
+    if(nativeUploadBatchOptIn&&!nativeUploadHooked){nativeUploadBatchOptIn=false;nativeUploadBatch.reset();log_line("cpu_upload_batch unavailable: native code anchor/hook mismatch; native uploads retained");}
     char profileSetting[8]{};GetEnvironmentVariableA("LMU_QV_PROFILE",profileSetting,sizeof(profileSetting));
     const bool profiling=diagnostics_enabled()&&!stereoTiming&&!std::strcmp(profileSetting,"1")&&benchmarkPath.empty()&&timingTrigger.empty();
     char durationSetting[16]{};char* durationEnd=nullptr;
@@ -1030,6 +1128,15 @@ bool engine_start() {
     return true;
 }
 void engine_stop() {
+    stereo_audit_stop();
+    if(nativePrepareHooked){MH_DisableHook(address<void>(nativePrepareRva));MH_RemoveHook(address<void>(nativePrepareRva));nativePrepareHooked=false;}
+    {std::lock_guard<std::recursive_mutex> uploadLock(nativeUploadMutex);
+    const bool uploadWasEnabled=nativeUploadOptIn.exchange(false),batchWasEnabled=nativeUploadBatchOptIn.exchange(false);
+    nativeUploadBatch.end(); // An active scope restores on its owner before trampoline removal.
+    if(nativeUploadHooked){MH_DisableHook(address<void>(nativeUploadRva));MH_RemoveHook(address<void>(nativeUploadRva));nativeUploadHooked=false;}
+    if(uploadWasEnabled&&diagnostics_enabled()){const auto& c=nativeUploadReuse.counters();char line[384]{};std::snprintf(line,sizeof(line),"cpu_upload_reuse summary examined=%llu skipped=%llu bytes_skipped=%llu learned=%llu aliases=%llu invalidated=%llu; counters are not a frametime benchmark",static_cast<unsigned long long>(c.examined),static_cast<unsigned long long>(c.skipped),static_cast<unsigned long long>(c.bytesSkipped),static_cast<unsigned long long>(c.learned),static_cast<unsigned long long>(c.aliased),static_cast<unsigned long long>(c.invalidated));log_line(line);}
+    if(batchWasEnabled)logUploadBatchStats("summary");
+    selectedUploadCache=nullptr;selectedUploadContext=nullptr;nativeUploadReuse.reset();nativeUploadBatch.reset();}
     nativeOuterOptIn=false;
     for(auto& bank:nativeOuterBanks)if(!bank.reset())log_line("native_outer teardown on different thread; native bank retained until process exit");
     if(!installed.exchange(false)) {

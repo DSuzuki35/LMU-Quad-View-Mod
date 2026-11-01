@@ -1,5 +1,17 @@
 # LMU Quad View Mod
 
+This research branch adds an opt-in [CPU upload-reuse prototype](CPU-UPLOAD-REUSE.md),
+portable vertex/pixel shader conversion and an in-game private paired-draw check.
+The current [CPU fast-path candidate](CPU-UPLOAD-FASTPATH.md) combines unchanged
+upload filtering and adaptive buffer batching for outer and focus geometry.
+The CPU prototype filters byte-identical native uploads within a focus geometry
+group. The stereo check compares one paired draw with two original references in
+private targets; normal game eye draws remain enabled. Full game-renderer single-
+pass stereo is still in development. No live-game CPU/FPS gain has been measured.
+See [research status, capture steps and hardware check](PORTABLE-STEREO-RESEARCH.txt).
+For continuing the renderer work, read the [maintainer handoff](INSTANCED-STEREO-HANDOFF.md),
+which separates completed GPU checks from the unimplemented native pass integration.
+
 Experimental Windows x64 / D3D11 renderer integration for Le Mans Ultimate.
 It renders two outer and two focus views, with native OpenXR quad runtimes or
 mbucchia's separately installed Quad-Views-Foveated or VectorXR stereo compositor.

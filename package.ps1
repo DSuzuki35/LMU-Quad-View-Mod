@@ -1,4 +1,4 @@
-param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'),[string]$ArchiveName='LMU-Quad-View-Mod.zip')
+param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'),[string]$ArchiveName='LMU-Quad-View-Mod-cpu-fastpath1.zip')
 $ErrorActionPreference = 'Stop'
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if([IO.Path]::GetFileName($ArchiveName) -cne $ArchiveName -or !$ArchiveName.EndsWith('.zip',[StringComparison]::OrdinalIgnoreCase)){throw 'ArchiveName must be a ZIP filename, without directory components.'}
@@ -6,7 +6,7 @@ $archive = Join-Path $OutputDirectory $ArchiveName
 if (Test-Path -LiteralPath $archive) { throw "Archive already exists: $archive" }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $stage = Join-Path $OutputDirectory ('package-' + [Guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $stage,(Join-Path $stage 'build'),(Join-Path $stage 'licenses') | Out-Null
+New-Item -ItemType Directory -Path $stage,(Join-Path $stage 'build'),(Join-Path $stage 'licenses'),(Join-Path $stage 'tools') | Out-Null
 $files = @{
     'mod/build/lmu_quadview.dll' = 'build/lmu_quadview.dll'
     'mod/build/LMU-QuadView-Launcher.exe' = 'LMU-QuadView-Launcher.exe'
@@ -14,6 +14,11 @@ $files = @{
     'PORTABLE-QVFR.txt' = 'PORTABLE-QVFR.txt'
     'PORTABLE-VECTORXR.txt' = 'PORTABLE-VECTORXR.txt'
     'RENDER-PROFILING.txt' = 'RENDER-PROFILING.txt'
+    'PORTABLE-STEREO-RESEARCH.txt' = 'PORTABLE-STEREO-RESEARCH.txt'
+    'CPU-UPLOAD-REUSE.md' = 'CPU-UPLOAD-REUSE.md'
+    'CPU-UPLOAD-FASTPATH.md' = 'CPU-UPLOAD-FASTPATH.md'
+    'tools/analyze_stereo_audit.py' = 'tools/analyze_stereo_audit.py'
+    'tools/check-hardware-stereo.cmd' = 'tools/check-hardware-stereo.cmd'
     'TODO.md' = 'TODO.md'
     'mod/XR_APILAYER_LMU_quadview.json' = 'XR_APILAYER_LMU_quadview.json'
     'README.md' = 'README.md'
@@ -23,6 +28,9 @@ $files = @{
     'mod/vendor/minhook-1.3.4/LICENSE.txt' = 'licenses/MinHook-LICENSE.txt'
     'prototype/third_party/openxr/LICENSE' = 'licenses/OpenXR-LICENSE.txt'
 }
+$proofPath='mod/build/msvc/stereo_instancing_test.exe'
+if(!(Test-Path -LiteralPath (Join-Path $PSScriptRoot $proofPath))){$proofPath='mod/build/stereo_instancing_test.exe'}
+$files[$proofPath]='tools/PortableStereoCheck.exe'
 foreach ($source in $files.Keys) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $source) -Destination (Join-Path $stage $files[$source])
 }
