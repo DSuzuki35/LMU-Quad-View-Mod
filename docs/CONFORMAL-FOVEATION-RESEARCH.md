@@ -16,6 +16,10 @@ follow-up compares naive vertex warping, subdivision, and conservative primitive
 rectangles with exact fragment intersection/original depth. It demonstrates
 coverage correctness for its small fixture and the cost of subdivision/bounds;
 it does not solve native LMU mesh integration or reconstructed depth/history.
+A moving-gaze test now reports spatial error separately from frame-to-frame
+error changes. In the current owned scene, nonlinear sampling has more temporal
+variation than the quad comparator despite slightly lower spatial RMS. This
+reinforces the need to test stability, not just sample counts and still images.
 Concurrent single-pass stereo (SPS) work is separate and is not included here.
 
 ## Finding and evidence status

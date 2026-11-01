@@ -1,4 +1,4 @@
-/* global FoveationMapping, FoveationShaders */
+/* global FoveationMapping, FoveationShaders, FoveationTemporal */
 (() => {
   "use strict";
   const $ = (id) => document.getElementById(id),
@@ -491,6 +491,111 @@
       );
       return summary;
     }
+    async function measureTemporal({ frames = 24, cameraMotion = false } = {}) {
+      if (!Number.isInteger(frames) || frames < 3 || frames > 96)
+        throw new RangeError("Expected 3..96 trajectory frames");
+      const saved = JSON.parse(JSON.stringify(state)),
+        p = prepare();
+      const names = p.feasible
+        ? ["reference", "nonlinear", "quad"]
+        : ["reference", "nonlinear"];
+      const accumulators = Object.fromEntries(
+        names.map((name) => [
+          name,
+          new FoveationTemporal.TemporalAccumulator(state.width, state.height),
+        ]),
+      );
+      const first = {},
+        closedReturn = {};
+      try {
+        const quality = target("temporal-quality", state.width, state.height);
+        for (let frame = 0; frame < frames; frame++) {
+          // Exact first/last pose makes the closed-return check deterministic.
+          const phase =
+            frame === frames - 1 ? 0 : (2 * Math.PI * frame) / (frames - 1);
+          state.gaze = [0.65 * Math.sin(phase), 0.45 * Math.sin(2 * phase)];
+          state.camera =
+            saved.camera + (cameraMotion ? 0.6 * Math.sin(phase) : 0);
+          scene(quality, 0, 4);
+          const reference = read(quality);
+          for (const name of names) {
+            path(name, p);
+            const image = read(targets[name]);
+            accumulators[name].add(image, reference);
+            if (frame === 0) first[name] = image;
+            if (frame === frames - 1) {
+              let changedBytes = 0;
+              for (let i = 0; i < image.length; i++)
+                if (image[i] !== first[name][i]) changedBytes++;
+              closedReturn[name] = changedBytes;
+            }
+          }
+          status(
+            `Measuring ${cameraMotion ? "gaze + camera" : "gaze-only"} stability: ${frame + 1}/${frames}`,
+          );
+          if (frame % 4 === 0)
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        const result = {
+          settings: saved,
+          frames,
+          cameraMotion,
+          trajectory:
+            "gaze=(0.65 sin(t),0.45 sin(2t)); t=0..2pi inclusive. Camera phase adds 0.6 sin(t) only in the moving-camera test.",
+          metric:
+            "RMS change of linear RGB error (output - 4-sample reference) between adjacent trajectory positions. No surface reprojection or temporal filtering.",
+          paths: Object.fromEntries(
+            names.map((name) => [
+              name,
+              {
+                ...accumulators[name].summary(),
+                closedReturnChangedBytes: closedReturn[name],
+              },
+            ]),
+          ),
+        };
+        const heat = $("temporalView"),
+          context = heat.getContext("2d");
+        heat.width = state.width * names.length;
+        heat.height = state.height;
+        for (let pane = 0; pane < names.length; pane++) {
+          const rms = accumulators[names[pane]].heatRms(),
+            image = context.createImageData(state.width, state.height);
+          for (let y = 0; y < state.height; y++)
+            for (let x = 0; x < state.width; x++) {
+              const source = y * state.width + x,
+                destination = ((state.height - 1 - y) * state.width + x) * 4;
+              const value = Math.min(1, rms[source] / 16);
+              image.data[destination] = Math.round(255 * value);
+              image.data[destination + 1] = Math.round(100 * value);
+              image.data[destination + 2] = Math.round(15 * value);
+              image.data[destination + 3] = 255;
+            }
+          context.putImageData(image, pane * state.width, 0);
+        }
+        $("temporalPanel").hidden = false;
+        $("temporalDescription").textContent =
+          `${frames} simulated gaze positions with ${cameraMotion ? "a moving" : "a stationary"} camera. Each frame uses a fresh four-sample reference. Gaze changes sample placement; no real eye tracker is connected.`;
+        const legend = $("temporalLabels");
+        legend.replaceChildren();
+        legend.style.display = "grid";
+        legend.style.gridTemplateColumns = `repeat(${names.length},1fr)`;
+        for (const name of names) {
+          const item = document.createElement("span");
+          item.textContent = `${name === "reference" ? "Ordinary" : name}: ${result.paths[name].errorChangeRmse255.toFixed(3)}/255`;
+          legend.append(item);
+        }
+        report.temporal ??= {};
+        report.temporal[cameraMotion ? "gazeAndCamera" : "gazeOnly"] = result;
+        $("results").textContent = JSON.stringify(result, null, 2);
+        return result;
+      } finally {
+        configure(saved);
+        status(
+          "Stability measurement complete. Heatmap shows change of error, not perceived flicker or real eye-tracker latency.",
+        );
+      }
+    }
     function runTests() {
       const saved = JSON.parse(JSON.stringify(state)),
         results = [];
@@ -677,6 +782,10 @@
       });
     $("center").onclick = () => configure({ gaze: [0, 0], camera: 0 });
     $("quality").onclick = () => action(measureQuality).catch(() => {});
+    $("temporal").onclick = () =>
+      action(() => measureTemporal()).catch(() => {});
+    $("temporalMotion").onclick = () =>
+      action(() => measureTemporal({ cameraMotion: true })).catch(() => {});
     $("benchmark").onclick = () => action(() => benchmark()).catch(() => {});
     $("tests").onclick = () =>
       action(() => {
@@ -716,6 +825,7 @@
       configure,
       render,
       measureQuality: () => action(measureQuality),
+      measureTemporal: (options) => action(() => measureTemporal(options)),
       benchmark: (n) => action(() => benchmark(n)),
       runTests: () => action(runTests),
       getReport: () => JSON.parse(JSON.stringify(report)),

@@ -63,6 +63,7 @@ reconstruction pass.
 
 ```powershell
 node --test prototype/nonlinear-foveation/mapping.test.cjs prototype/nonlinear-foveation/mesh-data.test.cjs
+node --test prototype/nonlinear-foveation/temporal.test.cjs
 ```
 
 The UI's correctness button checks GPU identity images, extreme-gaze coverage,
@@ -76,6 +77,7 @@ Chrome/Edge profile with a local DevTools endpoint on port 19226, then run:
 ```powershell
 node prototype/nonlinear-foveation/gpu-smoke.cjs
 node prototype/nonlinear-foveation/mesh-smoke.cjs
+node prototype/nonlinear-foveation/temporal-smoke.cjs
 ```
 
 `CDP_URL` and `LAB_URL` override those endpoints. Node 22+ is needed for this
@@ -201,3 +203,43 @@ need primitive extraction, per-material interpolation and derivatives, clipping,
 transparency/order, multisampling, motion/depth history, UI/postprocessing, and
 an efficient conservative-bound strategy. This prototype supports further owned
 renderer research; it does not justify enabling a nonlinear LMU mode.
+
+## Moving-gaze stability
+
+The sampling viewer's **Measure gaze stability** and **Gaze + camera stability**
+buttons follow 24 deterministic positions around a closed gaze path. Source
+budgets remain fixed. Every position gets a fresh four-sample ordinary reference.
+With error `e_t = output_t - reference_t`, the report contains spatial RMS error
+and RMS of `e_t - e_(t-1)` in linear RGB (0..255). Heatmaps use one common scale
+across ordinary/nonlinear/quad panes. The first and last poses match exactly;
+the runner verifies that the returned images are byte-identical.
+
+For a stationary scene, ordinary output has zero change and the heatmap isolates
+changes caused by moving the foveation. With camera motion, subtracting the
+reference's change removes its image difference, but this is still an image-space
+error diagnostic: it does not track world surfaces, model retinal motion, or
+represent real eye-tracker noise/latency. The trajectory has no claimed physical
+frame rate. No temporal accumulation or antialiasing history is applied.
+
+At 768x576, source scale 0.55, strength 4, focus fraction 0.3, material work 8,
+and checker-footprint filtering enabled:
+
+| Trajectory | Ordinary error-change RMS | Nonlinear | Quad-style |
+| --- | ---: | ---: | ---: |
+| Gaze only | 0.00 | 9.41 | 4.25 |
+| Gaze + camera | 9.06 | 11.67 | 10.95 |
+
+In the gaze-only run, spatial RMS was 9.17 nonlinear and 9.80 quad, despite the
+opposite ordering in temporal stability. This shows why a lower single-frame
+error is insufficient. Moving the nonlinear map moves sample placement across
+the entire image; the quad comparator's outer grid stays fixed. That is a plausible
+contributor to the measured difference, not a general quality ranking. Fine
+checker patterns, fences and silhouette edges dominate the visible heatmaps.
+
+The identity control (zero warp, full-sized source) matched ordinary temporal
+behavior with stationary and moving cameras. Four CPU tests validate the metric,
+including known alternating errors, static bias, and cancellation of equal
+output/reference movement. GPU checks had no browser exceptions and exact
+trajectory returns. A temporal filter might reduce this noise, but would need
+gaze-aware reprojection, depth/disocclusion rejection and tests for blur/ghosting
+before any claim of improved quality.

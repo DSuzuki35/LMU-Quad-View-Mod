@@ -298,6 +298,8 @@
       <button id="central">Match 100% center density</button
       ><button id="center">Center gaze</button
       ><button id="quality">Measure color error</button
+      ><button id="temporal">Measure gaze stability</button
+      ><button id="temporalMotion">Gaze + camera stability</button
       ><button id="benchmark">Measure GPU paths</button
       ><button id="tests">Run correctness checks</button
       ><button id="export">Save comparison image</button>
@@ -329,6 +331,17 @@
         >Warped source (stretched to fit)</span
       >
     </div>
+    <section id="temporalPanel" hidden>
+      <h2>Change in sampling error</h2>
+      <p id="temporalDescription"></p>
+      <p id="temporalLabels"></p>
+      <canvas id="temporalView" style="width: 100%; height: auto"></canvas>
+      <p class="muted">
+        Same heat scale in every pane: black = no change; orange = RMS change of
+        16/255 or greater. This is an image-space diagnostic, not a perceptual
+        or headset comfort score. No temporal smoothing is applied.
+      </p>
+    </section>
     <div class="details">
       <section class="panel">
         <h2>Measurements</h2>
@@ -363,6 +376,7 @@ Use “Measure color error” or “Measure GPU paths”.</pre
     </div>
     <script src="mapping.js"></script>
     <script src="shaders.js"></script>
+    <script src="temporal.js"></script>
     <script src="app.js"></script>
   </body>
 </html>
