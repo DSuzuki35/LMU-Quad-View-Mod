@@ -1,4 +1,4 @@
-LMU QUAD VIEW MOD — v0.1.0
+LMU QUAD VIEW MOD — v0.1.1
 
 Free experimental Windows x64 / D3D11 quad-view integration for Le Mans Ultimate.
 Always free; donations are completely optional. Use offline. No Studio397
@@ -41,6 +41,13 @@ Before calibration fresh controls show per-axis percentages. Old settings retain
 their region. Re-read after changing headset, runtime or FOV; this is a snapshot.
 QVFR may widen/clip focus near gaze limits. Fixed requests stationary focus;
 Auto depends on provider tracking capability. Use the green outline to inspect it.
+Focus position offers horizontal/vertical offsets for all providers, Auto and
+Fixed. Positive moves right/up; negative moves left/down. Each value is -50..50%
+of that eye's full projected view width/height. Auto keeps following gaze with
+the requested offset. Focus size and render resolution stay unchanged. Large
+offsets may place part of the region outside the visible view; offsets are not
+clamped to the outer edges. Reset offsets restores zero/provider placement.
+Save and restart LMU to apply. Old settings default to zero.
 Outer smoothing defaults off; it leaves focus sharp but adds unmeasured GPU cost.
 The smaller outer-target optimization can be disabled in Setup for diagnosis.
 Crop support is deferred. Keep the pinned game-build guard enabled.
@@ -50,6 +57,7 @@ Original eye draws plus two focus scene traversals remain. Shared-path CPU
 housekeeping improvements are not full single-pass stereo or a confirmed 4–5 ms
 fix. Experimental upload reuse/batching and paired-draw checks default off.
 Compatibility and performance still require headset testing.
+Full single-pass stereo remains a 0.2.0 research target, not a feature of 0.1.1.
 
 SUPPORT AND PROFILING
 Report version, game build, headset/GPU/driver, runtime/provider, settings and

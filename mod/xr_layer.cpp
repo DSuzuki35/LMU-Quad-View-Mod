@@ -120,6 +120,7 @@ struct State {
     uint32_t runtimeOuterWidth[2]{},runtimeOuterHeight[2]{};
     lmuqv::XrOutputSizes outputSizes;
     lmuqv::FocusBoxSize focusBox;
+    lmuqv::FocusOffset focusOffsetX,focusOffsetY;
     bool pixelEnabled=false,pixelDone=false,pixelRequireScene=false;
     uint64_t pixelFrame=0;
     unsigned pixelMask=0,pixelSuccessMask=0;
@@ -538,14 +539,15 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
     if(XR_FAILED(r))return r;
     if(runtimeCount!=4)return XR_ERROR_RUNTIME_FAILURE;
     // One shared FOV feeds engine rendering, debug borders and final composition.
-    // Preserve each runtime gaze center and pose; never constrain it to the outer FOV.
+    // Translate each freshly located gaze FOV once; keep poses and never clamp to the outer FOV.
     if(!s.rawFovLogged){
         for(unsigned eye=0;eye<4;++eye)logf("Raw runtime locate FOV view=%u left=%.9g right=%.9g up=%.9g down=%.9g runtimeSettings=%d",eye,runtime[eye].fov.angleLeft,runtime[eye].fov.angleRight,runtime[eye].fov.angleUp,runtime[eye].fov.angleDown,s.runtimeSettings);
         s.rawFovLogged=true;
     }
-    for(unsigned eye=2;eye<4&&!s.runtimeSettings;++eye){
-        if(!lmuqv::scale_focus_fov(runtime[eye].fov,s.focusBox.width.percent,s.focusBox.height.percent)){
-            logf("Invalid focus FOV eye=%u focusWidthPercent=%g focusHeightPercent=%g; rejecting located views",eye-2,s.focusBox.width.percent,s.focusBox.height.percent);
+    for(unsigned eye=2;eye<4;++eye){
+        if((!s.runtimeSettings&&!lmuqv::scale_focus_fov(runtime[eye].fov,s.focusBox.width.percent,s.focusBox.height.percent))||
+           !lmuqv::offset_focus_fov(runtime[eye].fov,runtime[eye-2].fov,s.focusOffsetX.percent,s.focusOffsetY.percent)){
+            logf("Invalid focus/outer FOV transform eye=%u focusWidthPercent=%g focusHeightPercent=%g offsetXPercent=%g offsetYPercent=%g; rejecting located views",eye-2,s.focusBox.width.percent,s.focusBox.height.percent,s.focusOffsetX.percent,s.focusOffsetY.percent);
             return XR_ERROR_RUNTIME_FAILURE;
         }
     }
@@ -816,7 +818,7 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
     const auto sampledLength=GetEnvironmentVariableA("LMU_QV_VECTORXR_DIRECT_INPUTS",sampledSetting,sizeof(sampledSetting));
     s.sampledInputs=quad&&sampledLength==1&&sampledSetting[0]=='1';
     if(s.sampledInputs)logf("sampled_input enabled for eligible color swapchains; requests SAMPLED usage; downstream copy fallback retained");
-    if(s.runtimeSettings)logf("Runtime settings enabled: runtime FOV unchanged; exact runtime outer and common focus dimensions; legacy percentage controls ignored");
+    if(s.runtimeSettings)logf("Runtime settings enabled: runtime focus size preserved; mod focus offsets applied; exact runtime outer and common focus dimensions; legacy percentage controls ignored");
     if(!s.runtimeSettings){
     char outerPercent[128]{},focusPercent[128]{};
     DWORD outerLength=GetEnvironmentVariableA("LMU_QV_OUTER_PIXELS_PERCENT",outerPercent,sizeof(outerPercent));
@@ -834,6 +836,14 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
     if(!s.focusBox.height.valid)logf("Invalid focus height percentage; using safe default 100 (decimal range 25..200)");
     if(quad)logf("Focus box width=%g%% height=%g%% (tangent-space extents around runtime focus center)",s.focusBox.width.percent,s.focusBox.height.percent);
     }
+    char offsetX[128]{},offsetY[128]{};
+    const auto offsetXLength=GetEnvironmentVariableA("LMU_QV_FOCUS_OFFSET_X_PERCENT",offsetX,sizeof(offsetX));
+    const auto offsetYLength=GetEnvironmentVariableA("LMU_QV_FOCUS_OFFSET_Y_PERCENT",offsetY,sizeof(offsetY));
+    s.focusOffsetX=lmuqv::parse_focus_offset(offsetXLength>=sizeof(offsetX)?"invalid":offsetX);
+    s.focusOffsetY=lmuqv::parse_focus_offset(offsetYLength>=sizeof(offsetY)?"invalid":offsetY);
+    if(!s.focusOffsetX.valid)logf("Invalid horizontal focus offset; using safe default 0 (decimal range -50..50)");
+    if(!s.focusOffsetY.valid)logf("Invalid vertical focus offset; using safe default 0 (decimal range -50..50)");
+    if(quad)logf("Focus offsets horizontal=%g%% vertical=%g%% (per-eye full outer tangent span; positive right/up)",s.focusOffsetX.percent,s.focusOffsetY.percent);
     char pixelEnv[8]{};GetEnvironmentVariableA("LMU_QV_PIXEL_STATS",pixelEnv,sizeof(pixelEnv));
     s.pixelRequireScene=lmuqv::diagnostics_enabled()&&quad&&!std::strcmp(pixelEnv,"scene");
     s.pixelEnabled=lmuqv::diagnostics_enabled()&&quad&&(!std::strcmp(pixelEnv,"1")||s.pixelRequireScene);

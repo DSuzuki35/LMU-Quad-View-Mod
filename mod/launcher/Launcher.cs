@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace LmuQuadViewLauncher
@@ -36,6 +37,36 @@ namespace LmuQuadViewLauncher
             b.FlatAppearance.MouseDownBackColor = AccentDark;
             return b;
         }
+    }
+
+    // Suppress GDI's font-dependent text inset so the three brand lines share a visual edge.
+    sealed class BrandLabel : Label
+    {
+        public BrandLabel(string text, float size, Color color) {
+            Text=text;Font=new Font("Segoe UI",size);ForeColor=color;BackColor=Color.Transparent;
+            TextAlign=ContentAlignment.MiddleLeft;Padding=new Padding(0);
+        }
+        protected override void OnPaint(PaintEventArgs e) {
+            TextRenderer.DrawText(e.Graphics,Text,Font,ClientRectangle,ForeColor,
+                TextFormatFlags.NoPadding|TextFormatFlags.Left|TextFormatFlags.VerticalCenter|TextFormatFlags.SingleLine);
+        }
+    }
+
+    // Keep the standard native editor and spinner, with breathing room inside the edit text.
+    sealed class SpacedNumericUpDown : NumericUpDown
+    {
+        [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr window,int message,IntPtr wParam,IntPtr lParam);
+        public SpacedNumericUpDown() {
+            foreach(Control child in Controls)if(child is TextBox)child.HandleCreated+=delegate { ApplyTextMargin(); };
+        }
+        void ApplyTextMargin() {
+            int pixels=Math.Max(1,(int)Math.Round(6*DeviceDpi/96.0*Font.SizeInPoints/10.0));
+            foreach(Control child in Controls)if(child is TextBox&&child.IsHandleCreated)
+                SendMessage(child.Handle,0xD3,new IntPtr(2),new IntPtr(pixels<<16)); // EM_SETMARGINS / EC_RIGHTMARGIN
+        }
+        protected override void OnLayout(LayoutEventArgs e) { base.OnLayout(e);ApplyTextMargin(); }
+        protected override void OnFontChanged(EventArgs e) { base.OnFontChanged(e);ApplyTextMargin(); }
+        protected override void OnDpiChangedAfterParent(EventArgs e) { base.OnDpiChangedAfterParent(e);ApplyTextMargin(); }
     }
 
     sealed class Surface : Panel
@@ -208,7 +239,7 @@ namespace LmuQuadViewLauncher
 
     sealed class PercentSetting : UserControl
     {
-        readonly NumericUpDown number = new NumericUpDown();
+        readonly NumericUpDown number = new SpacedNumericUpDown();
         readonly PurpleSlider slider = new PurpleSlider();
         public decimal Value { get { return number.Value; } set { number.Value = Math.Max(number.Minimum, Math.Min(number.Maximum, value)); } }
         public void SetRange(decimal minimum,decimal maximum) {
@@ -221,7 +252,7 @@ namespace LmuQuadViewLauncher
             Height = 78; Dock = DockStyle.Fill; BackColor = Theme.Card; Margin = new Padding(0, 3, 0, 0);
             var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 2, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 22));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 32)); grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             grid.Controls.Add(Theme.Label(title, 10F, Theme.Text), 0, 0);
@@ -256,14 +287,17 @@ namespace LmuQuadViewLauncher
         readonly CheckBox stereoPairProof=Toggle("Test paired rendering (Ctrl+Alt+F8)");
         readonly CheckBox cpuUploadReuse=Toggle("Experimental CPU upload reuse");
         readonly CheckBox cpuUploadBatch=Toggle("Experimental CPU upload fast path");
-        readonly NumericUpDown profileDuration=new NumericUpDown {Minimum=30,Maximum=300,Increment=30,Value=120,
+        readonly NumericUpDown profileDuration=new SpacedNumericUpDown {Minimum=30,Maximum=300,Increment=30,Value=120,
             BackColor=Theme.Field,ForeColor=Theme.Text,BorderStyle=BorderStyle.FixedSingle,Dock=DockStyle.Fill,
             TextAlign=HorizontalAlignment.Right,Name="RenderProfileSeconds",AccessibleName="RenderProfileSeconds",Enabled=false};
         readonly PercentSetting outer = new PercentSetting("Outer resolution", 10, 400);
         readonly PercentSetting inner = new PercentSetting("Inner resolution", 25, 400);
         readonly PercentSetting focusWidth = new PercentSetting("Width", 10, 90);
         readonly PercentSetting focusHeight = new PercentSetting("Height", 10, 90);
-        readonly NumericUpDown outerBlur = new NumericUpDown { Minimum = 0, Maximum = 3, DecimalPlaces = 2,
+        readonly PercentSetting focusOffsetX = new PercentSetting("Horizontal", -50, 50) { Name="FocusOffsetXPercent" };
+        readonly PercentSetting focusOffsetY = new PercentSetting("Vertical", -50, 50) { Name="FocusOffsetYPercent" };
+        readonly Button resetOffsets = Theme.Button("Reset offsets", false);
+        readonly NumericUpDown outerBlur = new SpacedNumericUpDown { Minimum = 0, Maximum = 3, DecimalPlaces = 2,
             Increment = 0.25M, BackColor = Theme.Field, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle,
             Dock = DockStyle.Fill, TextAlign = HorizontalAlignment.Right, AccessibleName = "Outer smoothing in pixels" };
         readonly Label status = Theme.Label("Ready. Close LMU before starting a new session.", 9F, Theme.Muted);
@@ -374,8 +408,8 @@ namespace LmuQuadViewLauncher
             side.RowStyles.Add(new RowStyle(SizeType.Absolute, 26)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 89)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 65));
             var brand = Stack(3); brand.AutoSize = true; brand.Dock = DockStyle.Top; brand.Margin = new Padding(0, 0, 0, 24);
             brand.RowStyles.Add(new RowStyle(SizeType.AutoSize)); brand.RowStyles.Add(new RowStyle(SizeType.AutoSize)); brand.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            var lmu = Theme.Label("LMU", 25F, Theme.Text); lmu.Name = "BrandTitle"; lmu.Font = new Font("Segoe UI", 25F, FontStyle.Bold);
-            brand.Controls.Add(lmu, 0, 0); brand.Controls.Add(Theme.Label("QUAD VIEW", 12F, Theme.Accent), 0, 1); brand.Controls.Add(Caption("OPENXR RENDERING"), 0, 2); side.Controls.Add(brand, 0, 0);
+            var lmu = new BrandLabel("LMU", 25F, Theme.Text); lmu.Name = "BrandTitle"; lmu.Font = new Font("Segoe UI", 25F, FontStyle.Bold);
+            brand.Controls.Add(lmu, 0, 0); brand.Controls.Add(new BrandLabel("QUAD VIEW", 12F, Theme.Accent) {Name="BrandSubtitle"}, 0, 1); brand.Controls.Add(new BrandLabel("OPENXR RENDERING", 9F, Theme.Muted) {Name="BrandRenderer"}, 0, 2); side.Controls.Add(brand, 0, 0);
             foreach (Control label in brand.Controls) { ((Label)label).AutoSize = true; label.Dock = DockStyle.Top; label.Margin = new Padding(0, 0, 0, 5); }
             foreach (var nav in new[] { renderingNav, setupNav }) { nav.Dock = DockStyle.Fill; nav.TextAlign = ContentAlignment.MiddleLeft; nav.Margin = new Padding(0, 3, 0, 5); nav.FlatAppearance.BorderSize = 0; }
             side.Controls.Add(renderingNav, 0, 1); side.Controls.Add(setupNav, 0, 2);
@@ -388,10 +422,10 @@ namespace LmuQuadViewLauncher
         }
         void BuildRendering()
         {
-            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 4, Margin = new Padding(0) };
+            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 5, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 200)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 280));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54)); renderingPage.SetContent(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 250)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54)); renderingPage.SetContent(grid);
             var provider = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
             var p = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Margin = new Padding(0) };
             p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -408,6 +442,20 @@ namespace LmuQuadViewLauncher
             focusFooter.Controls.Add(focusHint,0,0);refreshFov.Dock=DockStyle.Fill;refreshFov.Margin=new Padding(0);refreshFov.Font=new Font("Segoe UI",9F);
             refreshFov.Click+=delegate { RefreshFocusGeometry(); };focusFooter.Controls.Add(refreshFov,0,1);focusContent.Controls.Add(focusFooter,0,3);
             grid.Controls.Add(focusCard,1,1);
+            var position = new Surface { Name="FocusPositionCard", Dock=DockStyle.Fill, Margin=new Padding(0,0,0,14), Padding=new Padding(17,12,17,10) };
+            var positionContent = new TableLayoutPanel { Dock=DockStyle.Fill, ColumnCount=2, RowCount=3, Margin=new Padding(0) };
+            positionContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));positionContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));
+            positionContent.RowStyles.Add(new RowStyle(SizeType.Absolute,34));positionContent.RowStyles.Add(new RowStyle(SizeType.Absolute,84));positionContent.RowStyles.Add(new RowStyle(SizeType.Percent,100));
+            var positionTitle=Theme.Label("Focus position",13F,Theme.Text);positionTitle.Font=new Font("Segoe UI",13F,FontStyle.Bold);
+            var positionHeader=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=new Padding(0)};
+            positionHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));positionHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,150));
+            positionHeader.Controls.Add(positionTitle,0,0);positionContent.Controls.Add(positionHeader,0,0);positionContent.SetColumnSpan(positionHeader,2);
+            resetOffsets.Name="ResetFocusOffsets";resetOffsets.Dock=DockStyle.Fill;resetOffsets.Height=30;resetOffsets.Font=new Font("Segoe UI",9F);resetOffsets.Margin=new Padding(0);
+            resetOffsets.Click+=delegate { focusOffsetX.Value=focusOffsetY.Value=0; };positionHeader.Controls.Add(resetOffsets,1,0);
+            focusOffsetX.Margin=new Padding(0,3,12,0);focusOffsetY.Margin=new Padding(12,3,0,0);
+            positionContent.Controls.Add(focusOffsetX,0,1);positionContent.Controls.Add(focusOffsetY,1,1);
+            var positionHint=Caption("Percent of each eye's full view. Positive: right / up. In Auto, offsets are relative to gaze. 0 = no shift. Applies next game launch.");
+            positionContent.Controls.Add(positionHint,0,2);positionContent.SetColumnSpan(positionHint,2);position.Controls.Add(positionContent);grid.Controls.Add(position,0,2);grid.SetColumnSpan(position,2);
             var preview = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 12), Padding = new Padding(18, 10, 18, 10) };
             var info = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Margin = new Padding(0) };
             info.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); info.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -415,12 +463,12 @@ namespace LmuQuadViewLauncher
             outline.Margin = new Padding(0, 0, 12, 0); info.Controls.Add(outline, 0, 0);
             var outlineHint = Caption("Highlights the focus region. Auto follows available eye tracking."); outlineHint.Margin = new Padding(0, 0, 16, 0); info.Controls.Add(outlineHint, 0, 1);
             var blurRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0) };
-            blurRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); blurRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 69));
+            blurRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); blurRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
             blurRow.Controls.Add(Theme.Label("Outer smoothing (pixels)", 10F, Theme.Text), 0, 0);
             outerBlur.Margin = new Padding(2, 4, 0, 0); blurRow.Controls.Add(outerBlur, 1, 0); info.Controls.Add(blurRow, 1, 0);
             info.Controls.Add(Caption("Softens peripheral shimmer; adds a small GPU pass. Focus stays sharp. 0 = off."), 1, 1);
-            preview.Controls.Add(info); grid.Controls.Add(preview, 0, 2); grid.SetColumnSpan(preview, 2);
-            grid.Controls.Add(resolutionHint, 0, 3); grid.SetColumnSpan(resolutionHint, 2);
+            preview.Controls.Add(info); grid.Controls.Add(preview, 0, 3); grid.SetColumnSpan(preview, 2);
+            grid.Controls.Add(resolutionHint, 0, 4); grid.SetColumnSpan(resolutionHint, 2);
         }
         Control SettingCard(string title, PercentSetting first, PercentSetting second, string hint, Padding margin)
         {
@@ -461,7 +509,7 @@ namespace LmuQuadViewLauncher
             stack.Controls.Add(Caption("Untick for normal play. Stops mod logs and profiling. Applies next launch; VectorXR logging is separate."),0,6);
             stack.Controls.Add(renderProfiling,0,7);
             var durationRow=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=new Padding(0)};
-            durationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));durationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,80));
+            durationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));durationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,86));
             durationRow.Controls.Add(Theme.Label("Capture length (seconds)",10F,Theme.Text),0,0);profileDuration.Margin=new Padding(2,4,0,0);durationRow.Controls.Add(profileDuration,1,0);stack.Controls.Add(durationRow,0,8);
             stack.Controls.Add(Caption("Press Ctrl+Alt+F9 on track. 30-300 seconds; closing LMU saves a partial capture."),0,9);
             stack.Controls.Add(stereoDrawAudit,0,10);
@@ -542,6 +590,7 @@ namespace LmuQuadViewLauncher
             outer.Value = s.OuterPercent; inner.Value = s.InnerPercent;
             focusWidth.Value = focusGeometry==null?s.FocusWidthPercent:focusGeometry.DisplayWidth(s.FocusWidthPercent);
             focusHeight.Value = focusGeometry==null?s.FocusHeightPercent:focusGeometry.DisplayHeight(s.FocusHeightPercent);
+            focusOffsetX.Value=s.FocusOffsetXPercent;focusOffsetY.Value=s.FocusOffsetYPercent;
             outerBlur.Value = Math.Max(outerBlur.Minimum, Math.Min(outerBlur.Maximum, s.OuterBlur));
             UpdateProvider();
         }
@@ -553,6 +602,7 @@ namespace LmuQuadViewLauncher
                 OuterPercent = outer.Value, InnerPercent = inner.Value,
                 FocusWidthPercent = focusGeometry==null?focusWidth.Value:focusGeometry.ProviderWidth(focusWidth.Value),
                 FocusHeightPercent = focusGeometry==null?focusHeight.Value:focusGeometry.ProviderHeight(focusHeight.Value),
+                FocusOffsetXPercent=focusOffsetX.Value,FocusOffsetYPercent=focusOffsetY.Value,
                 FocusAspectRatio=focusGeometry==null?0:focusGeometry.Aspect, OuterBlur = outerBlur.Value };
             QvfrSettings.Validate(s); return s;
         }

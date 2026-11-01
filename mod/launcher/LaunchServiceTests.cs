@@ -8,6 +8,7 @@ class LaunchServiceTests {
     static void Reject(Action action,string message) { bool rejected=false;try { action(); } catch { rejected=true; } Check(rejected,message); }
     static int Main() {
         var root=Path.Combine(Path.GetTempPath(),"lmu-launch-tests-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);
+        var originalOffset=Environment.GetEnvironmentVariable("LMU_QV_FOCUS_OFFSET_X_PERCENT");
         var originalVrs=Environment.GetEnvironmentVariable("LMU_QV_VRS_EXCLUSIVE");
         try {
             var providerRoot=Path.Combine(root,"provider's files");Directory.CreateDirectory(providerRoot);
@@ -26,7 +27,17 @@ class LaunchServiceTests {
             Check(File.ReadAllText(manifest)==original,"Installed manifest modified");
             var settings=new LauncherSettings {GameDirectory=Path.Combine(root,"game's folder"),Backend="QVFR",FoveationMode="fixed",DebugFocus=true,NativeOuterResolution=false,OuterBlur=1.25m};
             Environment.SetEnvironmentVariable("LMU_QV_VRS_EXCLUSIVE","1");
+            Environment.SetEnvironmentVariable("LMU_QV_FOCUS_OFFSET_X_PERCENT","49");
+            settings.FocusOffsetXPercent=-12.5m;settings.FocusOffsetYPercent=50;
             var info=LaunchService.MakeStartInfo(root,settings,plan,Path.Combine(root,"quad.log"));
+            Check(info.EnvironmentVariables["LMU_QV_FOCUS_OFFSET_X_PERCENT"]=="-12.5"&&info.EnvironmentVariables["LMU_QV_FOCUS_OFFSET_Y_PERCENT"]=="50","Signed offsets not exported invariantly");
+            Check(Environment.GetEnvironmentVariable("LMU_QV_FOCUS_OFFSET_X_PERCENT")=="49","Offset leaked into host environment");
+            var metadataFactory=typeof(LaunchService).GetMethod("PreparedMetadata",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic);
+            Check(metadataFactory!=null,"Prepared metadata must be inspectable without starting LMU");
+            Directory.CreateDirectory(Path.Combine(root,"build"));File.WriteAllBytes(Path.Combine(root,"build","lmu_quadview.dll"),new byte[]{4,5,6});
+            var prepared=metadataFactory.Invoke(null,new object[]{root,settings,plan,info,Path.Combine(root,"quad.log")});
+            var savedMetadata=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(new JavaScriptSerializer().Serialize(prepared));
+            Check(Convert.ToDecimal(savedMetadata["FocusOffsetXPercent"])==-12.5m&&Convert.ToDecimal(savedMetadata["FocusOffsetYPercent"])==50,"Offsets missing from run metadata");
             Check(!info.UseShellExecute&&info.Arguments=="+XR"&&info.FileName==Path.Combine(settings.GameDirectory,"Le Mans Ultimate.exe"),"Must launch executable directly");
             Check(info.EnvironmentVariables[plan.DisableVariable]=="1","Implicit QVFR not disabled in child");
             Check(Environment.GetEnvironmentVariable(plan.DisableVariable)==null,"Host process environment modified");
@@ -36,6 +47,7 @@ class LaunchServiceTests {
             Check(info.EnvironmentVariables["LMU_QV_VECTORXR_DIRECT_INPUTS"]=="0","QVFR must retain its original input flags");
             Check(info.EnvironmentVariables["LMU_QV_USE_RUNTIME_SETTINGS"]=="1"&&info.EnvironmentVariables["LMU_QV_FOCUS_PIXELS_PERCENT"]=="100","Provider dimensions scaled twice");
             var native=LaunchService.MakeLayerPlan(root,"Native",provider,null);
+            Check(LaunchService.MakeStartInfo(root,new LauncherSettings(),native,Path.Combine(root,"zero.log")).EnvironmentVariables["LMU_QV_FOCUS_OFFSET_X_PERCENT"]=="0","Stale inherited offset survived defaults");
             Check(native.Layers=="XR_APILAYER_LMU_quadview"&&native.DisableVariable==provider.DisableVariable,"Native did not suppress implicit emulation");
             var vectorManifest=Path.Combine(providerRoot,"vector.json");
             var vectorOriginal=original.Replace("XR_APILAYER_MBUCCHIA_quad_views_foveated","XR_APILAYER_DIENERTECH_VECTORXR");
@@ -69,6 +81,12 @@ class LaunchServiceTests {
             }
             Reject(delegate{LaunchService.ReadProviderManifest(malformedManifest);},"Explicit malformed provider must still be rejected");
             LaunchService.AddImplicitDisables(vectorPlan,new[]{manifest,vectorManifest,toolkit,customQvfr},"VectorXR");
+            foreach(var providerName in new[]{"Native","QVFR","VectorXR"})foreach(var foveation in new[]{"fixed","auto"}) {
+                var position=new LauncherSettings {Backend=providerName,FoveationMode=foveation,FocusOffsetXPercent=50,FocusOffsetYPercent=-50};
+                var selectedPlan=providerName=="Native"?native:providerName=="QVFR"?plan:vectorPlan;
+                var child=LaunchService.MakeStartInfo(root,position,selectedPlan,Path.Combine(root,"position.log"));
+                Check(child.EnvironmentVariables["LMU_QV_FOCUS_OFFSET_X_PERCENT"]=="50"&&child.EnvironmentVariables["LMU_QV_FOCUS_OFFSET_Y_PERCENT"]=="-50","Offsets lost for "+providerName+" "+foveation);
+            }
             var vectorSettings=new LauncherSettings {GameDirectory=settings.GameDirectory,Backend="VectorXR",FoveationMode="fixed"};
             var vectorInfo=LaunchService.MakeStartInfo(root,vectorSettings,vectorPlan,Path.Combine(root,"vector.log"));
             Check(vectorInfo.EnvironmentVariables["LMU_QV_VECTORXR_DIRECT_INPUTS"]=="1","VectorXR direct-input request missing");
@@ -134,6 +152,7 @@ class LaunchServiceTests {
             Console.WriteLine("LaunchService tests passed: QVFR/VectorXR/native, discovery, explicit order, duplicate/conflicting-layer isolation, manifests, environment reset, pinned hash guard");
             return 0;
         } finally {
+            Environment.SetEnvironmentVariable("LMU_QV_FOCUS_OFFSET_X_PERCENT",originalOffset);
             Environment.SetEnvironmentVariable("LMU_QV_VRS_EXCLUSIVE",originalVrs);
             if(Path.GetFullPath(root).StartsWith(Path.GetFullPath(Path.GetTempPath()),StringComparison.OrdinalIgnoreCase)) Directory.Delete(root,true);
         }

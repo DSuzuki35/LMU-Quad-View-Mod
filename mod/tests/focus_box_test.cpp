@@ -13,6 +13,37 @@ int main() {
     for(auto text:{"NaN","inf","24.9","200.1","-50","100junk","0x64","1e2"," 50","+50"}){
         auto box=lmuqv::parse_focus_box(text);assert(!box.valid&&box.percent==100);
     }
+    assert(lmuqv::parse_focus_offset(nullptr).percent==0);
+    for(auto text:{"-50","-12.5","0","0.25","50","1e1","1E-05","-2.5e-05"}){
+        auto offset=lmuqv::parse_focus_offset(text);assert(offset.valid&&offset.percent==std::strtod(text,nullptr));
+    }
+    for(auto text:{"NaN","inf","-50.1","50.1","12junk","1e9999","-1e9999","51e0","1e-5junk"," 5"}){
+        auto offset=lmuqv::parse_focus_offset(text);assert(!offset.valid&&offset.percent==0);
+    }
+    const XrFovf outer{float(std::atan(-2.)),float(std::atan(1.)),float(std::atan(1.5)),float(std::atan(-.5))};
+    const XrFovf target{float(std::atan(-.25)),float(std::atan(.75)),float(std::atan(.5)),float(std::atan(-.5))};
+    auto translated=target;assert(lmuqv::offset_focus_fov(translated,outer,25,-12.5));
+    assert(std::abs(std::tan(translated.angleLeft)-.5)<1e-6&&std::abs(std::tan(translated.angleRight)-1.5)<1e-6);
+    assert(std::abs(std::tan(translated.angleUp)-.25)<1e-6&&std::abs(std::tan(translated.angleDown)+.75)<1e-6);
+    assert(translated.angleRight>outer.angleRight);
+    translated=target;assert(lmuqv::offset_focus_fov(translated,outer,0,0));assert(std::memcmp(&translated,&target,sizeof(target))==0);
+    assert(lmuqv::offset_focus_fov(translated,outer,-50,0));
+    assert(std::memcmp(&translated.angleUp,&target.angleUp,sizeof(float))==0&&std::memcmp(&translated.angleDown,&target.angleDown,sizeof(float))==0);
+    translated=target;assert(lmuqv::offset_focus_fov(translated,outer,0,50));
+    assert(std::memcmp(&translated.angleLeft,&target.angleLeft,sizeof(float))==0&&std::memcmp(&translated.angleRight,&target.angleRight,sizeof(float))==0);
+    for(auto invalid:{XrFovf{0,0,.3f,-.3f},XrFovf{.4f,-.4f,.3f,-.3f},XrFovf{-.4f,.4f,-.3f,.3f},
+                     XrFovf{NAN,.4f,.3f,-.3f},XrFovf{-.4f,INFINITY,.3f,-.3f},XrFovf{-1.571f,.4f,.3f,-.3f}}){
+        translated=target;assert(!lmuqv::offset_focus_fov(translated,invalid,25,0));assert(std::memcmp(&translated,&target,sizeof(target))==0);
+        auto before=invalid;assert(!lmuqv::offset_focus_fov(invalid,outer,0,25));assert(std::memcmp(&invalid,&before,sizeof(before))==0);
+    }
+    for(double invalid:{-50.1,50.1,std::numeric_limits<double>::infinity(),std::numeric_limits<double>::quiet_NaN()}){
+        translated=target;assert(!lmuqv::offset_focus_fov(translated,outer,invalid,10));assert(std::memcmp(&translated,&target,sizeof(target))==0);
+        assert(!lmuqv::offset_focus_fov(translated,outer,10,invalid));assert(std::memcmp(&translated,&target,sizeof(target))==0);
+    }
+    const XrFovf tiny{-std::numeric_limits<float>::denorm_min(),std::numeric_limits<float>::denorm_min(),.3f,-.3f};
+    translated=tiny;assert(!lmuqv::offset_focus_fov(translated,outer,50,0));assert(std::memcmp(&translated,&tiny,sizeof(tiny))==0);
+    XrFovf untouched{NAN,0,0,0};auto beforeNoOp=untouched;
+    assert(lmuqv::offset_focus_fov(untouched,outer,0,0));assert(std::memcmp(&untouched,&beforeNoOp,sizeof(untouched))==0);
     const XrFovf original{std::atan(-.25f),std::atan(.75f),std::atan(.5f),std::atan(-.5f)};
     auto size=lmuqv::parse_focus_box_size(nullptr,nullptr,nullptr);
     assert(size.width.percent==100&&size.height.percent==100);
