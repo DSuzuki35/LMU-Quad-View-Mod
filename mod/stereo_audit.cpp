@@ -4,6 +4,7 @@
 #include "stereo_resource_trace.hpp"
 #include "native_stereo_packets.hpp"
 #include "native_stereo_camera.hpp"
+#include "native_stereo_source.hpp"
 #include "stereo_instancing.hpp"
 #include "stereo_draw_proof.hpp"
 #include "diagnostics.hpp"
@@ -82,10 +83,22 @@ struct NativeTargets {
   std::array<NativeTarget, 8> rt{};
   NativeTarget depth;
 };
+// Source records own scalars and an anonymized array ID only. The lazy-state
+// bit observes one known refresh path, not general staticness or eligibility.
+struct NativeSourceRecord {
+  bool complete = false, lazyStatePresent = false;
+  const char *reason = "incomplete snapshot";
+  size_t bytesRead = 0;
+  uint32_t array = 0;
+  int32_t count = 0;
+  unsigned index = 0;
+  float sortDistance = 0;
+};
 struct NativePacketRecord {
   uint32_t mesh = 0, geometry = 0, meshFlags = 0, geometryFlags = 0;
   unsigned bucket = 0, item = 0, index = 0;
   bool callback = false;
+  NativeSourceRecord source;
 };
 struct NativePassRecord {
   unsigned slot = 0;
@@ -430,6 +443,21 @@ void write_native_camera(std::ostringstream &out,
   write_camera_eyes(out, camera.scalars);
   out << "}}";
 }
+void write_native_source(std::ostringstream &out,
+                         const NativeSourceRecord &source) {
+  out << "{\"complete\":" << (source.complete ? "true" : "false")
+      << ",\"reason\":" << quoted(source.reason)
+      << ",\"bytes_read\":" << source.bytesRead << ",\"values\":";
+  if (!source.complete) {
+    out << "null}";
+    return;
+  }
+  out << "{\"array\":" << source.array << ",\"count\":" << source.count
+      << ",\"index\":" << source.index
+      << ",\"sort_distance\":" << double(source.sortDistance)
+      << ",\"lazy_state_present\":"
+      << (source.lazyStatePresent ? "true" : "false") << "}}";
+}
 void write_camera_comparisons(std::ostringstream &out) {
   // This operates only on owned copies, including when a close saves from a
   // different thread. Native state is never read or reconstructed here.
@@ -508,6 +536,7 @@ void write_native_capture(std::ostringstream &out) {
       << ",\"pointer_work_per_scope_limit\":" << nativeStereoWorkLimit
       << ",\"native_bytes_per_scope_bound\":" << nativeStereoReadByteLimit
       << ",\"camera_bytes_per_scope_bound\":" << nativeStereoCameraReadByteLimit
+      << ",\"source_bytes_per_packet_bound\":" << nativeStereoSourceReadByteLimit
       << ",\"scheduling_eligible\":false"
       << ",\"scopes_dropped\":" << nativeScopesDropped
       << ",\"preparations_dropped\":" << nativePreparationsDropped
@@ -562,7 +591,9 @@ void write_native_capture(std::ostringstream &out) {
           << ((packet.meshFlags & 0x400000) ? "true" : "false")
           << ",\"bucket_index\":" << packet.bucket
           << ",\"item_index\":" << packet.item
-          << ",\"mesh_index\":" << packet.index << '}';
+          << ",\"mesh_index\":" << packet.index << ",\"source_containment\":";
+      write_native_source(out, packet.source);
+      out << '}';
     }
     out << "]}";
   }
@@ -971,6 +1002,22 @@ stereo_audit_native_pass_begin(const StereoNativePassInfo &info) {
           break;
         }
         NativePacketRecord copied;
+        const auto source = capture_native_stereo_source(
+            packet.mesh, packet.geometry, info.readable);
+        // Convert the ephemeral array key immediately through the same bounded
+        // object map. Exhaustion takes the existing diagnostic abort path.
+        if (source.complete) {
+          copied.source.array = native_identity(
+              nativeObjects, reinterpret_cast<const void *>(source.arrayIdentity),
+              maxNativeObjects);
+          copied.source.count = source.count;
+          copied.source.index = source.index;
+          copied.source.sortDistance = source.sortDistance;
+          copied.source.lazyStatePresent = source.lazyStatePresent;
+        }
+        copied.source.complete = source.complete;
+        copied.source.reason = source.reason;
+        copied.source.bytesRead = source.bytesRead;
         copied.mesh = native_identity(
             nativeMeshes, reinterpret_cast<const void *>(packet.mesh),
             maxNativePackets);

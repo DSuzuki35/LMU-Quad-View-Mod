@@ -27,7 +27,8 @@ struct NativeFixture {
     alignas(8) std::array<unsigned char,0xdc8> scene{};
     alignas(8) std::array<unsigned char,0x508> bucket{};
     alignas(8) std::array<unsigned char,0x4a8> item{};
-    alignas(8) std::array<unsigned char,0xd4> mesh{};
+    alignas(8) std::array<unsigned char,0x2a0> mesh{};
+    alignas(8) std::array<unsigned char,0x178> geometry{};
     alignas(8) std::array<unsigned char,0x110> shader{};
     alignas(8) std::array<unsigned char,0x5d0> view{};
     alignas(8) std::array<unsigned char,0x418> camera{};
@@ -42,23 +43,31 @@ struct NativeFixture {
         bucketPointer=reinterpret_cast<uint64_t>(bucket.data());itemPointer=reinterpret_cast<uint64_t>(item.data());meshPointer=reinterpret_cast<uint64_t>(mesh.data());
         vector(scene,0xdb0,&bucketPointer);vector(bucket,0x4f0,&itemPointer);vector(item,0x490,&meshPointer);
         put(mesh,0,uint32_t(0x400000));put(mesh,0xcc,uint64_t(1));put(shader,0xf8,uint32_t(0x8000));put(shader,0x108,uint64_t(1));
+        put(mesh,0x80,reinterpret_cast<uint64_t>(geometry.data()));
+        put(geometry,0,uint32_t(37));put(geometry,0x168,int32_t(3));put(geometry,0x170,reinterpret_cast<uint64_t>(mesh.data()));
+        put(geometry,0xf8,0.12345679f);put(geometry,0x138,uint64_t(1));
         currentView=reinterpret_cast<uintptr_t>(view.data());
         const lmuqv::Matrix identity{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
         put(view,0x21c,int32_t(1));put(view,0x1dc,identity);put(view,0x360,identity);put(view,0x58c,identity);put(view,0x3a0,identity);
         for(unsigned eye=0;eye<2;++eye){auto relative=identity;relative[12]=eye?0.03125f:-0.03125f;put(camera,0x70+eye*0x6c,relative);put(camera,0x148+eye*0x6c,identity);put(camera,0x220+eye*0x6c,identity);}
     }
     bool sameMemory(const NativeFixture& other)const{
-        return scene==other.scene&&bucket==other.bucket&&item==other.item&&mesh==other.mesh&&shader==other.shader&&view==other.view&&camera==other.camera&&cameraMode==other.cameraMode&&currentView==other.currentView&&
+        return scene==other.scene&&bucket==other.bucket&&item==other.item&&mesh==other.mesh&&geometry==other.geometry&&shader==other.shader&&view==other.view&&camera==other.camera&&cameraMode==other.cameraMode&&currentView==other.currentView&&
             bucketPointer==other.bucketPointer&&itemPointer==other.itemPointer&&meshPointer==other.meshPointer;
     }
 };
 NativeFixture nativeFixture;
 std::array<uint64_t,4096> repeatedMeshes{};
-unsigned nativeReads=0;
+unsigned nativeReads=0,sourceReads=0;
 bool testSuspension=false,suspensionProbed=false;
 bool throwNativeReader=false;
+size_t unreadableSourceOffset=0,throwSourceOffset=0;
 bool nativeReadable(const void* p,size_t bytes){
     ++nativeReads;
+    const auto source=reinterpret_cast<uintptr_t>(nativeFixture.geometry.data()),address=reinterpret_cast<uintptr_t>(p);
+    if(address==source+0x168||address==source+0x170||address==source+0xf8||address==source+0x138)++sourceReads;
+    if(unreadableSourceOffset&&address==source+unreadableSourceOffset)return false;
+    if(throwSourceOffset&&address==source+throwSourceOffset)throw std::bad_alloc();
     if(throwNativeReader)throw std::bad_alloc();
     if(testSuspension&&!suspensionProbed){
         suspensionProbed=true;
@@ -67,7 +76,6 @@ bool nativeReadable(const void* p,size_t bytes){
         lmuqv::StereoNativePrepareInfo metadata{nativeFixture.shader.data(),0,false,nativeReadable};
         assert(!lmuqv::stereo_audit_native_prepare_begin(nativeFixture.mesh.data(),&metadata).entered);
     }
-    const auto address=reinterpret_cast<uintptr_t>(p);
     const auto begin=reinterpret_cast<uintptr_t>(&nativeFixture);
     if(address>=begin&&address-begin<=sizeof(nativeFixture)&&bytes<=sizeof(nativeFixture)-(address-begin))return true;
     const auto extraBegin=reinterpret_cast<uintptr_t>(repeatedMeshes.data());
@@ -191,6 +199,10 @@ int main(int argc,char** argv){
         const auto explicitFlags=stereo_audit_native_prepare_begin(nativeFixture.mesh.data(),&metadata);
         stereo_audit_native_prepare_end(explicitFlags);assert(nativeReads==beforeExplicitFlags+3);
         assert(nativeFixture.sameMemory(fixtureBefore));
+        // Reusing the same array identity is no content-version claim. The
+        // first packet must retain its copied values after these source edits.
+        NativeFixture::put(nativeFixture.geometry,0x168,int32_t(1));NativeFixture::put(nativeFixture.geometry,0xf8,9876.5f);NativeFixture::put(nativeFixture.geometry,0x138,uint64_t(0));
+        NativeFixture::put(expectedFixture.geometry,0x168,int32_t(1));NativeFixture::put(expectedFixture.geometry,0xf8,9876.5f);NativeFixture::put(expectedFixture.geometry,0x138,uint64_t(0));
         // Preserve the first observed metadata, then fill the global packet
         // budget with duplicate identities. Exhaustion performs no native reads.
         repeatedMeshes.fill(reinterpret_cast<uint64_t>(nativeFixture.mesh.data()));
@@ -203,6 +215,7 @@ int main(int argc,char** argv){
         const auto exhaustedReads=nativeReads;
         for(unsigned i=9;i<128;++i){const auto token=stereo_audit_native_pass_begin(info);assert(token.entered);stereo_audit_native_pass_end(token);}
         assert(nativeReads==exhaustedReads&&!stereo_audit_native_pass_begin(info).entered&&nativeReads==exhaustedReads);
+        assert(sourceReads==32768*4); // Includes only packets accepted by the global cap.
     }
     assert(nativeFixture.sameMemory(expectedFixture));
     nativeFixture=fixtureBefore;
@@ -220,6 +233,15 @@ int main(int argc,char** argv){
     assert(count(nativeJson,"\"mesh_index\":")==32768&&count(nativeJson,"\"targets_begin\":")==128&&nativeJson.find("\"scopes_dropped\":1")!=std::string::npos);
     assert(nativeJson.find("\"begin_sequence\":1,\"end_sequence\":5")!=std::string::npos&&nativeJson.find("\"sequence\":4")!=std::string::npos);
     assert(nativeJson.find("does not preserve contents or native lifetimes")!=std::string::npos);
+    assert(nativeJson.find("\"source_bytes_per_packet_bound\":24")!=std::string::npos&&nativeJson.find("\"total_packet_limit\":32768")!=std::string::npos);
+    const auto arrayStart=nativeJson.find("\"source_containment\":{\"complete\":true,\"reason\":\"complete\",\"bytes_read\":24,\"values\":{\"array\":");
+    assert(arrayStart!=std::string::npos);
+    const auto idStart=nativeJson.find("\"array\":",arrayStart)+8;
+    const auto arrayId=std::stoul(nativeJson.substr(idStart));assert(arrayId>0&&arrayId<=65536);
+    const auto arrayField="\"array\":"+std::to_string(arrayId);
+    assert(nativeJson.find(arrayField+",\"count\":3,\"index\":0,\"sort_distance\":0.12345679104328156,\"lazy_state_present\":true")!=std::string::npos);
+    assert(count(nativeJson,(arrayField+",\"count\":1,\"index\":0,\"sort_distance\":9876.5,\"lazy_state_present\":false").c_str())==32767);
+    assert(nativeJson.find(std::to_string(reinterpret_cast<uintptr_t>(nativeFixture.mesh.data())))==std::string::npos&&nativeJson.find(std::to_string(reinterpret_cast<uintptr_t>(nativeFixture.geometry.data())))==std::string::npos);
     drop(dsv);drop(depthTexture);drop(secondRtv);drop(secondTexture);
     // One native main-view observation per eye, copied before consumers. A
     // source mutation after capture must not alter the serialized left camera.
@@ -239,7 +261,12 @@ int main(int argc,char** argv){
     // cannot reuse the preceding frame's right camera.
     {StereoAuditScope scope{StereoAuditPass::outer0};StereoAuditGroup group(31);
         NativeFixture::put(nativeFixture.camera,0x70,std::numeric_limits<float>::infinity());
+        NativeFixture::put(nativeFixture.geometry,0x168,int32_t(0));
         const auto token=stereo_audit_native_pass_begin(info);assert(token.entered);draw();stereo_audit_native_pass_end(token);}
+    {StereoAuditScope scope{StereoAuditPass::outer0};StereoAuditGroup group(31);
+        NativeFixture::put(nativeFixture.geometry,0x168,int32_t(3));
+        unreadableSourceOffset=0xf8;auto token=stereo_audit_native_pass_begin(info);unreadableSourceOffset=0;assert(token.entered);draw();stereo_audit_native_pass_end(token);
+        throwSourceOffset=0x138;token=stereo_audit_native_pass_begin(info);throwSourceOffset=0;assert(token.entered);draw();stereo_audit_native_pass_end(token);}
     stereo_audit_frame_end();
     std::string cameraJson;for(const auto& file:files(directory)){const auto data=read(file);if(data.find("\"camera_comparisons\":[{\"generation\"")!=std::string::npos&&data.find("\"available\":true")!=std::string::npos)cameraJson=data;}
     assert(!cameraJson.empty()&&cameraJson.find("\"relative_eye\":[[1,0,0,0,0,1,0,0,0,0,1,0,-0.03125")!=std::string::npos);
@@ -247,6 +274,11 @@ int main(int argc,char** argv){
     assert(cameraJson.find("\"scheduling_eligible\":false")!=std::string::npos&&cameraJson.find("\"relative_eye\":[[1234")==std::string::npos);
     assert(cameraJson.find("0.12345679104328156")!=std::string::npos&&cameraJson.find("non-finite camera numbers")!=std::string::npos);
     assert(cameraJson.find("\"values\":null")!=std::string::npos&&cameraJson.find("\"current_error\":null")!=std::string::npos);
+    // Invalid geometry-source metadata does not invalidate ordinary packets.
+    assert(cameraJson.find("\"source_containment\":{\"complete\":false,\"reason\":\"invalid source record count\",\"bytes_read\":12,\"values\":null}")!=std::string::npos);
+    assert(cameraJson.find("\"source_containment\":{\"complete\":false,\"reason\":\"unreadable native span\",\"bytes_read\":12,\"values\":null}")!=std::string::npos);
+    assert(cameraJson.find("\"source_containment\":{\"complete\":false,\"reason\":\"diagnostic allocation or reader exception\",\"bytes_read\":16,\"values\":null}")!=std::string::npos);
+    assert(cameraJson.find("\"aborted\":false")!=std::string::npos&&count(cameraJson,"\"packets\":[{\"mesh\":1")==5&&count(cameraJson,"\"complete\":true,\"reason\":\"complete\",\"reusable\":false")==5);
     nativeFixture=fixtureBefore;
     // A captured valid pair cannot establish uniqueness if the scope cap hides
     // a later duplicate, even when other retained scopes use a different kind.
@@ -280,6 +312,10 @@ int main(int argc,char** argv){
     // Confirm capture hooks never changed the resulting image.
     auto readDesc=td;readDesc.BindFlags=0;readDesc.Usage=D3D11_USAGE_STAGING;readDesc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;ID3D11Texture2D* staging=nullptr;assert(SUCCEEDED(device->CreateTexture2D(&readDesc,nullptr,&staging)));
     context->CopyResource(staging,texture);D3D11_MAPPED_SUBRESOURCE map{};assert(SUCCEEDED(context->Map(staging,0,D3D11_MAP_READ,0,&map)));uint32_t pixel=0;std::memcpy(&pixel,static_cast<const char*>(map.pData)+4*map.RowPitch+4*4,4);assert(pixel==0xff00ff00u);context->Unmap(staging,0);drop(staging);
-    stereo_audit_stop();resource_trace_test(directory);context->ClearState();for(auto*& shader:extra)drop(shader);drop(duplicate);drop(cb);drop(ib);drop(vb);drop(rtv);drop(texture);drop(layout);drop(ps);drop(vs);drop(context);drop(device);
+    stereo_audit_stop();
+    // Keep the resource trace fixture's original absent-geometry setup and
+    // deterministic resource IDs. Source containment is exercised above.
+    NativeFixture::put(nativeFixture.mesh,0x80,uint64_t(0));
+    resource_trace_test(directory);context->ClearState();for(auto*& shader:extra)drop(shader);drop(duplicate);drop(cb);drop(ib);drop(vb);drop(rtv);drop(texture);drop(layout);drop(ps);drop(vs);drop(context);drop(device);
     std::cout<<"Stereo draw audit "<<(hardware?"hardware":"WARP")<<" passed: early device capture, preserved layouts, >1024 programs, deduplicated/used-only definitions, opt-in shader export, transparent draws, reflection/SHA, CB updates, frame limits, held key, file saving, pixel readback and cross-thread deferred cleanup\n";
 }
