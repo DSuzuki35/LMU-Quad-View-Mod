@@ -506,6 +506,14 @@ void mainPassHook(void* renderer,void* scene,void* view,std::uint32_t flags,bool
 void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
                    std::uint32_t flags,bool lastMainPass,void* optionalMaterial) {
     StereoAuditGroup auditGroup(group);
+    const auto caller = reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
+    const auto callerRva = caller >= base ? caller - base : 0;
+    // Capture the ordered opaque inputs before native last-pass cleanup releases
+    // their lists. This observes scalars only; it does not retain or skip a draw.
+    const StereoNativePassInfo nativePassInfo{
+        scene, view, callerRva <= UINT32_MAX ? uint32_t(callerRva) : 0,
+        flags, lastMainPass, readable};
+    const auto nativePass = stereo_audit_native_pass_begin(nativePassInfo);
     const auto savedUploadCache=selectedUploadCache;const auto savedUploadContext=selectedUploadContext;
     std::unique_lock<std::recursive_mutex> uploadLock(nativeUploadMutex,std::defer_lock);
     bool uploadScope=false;
@@ -549,8 +557,6 @@ void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
             }
         }
     }
-    const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
-    const auto callerRva=caller>=base?caller-base:0;
     const bool eligible=worldVrsOptIn && !worldVrsFailed && worldVrs.ready() &&
         worldVrsRate==benchmarkRequestedRate() && outerVrsContext==worldVrsConfiguredContext &&
         vrs_scope::outer_world_sort_eligible(vrsInput(view,outerSortDepth!=0),outerMainPassMarker,callerRva);
@@ -568,6 +574,7 @@ void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
     const auto generation=vrsInterruptionGeneration;
     ++outerSortDepth;
     worldSortOriginal(renderer,scene,view,group,flags,lastMainPass,optionalMaterial);
+    stereo_audit_native_pass_end(nativePass);
     if(uploadScope){nativeUploadBatch.end();nativeUploadReuse.end();}selectedUploadCache=savedUploadCache;selectedUploadContext=savedUploadContext;
     --outerSortDepth;
     if(began && generation==vrsInterruptionGeneration) {
@@ -580,7 +587,10 @@ int nativePrepareHook(void* shader,void* view,void* mesh,std::uint32_t flags,boo
     // Two verified world-sort submission sites. This hook observes the complete
     // original preparation and forwards its exact result; no setup is skipped.
     const bool known=caller==base+0x51f67e||caller==base+0x51f5c4;
-    const auto token=known?stereo_audit_native_prepare_begin(mesh):StereoNativePrepareToken{};
+    const StereoNativePrepareInfo preparation{shader, flags, reset, readable};
+    const auto token = known
+        ? stereo_audit_native_prepare_begin(mesh, &preparation)
+        : StereoNativePrepareToken{};
     const int result=nativePrepareOriginal(shader,view,mesh,flags,reset);
     stereo_audit_native_prepare_end(token);return result;
 }

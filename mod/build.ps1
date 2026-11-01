@@ -41,7 +41,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'GPU timing tests compilation failed' }
     & .\build\gpu_timing_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'GPU timing tests failed' }
-    foreach ($test in @('pipeline_stats','benchmark_control','render_profile','swapchain_sampling','stereo_audit_abi')) {
+    foreach ($test in @('pipeline_stats','benchmark_control','render_profile','swapchain_sampling','stereo_audit_abi','native_stereo_packets')) {
         & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" -ld3d11 -o "build/${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests compilation failed" }
         & ".\build\${test}_test.exe"

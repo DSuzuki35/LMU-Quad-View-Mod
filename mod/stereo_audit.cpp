@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "stereo_audit.hpp"
+#include "native_stereo_packets.hpp"
 #include "stereo_instancing.hpp"
 #include "stereo_draw_proof.hpp"
 #include "diagnostics.hpp"
@@ -41,7 +42,7 @@ struct Record {
     std::array<Tag,28> constants{};uint64_t targetSignature=0;
     uint64_t pixelResources=0,pixelSamplers=0;uint32_t predicate=0,predicateValue=0;
     uint32_t rtWidth=0,rtHeight=0,rtFormat=0,rtSamples=0,rtCount=0,blend=0,classes=0;
-    uint32_t nativeMesh=0,activeQueries=0,activeQueryMask=0;uint64_t nativeBindTicks=0,nativePrepareTicks=0,proofTicks=0;
+    uint32_t nativeMesh=0,activeQueries=0,activeQueryMask=0;uint64_t nativeBindTicks=0,nativePrepareTicks=0,proofTicks=0,sequence=0;
 };
 struct Pass {uint64_t calls=0,dropped=0,wallTicks=0,snapshotTicks=0,apiTicks=0,maps=0,unmaps=0,updates=0,copies=0,dispatches=0,commandLists=0,nativeBinds=0,nativeBindTicks=0;};
 // LMU creates many shader objects containing identical DXBC. Keep reflection
@@ -67,6 +68,74 @@ uint32_t query_mask(ID3D11Asynchronous* asynchronous){
     D3D11_QUERY_DESC desc{};query->GetDesc(&desc);query->Release();return unsigned(desc.Query)<31?1u<<unsigned(desc.Query):1u<<31;
 }
 std::unordered_map<const void*,uint32_t> nativeMeshes;
+constexpr unsigned maxNativeScopes = 128, maxNativePackets = 32768,
+                   maxNativeObjects = 65536;
+struct NativeTarget {
+  uint32_t view = 0, resource = 0, width = 0, height = 0, depth = 0, format = 0,
+           samples = 0, sampleQuality = 0;
+  uint32_t dimension = 0, mip = 0, firstSlice = 0, slices = 0;
+};
+struct NativeTargets {
+  std::array<NativeTarget, 8> rt{};
+  NativeTarget depth;
+};
+struct NativePacketRecord {
+  uint32_t mesh = 0, geometry = 0, meshFlags = 0, geometryFlags = 0;
+  unsigned bucket = 0, item = 0, index = 0;
+  bool callback = false;
+};
+struct NativePassRecord {
+  unsigned slot = 0;
+  uint32_t scene = 0, view = 0, caller = 0, flags = 0;
+  bool lastMainPass = false, complete = false, ended = false;
+  uint64_t beginSequence = 0, endSequence = 0;
+  NativeStereoCaptureReason reason = NativeStereoCaptureReason::complete;
+  unsigned buckets = 0, items = 0, meshes = 0, work = 0;
+  size_t bytesRead = 0;
+  NativeTargets before, after;
+  std::vector<NativePacketRecord> packets;
+};
+struct NativePrepareRecord {
+  unsigned slot = 0;
+  uint32_t mesh = 0, suppliedFlags = 0, shaderFlags = 0, effectiveFlags = 0,
+           meshFlags = 0;
+  bool reset = false, complete = false, shaderCallback = false,
+       meshCallback = false, shaderCallbackTested = false;
+  uint64_t beginSequence = 0, endSequence = 0;
+  NativeStereoCaptureReason reason = NativeStereoCaptureReason::complete;
+};
+std::vector<NativePassRecord> nativePasses;
+std::vector<NativePrepareRecord> nativePreparations;
+std::unordered_map<const void *, uint32_t> nativeObjects;
+uint64_t nativeGeneration = 0, auditSequence = 0;
+unsigned nativePacketCount = 0, nativeScopesDropped = 0,
+         nativePreparationsDropped = 0;
+bool nativeDiagnosticsFailed = false;
+void reset_native_capture() {
+  ++nativeGeneration;
+  auditSequence = 0;
+  nativePacketCount = 0;
+  nativeScopesDropped = 0;
+  nativePreparationsDropped = 0;
+  nativeDiagnosticsFailed = false;
+  nativePasses.clear();
+  nativePreparations.clear();
+  nativeObjects.clear();
+  nativeMeshes.clear();
+}
+uint32_t native_identity(std::unordered_map<const void *, uint32_t> &identities,
+                         const void *pointer, size_t limit) {
+  if (!pointer)
+    return 0;
+  const auto known = identities.find(pointer);
+  if (known != identities.end())
+    return known->second;
+  if (identities.size() >= limit)
+    throw std::bad_alloc();
+  const auto id = uint32_t(identities.size() + 1);
+  identities.emplace(pointer, id);
+  return id;
+}
 std::atomic<ID3D11DeviceContext*> watchedContext{nullptr};std::atomic<ID3D11Device*> watchedDevice{nullptr};
 std::atomic<bool> capturing{false};bool keyWasDown=false,sawScene=false,deferredStop=false;
 long long started=0,frequency=0;std::filesystem::path directory;
@@ -100,10 +169,291 @@ Tag tag(ID3D11DeviceChild* child,bool write=false){
     if(write){++value.version;child->SetPrivateData(resourceGuid,sizeof(value),&value);}return value;
 }
 template<class T> void drop(T*& p){if(p){p->Release();p=nullptr;}}
+template <class T> struct NativeCom {
+  T *value = nullptr;
+  ~NativeCom() { drop(value); }
+};
+void native_target_resource(NativeTarget &target, ID3D11Resource *resource) {
+  target.resource = native_identity(nativeObjects, resource, maxNativeObjects);
+  if (!resource)
+    return;
+  D3D11_RESOURCE_DIMENSION dimension{};
+  resource->GetType(&dimension);
+  if (dimension == D3D11_RESOURCE_DIMENSION_TEXTURE2D) {
+    NativeCom<ID3D11Texture2D> texture;
+    if (SUCCEEDED(resource->QueryInterface(
+            __uuidof(ID3D11Texture2D),
+            reinterpret_cast<void **>(&texture.value)))) {
+      D3D11_TEXTURE2D_DESC desc{};
+      texture.value->GetDesc(&desc);
+      target.width = desc.Width;
+      target.height = desc.Height;
+      target.depth = desc.ArraySize;
+      target.samples = desc.SampleDesc.Count;
+      target.sampleQuality = desc.SampleDesc.Quality;
+    }
+  } else if (dimension == D3D11_RESOURCE_DIMENSION_TEXTURE1D) {
+    NativeCom<ID3D11Texture1D> texture;
+    if (SUCCEEDED(resource->QueryInterface(
+            __uuidof(ID3D11Texture1D),
+            reinterpret_cast<void **>(&texture.value)))) {
+      D3D11_TEXTURE1D_DESC desc{};
+      texture.value->GetDesc(&desc);
+      target.width = desc.Width;
+      target.height = 1;
+      target.depth = desc.ArraySize;
+      target.samples = 1;
+    }
+  } else if (dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D) {
+    NativeCom<ID3D11Texture3D> texture;
+    if (SUCCEEDED(resource->QueryInterface(
+            __uuidof(ID3D11Texture3D),
+            reinterpret_cast<void **>(&texture.value)))) {
+      D3D11_TEXTURE3D_DESC desc{};
+      texture.value->GetDesc(&desc);
+      target.width = desc.Width;
+      target.height = desc.Height;
+      target.depth = desc.Depth;
+      target.samples = 1;
+    }
+  } else if (dimension == D3D11_RESOURCE_DIMENSION_BUFFER) {
+    NativeCom<ID3D11Buffer> buffer;
+    if (SUCCEEDED(resource->QueryInterface(
+            __uuidof(ID3D11Buffer),
+            reinterpret_cast<void **>(&buffer.value)))) {
+      D3D11_BUFFER_DESC desc{};
+      buffer.value->GetDesc(&desc);
+      target.width = desc.ByteWidth;
+    }
+  }
+}
+NativeTargets snapshot_native_targets() {
+  Suspend pause;
+  struct Bindings {
+    ID3D11RenderTargetView *rt[8]{};
+    ID3D11DepthStencilView *depth = nullptr;
+    ~Bindings() {
+      for (auto *&view : rt)
+        drop(view);
+      drop(depth);
+    }
+  } bindings;
+  NativeTargets result;
+  selected->OMGetRenderTargets(8, bindings.rt, &bindings.depth);
+  for (unsigned i = 0; i < 8; ++i) {
+    auto *view = bindings.rt[i];
+    if (!view)
+      continue;
+    auto &target = result.rt[i];
+    target.view = native_identity(nativeObjects, view, maxNativeObjects);
+    NativeCom<ID3D11Resource> resource;
+    view->GetResource(&resource.value);
+    native_target_resource(target, resource.value);
+    D3D11_RENDER_TARGET_VIEW_DESC desc{};
+    view->GetDesc(&desc);
+    target.format = unsigned(desc.Format);
+    target.dimension = unsigned(desc.ViewDimension);
+    switch (desc.ViewDimension) {
+    case D3D11_RTV_DIMENSION_TEXTURE1D:
+      target.mip = desc.Texture1D.MipSlice;
+      break;
+    case D3D11_RTV_DIMENSION_TEXTURE1DARRAY:
+      target.mip = desc.Texture1DArray.MipSlice;
+      target.firstSlice = desc.Texture1DArray.FirstArraySlice;
+      target.slices = desc.Texture1DArray.ArraySize;
+      break;
+    case D3D11_RTV_DIMENSION_TEXTURE2D:
+      target.mip = desc.Texture2D.MipSlice;
+      break;
+    case D3D11_RTV_DIMENSION_TEXTURE2DARRAY:
+      target.mip = desc.Texture2DArray.MipSlice;
+      target.firstSlice = desc.Texture2DArray.FirstArraySlice;
+      target.slices = desc.Texture2DArray.ArraySize;
+      break;
+    case D3D11_RTV_DIMENSION_TEXTURE2DMSARRAY:
+      target.firstSlice = desc.Texture2DMSArray.FirstArraySlice;
+      target.slices = desc.Texture2DMSArray.ArraySize;
+      break;
+    case D3D11_RTV_DIMENSION_TEXTURE3D:
+      target.mip = desc.Texture3D.MipSlice;
+      target.firstSlice = desc.Texture3D.FirstWSlice;
+      target.slices = desc.Texture3D.WSize;
+      break;
+    case D3D11_RTV_DIMENSION_BUFFER:
+      target.firstSlice = desc.Buffer.FirstElement;
+      target.slices = desc.Buffer.NumElements;
+      break;
+    default:
+      break;
+    }
+  }
+  if (bindings.depth) {
+    auto &target = result.depth;
+    target.view =
+        native_identity(nativeObjects, bindings.depth, maxNativeObjects);
+    NativeCom<ID3D11Resource> resource;
+    bindings.depth->GetResource(&resource.value);
+    native_target_resource(target, resource.value);
+    D3D11_DEPTH_STENCIL_VIEW_DESC desc{};
+    bindings.depth->GetDesc(&desc);
+    target.format = unsigned(desc.Format);
+    target.dimension = unsigned(desc.ViewDimension);
+    switch (desc.ViewDimension) {
+    case D3D11_DSV_DIMENSION_TEXTURE1D:
+      target.mip = desc.Texture1D.MipSlice;
+      break;
+    case D3D11_DSV_DIMENSION_TEXTURE1DARRAY:
+      target.mip = desc.Texture1DArray.MipSlice;
+      target.firstSlice = desc.Texture1DArray.FirstArraySlice;
+      target.slices = desc.Texture1DArray.ArraySize;
+      break;
+    case D3D11_DSV_DIMENSION_TEXTURE2D:
+      target.mip = desc.Texture2D.MipSlice;
+      break;
+    case D3D11_DSV_DIMENSION_TEXTURE2DARRAY:
+      target.mip = desc.Texture2DArray.MipSlice;
+      target.firstSlice = desc.Texture2DArray.FirstArraySlice;
+      target.slices = desc.Texture2DArray.ArraySize;
+      break;
+    case D3D11_DSV_DIMENSION_TEXTURE2DMSARRAY:
+      target.firstSlice = desc.Texture2DMSArray.FirstArraySlice;
+      target.slices = desc.Texture2DMSArray.ArraySize;
+      break;
+    default:
+      break;
+    }
+  }
+  return result;
+}
 std::string quoted(const char* value){
     std::string s="\"";for(const unsigned char* p=reinterpret_cast<const unsigned char*>(value?value:"");*p;++p){
         if(*p=='"'||*p=='\\'){s+='\\';s+=char(*p);}else if(*p<32){char b[7]{};std::snprintf(b,sizeof(b),"\\u%04x",unsigned(*p));s+=b;}else s+=char(*p);
     }return s+'"';
+}
+void write_native_target(std::ostringstream &out, const NativeTarget &target) {
+  out << "{\"view\":" << target.view << ",\"resource\":" << target.resource
+      << ",\"width\":" << target.width << ",\"height\":" << target.height
+      << ",\"format\":" << target.format << ",\"samples\":" << target.samples
+      << ",\"sample_quality\":" << target.sampleQuality
+      << ",\"depth_or_array_size\":" << target.depth
+      << ",\"view_dimension\":" << target.dimension << ",\"mip\":" << target.mip
+      << ",\"first_slice\":" << target.firstSlice
+      << ",\"slices\":" << target.slices << '}';
+}
+void write_native_targets(std::ostringstream &out,
+                          const NativeTargets &targets) {
+  out << "{\"rt\":[";
+  for (unsigned i = 0; i < targets.rt.size(); ++i) {
+    if (i)
+      out << ',';
+    write_native_target(out, targets.rt[i]);
+  }
+  out << "],\"dsv\":";
+  write_native_target(out, targets.depth);
+  out << '}';
+}
+void write_native_capture(std::ostringstream &out) {
+  if (nativePasses.empty() && nativePreparations.empty() &&
+      !nativeScopesDropped && !nativePreparationsDropped &&
+      !nativeDiagnosticsFailed)
+    return;
+  out << ",\"native_passes\":{\"observation\":\"Ordered scalar observations "
+         "only; copying identities does not preserve contents or native "
+         "lifetimes; no consumer boundary or SPS eligibility is established\""
+      << ",\"scope_limit\":" << maxNativeScopes
+      << ",\"packets_per_scope_limit\":" << nativeStereoPacketLimit
+      << ",\"total_packet_limit\":" << maxNativePackets
+      << ",\"pointer_work_per_scope_limit\":" << nativeStereoWorkLimit
+      << ",\"native_bytes_per_scope_bound\":" << nativeStereoReadByteLimit
+      << ",\"scopes_dropped\":" << nativeScopesDropped
+      << ",\"preparations_dropped\":" << nativePreparationsDropped
+      << ",\"scopes_copied\":" << nativePasses.size()
+      << ",\"packets_copied\":" << nativePacketCount
+      << ",\"aborted\":" << (nativeDiagnosticsFailed ? "true" : "false")
+      << ",\"abort_reason\":"
+      << (nativeDiagnosticsFailed ? "\"diagnostic allocation or reader exception\"" : "null")
+      << ",\"scopes\":[";
+  bool first = true;
+  for (const auto &record : nativePasses) {
+    if (!first)
+      out << ',';
+    first = false;
+    out << "{\"slot\":" << record.slot
+        << ",\"begin_sequence\":" << record.beginSequence
+        << ",\"end_sequence\":" << record.endSequence
+        << ",\"ended\":" << (record.ended ? "true" : "false")
+        << ",\"complete\":"
+        << (record.complete && record.ended ? "true" : "false")
+        << ",\"reason\":"
+        << quoted(!record.ended ? "scope end not observed"
+                                : native_stereo_capture_reason(record.reason))
+        << ",\"reusable\":false,\"sps_eligible\":false,\"scene\":"
+        << record.scene << ",\"view\":" << record.view
+        << ",\"caller_rva\":" << record.caller
+        << ",\"group\":31,\"flags\":" << record.flags
+        << ",\"last_main_pass\":" << (record.lastMainPass ? "true" : "false")
+        << ",\"buckets\":" << record.buckets << ",\"items\":" << record.items
+        << ",\"meshes\":" << record.meshes
+        << ",\"pointer_work\":" << record.work
+        << ",\"bytes_read\":" << record.bytesRead << ",\"targets_begin\":";
+    write_native_targets(out, record.before);
+    out << ",\"targets_end\":";
+    write_native_targets(out, record.after);
+    out << ",\"packets\":[";
+    bool firstPacket = true;
+    for (const auto &packet : record.packets) {
+      if (!firstPacket)
+        out << ',';
+      firstPacket = false;
+      out << "{\"mesh\":" << packet.mesh << ",\"geometry\":" << packet.geometry
+          << ",\"mesh_flags\":" << packet.meshFlags << ",\"geometry_flags\":";
+      if (packet.geometry)
+        out << packet.geometryFlags;
+      else
+        out << "null";
+      out << ",\"mesh_callback\":" << (packet.callback ? "true" : "false")
+          << ",\"special_0x400000\":"
+          << ((packet.meshFlags & 0x400000) ? "true" : "false")
+          << ",\"bucket_index\":" << packet.bucket
+          << ",\"item_index\":" << packet.item
+          << ",\"mesh_index\":" << packet.index << '}';
+    }
+    out << "]}";
+  }
+  out << "],\"preparations\":[";
+  first = true;
+  for (const auto &record : nativePreparations) {
+    if (!first)
+      out << ',';
+    first = false;
+    out << "{\"slot\":" << record.slot << ",\"mesh\":" << record.mesh
+        << ",\"begin_sequence\":" << record.beginSequence
+        << ",\"end_sequence\":" << record.endSequence << ",\"complete\":"
+        << (record.complete && record.endSequence ? "true" : "false")
+        << ",\"reason\":"
+        << quoted(!record.endSequence
+                      ? "preparation end not observed"
+                      : native_stereo_capture_reason(record.reason))
+        << ",\"supplied_flags\":" << record.suppliedFlags
+        << ",\"reset\":" << (record.reset ? "true" : "false");
+    if (record.complete) {
+      out << ",\"shader_flags\":" << record.shaderFlags
+          << ",\"effective_flags\":" << record.effectiveFlags
+          << ",\"mesh_flags\":" << record.meshFlags
+          << ",\"mesh_callback\":" << (record.meshCallback ? "true" : "false")
+          << ",\"special_0x400000\":"
+          << ((record.meshFlags & 0x400000) ? "true" : "false")
+          << ",\"shader_callback\":"
+          << (record.shaderCallbackTested
+                  ? (record.shaderCallback ? "true" : "false")
+                  : "null");
+    } else
+      out << ",\"shader_flags\":null,\"effective_flags\":null,\"mesh_flags\":"
+             "null,\"mesh_callback\":null,\"special_0x400000\":null,\"shader_"
+             "callback\":null";
+    out << '}';
+  }
+  out << "]}";
 }
 std::string sha256(const void* data,SIZE_T size){
     if(!data||!size||size>16*1024*1024)return {};
@@ -145,7 +495,7 @@ void remember_shader(ID3D11DeviceChild* child,const void* data,SIZE_T size,const
 }
 Record snapshot(ID3D11DeviceContext* c,unsigned kind,const std::array<UINT,5>& args){
     Suspend pause;Record r;r.slot=unsigned(activeSlot);r.kind=kind;r.group=group;r.bufferEpoch=bufferEpoch;std::copy(args.begin(),args.end(),r.args);
-    r.nativeMesh=nativeMesh;r.nativeBindTicks=nativeBindTicks;r.activeQueries=unsigned(activeQueries.size());r.activeQueryMask=active_query_mask();
+    r.sequence=++auditSequence;r.nativeMesh=nativeMesh;r.nativeBindTicks=nativeBindTicks;r.activeQueries=unsigned(activeQueries.size());r.activeQueryMask=active_query_mask();
     ID3D11VertexShader* vs=nullptr;ID3D11PixelShader* ps=nullptr;ID3D11GeometryShader* gs=nullptr;ID3D11HullShader* hs=nullptr;ID3D11DomainShader* ds=nullptr;
     UINT count=0;c->VSGetShader(&vs,nullptr,&count);r.classes+=count;count=0;c->PSGetShader(&ps,nullptr,&count);r.classes+=count;
     count=0;c->GSGetShader(&gs,nullptr,&count);r.classes+=count;count=0;c->HSGetShader(&hs,nullptr,&count);r.classes+=count;count=0;c->DSGetShader(&ds,nullptr,&count);r.classes+=count;
@@ -314,13 +664,13 @@ void save_impl(const char* reason){
         const auto file=exported.find(&s);if(focusShaders.count(id)&&file!=exported.end()&&!file->second.empty())out<<",\"bytecode_file\":"<<quoted(file->second.c_str());out<<'}';}out<<"],\"passes\":[";
     for(unsigned i=0;i<passes.size();++i){if(i)out<<',';const auto& p=passes[i];out<<"{\"slot\":"<<i<<",\"draw_calls\":"<<p.calls<<",\"dropped\":"<<p.dropped<<",\"wall_ticks\":"<<p.wallTicks<<",\"snapshot_ticks\":"<<p.snapshotTicks<<",\"api_ticks\":"<<p.apiTicks<<",\"maps\":"<<p.maps<<",\"unmaps\":"<<p.unmaps<<",\"updates\":"<<p.updates<<",\"copies\":"<<p.copies<<",\"dispatches\":"<<p.dispatches<<",\"command_lists\":"<<p.commandLists<<",\"native_mesh_preparations\":"<<p.nativeBinds<<",\"native_prepare_ticks\":"<<p.nativeBindTicks<<'}';}
     out<<"],\"draws\":[";first=true;
-    for(const auto& r:records){if(!first)out<<',';first=false;out<<"{\"slot\":"<<r.slot<<",\"kind\":"<<r.kind<<",\"group\":"<<r.group<<",\"args\":[";for(unsigned i=0;i<5;++i){if(i)out<<',';out<<r.args[i];}
+    for(const auto& r:records){if(!first)out<<',';first=false;out<<"{\"slot\":"<<r.slot<<",\"sequence\":"<<r.sequence<<",\"kind\":"<<r.kind<<",\"group\":"<<r.group<<",\"args\":[";for(unsigned i=0;i<5;++i){if(i)out<<',';out<<r.args[i];}
         out<<"],\"shaders\":[";for(unsigned i=0;i<5;++i){if(i)out<<',';out<<r.shaders[i];}
         out<<"],\"layout\":"<<r.layout<<",\"layout_known\":"<<r.layoutKnown<<",\"instance_slots\":"<<r.instanceSlots<<",\"layout_steps\":"<<r.layoutSteps<<",\"vertex_signature\":"<<r.vertexSignature<<",\"index\":["<<r.index.id<<','<<r.index.version<<','<<r.indexFormat<<','<<r.indexOffset<<"],\"topology\":"<<r.topology<<",\"buffer_epoch\":"<<r.bufferEpoch<<",\"ps_srv_signature\":"<<r.pixelResources<<",\"ps_sampler_signature\":"<<r.pixelSamplers<<",\"predicate\":["<<r.predicate<<','<<r.predicateValue<<"],\"cb\":[";
         for(unsigned i=0;i<r.constants.size();++i){if(i)out<<',';out<<'['<<r.constants[i].id<<','<<r.constants[i].version<<']';}
         out<<"],\"target_signature\":"<<r.targetSignature<<",\"rt\":["<<r.rtWidth<<','<<r.rtHeight<<','<<r.rtFormat<<','<<r.rtSamples<<','<<r.rtCount<<"],\"blend\":"<<r.blend<<",\"class_instances\":"<<r.classes<<",\"api_ticks\":"<<r.apiTicks<<",\"snapshot_ticks\":"<<r.snapshotTicks<<",\"native_mesh\":"<<r.nativeMesh<<",\"native_prepare_ticks\":"<<r.nativeBindTicks<<",\"native_to_draw_ticks\":"<<r.nativePrepareTicks<<",\"active_queries\":"<<r.activeQueries<<",\"active_query_mask\":"<<r.activeQueryMask<<",\"proof_ticks\":"<<r.proofTicks<<'}';}
-    const auto& proof=pairProof.result();
-    out<<"],\"stereo_pair_proof\":{\"requested\":"<<unsigned(proofRequested)<<",\"status\":"<<quoted(proof.status.c_str())<<",\"reason\":"<<quoted(proof.reason.c_str())<<",\"route\":"<<quoted(proof.route.c_str());
+    out<<']';write_native_capture(out);const auto& proof=pairProof.result();
+    out<<",\"stereo_pair_proof\":{\"requested\":"<<unsigned(proofRequested)<<",\"status\":"<<quoted(proof.status.c_str())<<",\"reason\":"<<quoted(proof.reason.c_str())<<",\"route\":"<<quoted(proof.route.c_str());
     out<<",\"key\":"<<proof.key<<",\"observed\":"<<proof.observed<<",\"query_skips\":"<<proof.querySkips<<",\"timing_query_overlaps\":"<<proof.timingQueryOverlaps<<",\"opaque_candidates\":"<<proofCandidates<<",\"shader_rejections\":"<<proofShaderRejected;
     out<<",\"eligible_draws\":["<<proofEligible[0]<<','<<proofEligible[1]<<"],\"used_sampler_masks\":["<<proof.samplerSlots[0]<<','<<proof.samplerSlots[1]<<"],\"width\":"<<proof.width<<",\"height\":"<<proof.height<<",\"reference_depth_format\":"<<proof.depthFormat<<",\"native_cpu_preparation_shared\":false";
     out<<",\"depth_snapshots_queued\":["<<(proof.depthCopied[0]?"true":"false")<<','<<(proof.depthCopied[1]?"true":"false")<<"],\"native_depth\":[";
@@ -338,7 +688,7 @@ void save(const char* reason){try{save_impl(reason);}catch(...){capturing=false;
 void cleanup_methods(){
     watchedContext=nullptr;watchedDevice=nullptr;for(unsigned i=0;i<installed;++i)MH_DisableHook(targets[i]);for(unsigned i=0;i<installed;++i)MH_RemoveHook(targets[i]);installed=0;drop(selected);drop(device);deferredStop=false;
     shaders.clear();programs.clear();layouts.clear();records.clear();earlyDevice=false;
-    pairProof.reset();activeQueries.clear();nativeMeshes.clear();
+    pairProof.reset();activeQueries.clear();reset_native_capture();
 }
 void cleanup_factories(){
     factoryReady=false;for(unsigned i=0;i<factoryInstalled;++i)MH_DisableHook(factoryTargets[i]);for(unsigned i=0;i<factoryInstalled;++i)MH_RemoveHook(factoryTargets[i]);factoryInstalled=0;
@@ -390,7 +740,7 @@ void stereo_audit_frame(bool keyDown){
     const bool pressed=keyDown&&!keyWasDown;keyWasDown=keyDown;if(!pressed)return;
     if(capturing){save("hotkey");return;}
     try{records.clear();records.reserve(framesWanted*4*maxDrawsPerPass);}catch(...){enabled=false;emit("stereo_audit disabled: capture allocation failed; rendering remains legacy");return;}
-    passes={};completedFrames=0;sawScene=false;started=ticks();nativeMeshes.clear();proofCandidates=proofShaderRejected=0;proofEligible={};capturing=true;
+    passes={};completedFrames=0;sawScene=false;started=ticks();reset_native_capture();proofCandidates=proofShaderRejected=0;proofEligible={};capturing=true;
     if(proofRequested)try{pairProof.begin();}catch(...){proofRequested=false;emit("stereo_pair_proof unavailable: allocation failed; ordinary audit retained");}
     emit("stereo_audit start; collecting two scene frames, no game draw suppression or stereo conversion");
 }
@@ -408,16 +758,193 @@ void stereo_audit_end(StereoAuditToken& token){
     if(deferredStop&&!openScopes)cleanup();
 }
 int stereo_audit_group(int value){if(!enabled)return -1;const auto previous=group;group=value;nativeMesh=0;nativeStarted=0;nativeBindTicks=0;nativeFirstDraw=false;return previous;}
-StereoNativePrepareToken stereo_audit_native_prepare_begin(const void* mesh){
-    if(!capturing.load(std::memory_order_relaxed)||activeSlot<0||suspended||!mesh||GetCurrentThreadId()!=owner)return {};
-    std::lock_guard<std::recursive_mutex> lock(mutex);if(!enabled||!capturing)return {};
-    try{const auto known=nativeMeshes.find(mesh);if(known!=nativeMeshes.end())nativeMesh=known->second;else{if(nativeMeshes.size()>=32768)return {};nativeMesh=uint32_t(nativeMeshes.size()+1);nativeMeshes.emplace(mesh,nativeMesh);}}
-    catch(...){nativeMesh=0;return {};}
-    nativeStarted=ticks();nativeBindTicks=0;nativeFirstDraw=true;return {true,unsigned(activeSlot),nativeStarted};
+StereoNativePassToken
+stereo_audit_native_pass_begin(const StereoNativePassInfo &info) {
+  if (!enabled || !capturing.load(std::memory_order_relaxed) ||
+      activeSlot < 0 || group != 31 || suspended ||
+      GetCurrentThreadId() != owner || info.callerRva != 0x51df1d)
+    return {};
+  std::lock_guard<std::recursive_mutex> lock(mutex);
+  if (!enabled || !capturing || nativeDiagnosticsFailed)
+    return {};
+  if (nativePasses.size() >= maxNativeScopes) {
+    ++nativeScopesDropped;
+    return {};
+  }
+  try {
+    Suspend pause;
+    NativePassRecord record;
+    record.slot = unsigned(activeSlot);
+    record.beginSequence = ++auditSequence;
+    record.caller = info.callerRva;
+    record.flags = info.flags;
+    record.lastMainPass = info.lastMainPass;
+    record.scene = native_identity(nativeObjects, info.scene, maxNativeObjects);
+    record.view = native_identity(nativeObjects, info.view, maxNativeObjects);
+    record.before = snapshot_native_targets();
+    if (nativePacketCount == maxNativePackets) {
+      record.reason = NativeStereoCaptureReason::packetLimit;
+    } else if (!info.view) {
+      record.reason = NativeStereoCaptureReason::missingPointer;
+    } else {
+      const auto capture =
+          capture_native_stereo_packets(info.scene, info.readable);
+      record.complete = capture.complete;
+      record.reason = capture.reason;
+      record.buckets = capture.buckets;
+      record.items = capture.items;
+      record.meshes = capture.meshes;
+      record.work = capture.work;
+      record.bytesRead = capture.bytesRead;
+      const auto available = maxNativePackets - nativePacketCount;
+      record.packets.reserve(
+          (std::min)(size_t(available), capture.packets.size()));
+      for (const auto &packet : capture.packets) {
+        if (record.packets.size() == available) {
+          record.complete = false;
+          record.reason = NativeStereoCaptureReason::packetLimit;
+          break;
+        }
+        NativePacketRecord copied;
+        copied.mesh = native_identity(
+            nativeMeshes, reinterpret_cast<const void *>(packet.mesh),
+            maxNativePackets);
+        copied.geometry = native_identity(
+            nativeObjects, reinterpret_cast<const void *>(packet.geometry),
+            maxNativeObjects);
+        copied.meshFlags = packet.meshFlags;
+        copied.geometryFlags = packet.geometryFlags;
+        copied.callback = packet.meshCallback;
+        copied.bucket = packet.bucketIndex;
+        copied.item = packet.itemIndex;
+        copied.index = packet.meshIndex;
+        record.packets.push_back(copied);
+      }
+      if (capture.reason == NativeStereoCaptureReason::allocationFailure)
+        nativeDiagnosticsFailed = true;
+    }
+    const auto index = unsigned(nativePasses.size());
+    const auto count = unsigned(record.packets.size());
+    nativePasses.push_back(std::move(record));
+    nativePacketCount += count;
+    return {true, index, nativeGeneration};
+  } catch (...) {
+    nativeDiagnosticsFailed = true;
+    emit("stereo_audit native diagnostics aborted: allocation/reader failure; "
+         "original rendering continues");
+    return {};
+  }
 }
-void stereo_audit_native_prepare_end(const StereoNativePrepareToken& token){
-    if(!token.entered)return;std::lock_guard<std::recursive_mutex> lock(mutex);if(!enabled||!capturing)return;
-    nativeBindTicks=uint64_t(ticks()-token.started);auto& p=passes[token.slot];++p.nativeBinds;p.nativeBindTicks+=nativeBindTicks;
+void stereo_audit_native_pass_end(const StereoNativePassToken &token) {
+  if (!token.entered || !enabled || !capturing || suspended ||
+      GetCurrentThreadId() != owner)
+    return;
+  std::lock_guard<std::recursive_mutex> lock(mutex);
+  if (!enabled || !capturing || token.generation != nativeGeneration ||
+      token.index >= nativePasses.size())
+    return;
+  auto &record = nativePasses[token.index];
+  if (record.ended || activeSlot != int(record.slot))
+    return;
+  record.endSequence = ++auditSequence;
+  record.ended = true;
+  if (nativeDiagnosticsFailed) {
+    record.complete = false;
+    record.reason = NativeStereoCaptureReason::allocationFailure;
+    return;
+  }
+  try {
+    record.after = snapshot_native_targets();
+  } catch (...) {
+    record.complete = false;
+    record.reason = NativeStereoCaptureReason::allocationFailure;
+    nativeDiagnosticsFailed = true;
+  }
+}
+StereoNativePrepareToken
+stereo_audit_native_prepare_begin(const void *mesh,
+                                  const StereoNativePrepareInfo *info) {
+  if (!capturing.load(std::memory_order_relaxed) || activeSlot < 0 ||
+      suspended || !mesh || GetCurrentThreadId() != owner)
+    return {};
+  std::lock_guard<std::recursive_mutex> lock(mutex);
+  if (!enabled || !capturing)
+    return {};
+  try {
+    nativeMesh = native_identity(nativeMeshes, mesh, maxNativePackets);
+  } catch (...) {
+    nativeMesh = 0;
+    nativeDiagnosticsFailed = true;
+    return {};
+  }
+  nativeStarted = ticks();
+  nativeBindTicks = 0;
+  nativeFirstDraw = true;
+  StereoNativePrepareToken token{true, unsigned(activeSlot), nativeStarted,
+                                 nativeGeneration, ~0u};
+  // The legacy one-argument API accepts opaque test/game identities. Only an
+  // explicit metadata request allows the bounded reader to inspect them.
+  if (info && !nativeDiagnosticsFailed) {
+    if (nativePreparations.size() >= maxNativePackets) {
+      ++nativePreparationsDropped;
+      return token;
+    }
+    try {
+      Suspend pause;
+      NativePrepareRecord record;
+      record.slot = unsigned(activeSlot);
+      record.mesh = nativeMesh;
+      record.beginSequence = ++auditSequence;
+      record.suppliedFlags = info->suppliedFlags;
+      record.reset = info->reset;
+      size_t bytes = 0;
+      native_stereo_detail::Reader reader(info->readable, record.reason, bytes);
+      uint64_t callback = 0;
+      bool valid = reader.read(reinterpret_cast<uintptr_t>(info->shader), 0xf8,
+                               record.shaderFlags);
+      if (valid) {
+        record.effectiveFlags = record.suppliedFlags;
+        if (!(record.suppliedFlags & 0x7fffffff))
+          record.effectiveFlags |= record.shaderFlags;
+      }
+      if (valid)
+        valid =
+            reader.read(reinterpret_cast<uintptr_t>(mesh), 0, record.meshFlags);
+      if (valid)
+        valid = reader.read(reinterpret_cast<uintptr_t>(mesh), 0xcc, callback);
+      record.meshCallback = valid && callback != 0;
+      if (valid && (record.effectiveFlags & 0x8000)) {
+        record.shaderCallbackTested = true;
+        valid = reader.read(reinterpret_cast<uintptr_t>(info->shader), 0x108,
+                            callback);
+        record.shaderCallback = valid && callback != 0;
+      }
+      record.complete = valid;
+      token.metadataIndex = unsigned(nativePreparations.size());
+      nativePreparations.push_back(record);
+    } catch (...) {
+      nativeDiagnosticsFailed = true;
+    }
+  }
+  return token;
+}
+void stereo_audit_native_prepare_end(const StereoNativePrepareToken &token) {
+  if (!token.entered || suspended || GetCurrentThreadId() != owner)
+    return;
+  std::lock_guard<std::recursive_mutex> lock(mutex);
+  if (!enabled || !capturing || token.generation != nativeGeneration ||
+      activeSlot != int(token.slot))
+    return;
+  if (token.metadataIndex < nativePreparations.size()) {
+    auto &record = nativePreparations[token.metadataIndex];
+    if (record.endSequence)
+      return;
+    record.endSequence = ++auditSequence;
+  }
+  nativeBindTicks = uint64_t(ticks() - token.started);
+  auto &p = passes[token.slot];
+  ++p.nativeBinds;
+  p.nativeBindTicks += nativeBindTicks;
 }
 void stereo_audit_frame_end(){
     if(!enabled)return;std::lock_guard<std::recursive_mutex> lock(mutex);if(!capturing||GetCurrentThreadId()!=owner)return;
