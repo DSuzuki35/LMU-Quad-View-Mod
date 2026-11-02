@@ -15,6 +15,11 @@ Setup's JSON selector if needed. Choose Auto (tracking when the provider reports
 it available; fixed otherwise) or Fixed (explicit stationary view requests).
 The physical presence of an eye tracker is not enough if the runtime hides it.
 
+QVFR mode allows the registered VectorXR layer to load for its independent OSD.
+Keep VectorXR's own Quadviews feature off for LMU when using mbucchia QVFR.
+Configure the overlay in VectorXR; this launcher leaves those preferences alone.
+Restart LMU after updating the launcher to remove the previous process-local block.
+
 All normal tuning is inside the launcher. Save or Launch writes a managed
 LMU-only block in %LocalAppData%/Quad-Views-Foveated/settings.cfg. Backups are stored
 alongside that file. No changes are made for Native mode. The profile sets

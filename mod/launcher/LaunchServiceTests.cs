@@ -135,6 +135,13 @@ class LaunchServiceTests {
             }
             Reject(delegate{LaunchService.ReadProviderManifest(malformedManifest);},"Explicit malformed provider must still be rejected");
             LaunchService.AddImplicitDisables(vectorPlan,new[]{manifest,vectorManifest,toolkit,customQvfr},"VectorXR");
+            var customVector=Path.Combine(providerRoot,"custom-vector.json");
+            File.WriteAllText(customVector,vectorOriginal.Replace("DISABLE_XR_APILAYER_DIENERTECH_VECTORXR","DISABLE_VENDOR_VECTORXR"));
+            LaunchService.AddImplicitDisables(plan,new[]{manifest,vectorManifest,customVector,customQvfr},"QVFR");
+            Check(!plan.DisableVariables.Contains("DISABLE_XR_APILAYER_DIENERTECH_VECTORXR")&&!plan.DisableVariables.Contains("DISABLE_VENDOR_VECTORXR"),"QVFR must preserve the independently configured VectorXR overlay");
+            var overlayInfo=LaunchService.MakeStartInfo(root,settings,plan,Path.Combine(root,"overlay.log"));
+            Check(overlayInfo.EnvironmentVariables["DISABLE_XR_APILAYER_DIENERTECH_VECTORXR"]==Environment.GetEnvironmentVariable("DISABLE_XR_APILAYER_DIENERTECH_VECTORXR")&&overlayInfo.EnvironmentVariables["DISABLE_VENDOR_VECTORXR"]==Environment.GetEnvironmentVariable("DISABLE_VENDOR_VECTORXR"),"QVFR child introduced a VectorXR disable switch");
+            Check(overlayInfo.EnvironmentVariables["XR_ENABLE_API_LAYERS"]=="XR_APILAYER_LMU_quadview;XR_APILAYER_MBUCCHIA_quad_views_foveated","Overlay coexistence changed the selected quad provider");
             LaunchService.AddImplicitDisables(vrsPlan,new[]{manifest,vectorManifest,toolkit,customQvfr},"VRS");
             Check(vrsPlan.DisableVariables.Contains("DISABLE_VENDOR_QUAD_EMULATION")&&vrsPlan.DisableVariables.Contains("DISABLE_XR_APILAYER_MBUCCHIA_toolkit"),"VRS must isolate quad providers and Toolkit in child");
             foreach(var providerName in new[]{"Native","QVFR","VectorXR"})foreach(var foveation in new[]{"fixed","auto"}) {

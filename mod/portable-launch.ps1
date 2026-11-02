@@ -39,6 +39,7 @@ function Get-LmuImplicitDisables {
     param([string]$Backend,[string[]]$AdditionalManifests=@())
     $variables=[Collections.Generic.List[string]]::new()
     foreach($name in @('DISABLE_XR_APILAYER_MBUCCHIA_quad_views_foveated','DISABLE_QUAD_VIEWS_FOVEATED','DISABLE_XR_APILAYER_DIENERTECH_VECTORXR')){$variables.Add($name)}
+    if($Backend -eq 'QVFR'){[void]$variables.Remove('DISABLE_XR_APILAYER_DIENERTECH_VECTORXR')}
     if($Backend -eq 'VectorXR'){$variables.Add('DISABLE_XR_APILAYER_MBUCCHIA_toolkit')}
     $manifests=[Collections.Generic.List[string]]::new()
     foreach($path in $AdditionalManifests){if($path){$manifests.Add($path)}}
@@ -51,7 +52,7 @@ function Get-LmuImplicitDisables {
         try{$layer=([IO.File]::ReadAllText($path)|ConvertFrom-Json -ErrorAction Stop).api_layer}catch{continue}
         $marker=switch($layer.name){
             'XR_APILAYER_MBUCCHIA_quad_views_foveated' {'quad'}
-            'XR_APILAYER_DIENERTECH_VECTORXR' {'vectorxr'}
+            'XR_APILAYER_DIENERTECH_VECTORXR' {if($Backend -ne 'QVFR'){'vectorxr'}}
             'XR_APILAYER_MBUCCHIA_toolkit' {if($Backend -eq 'VectorXR'){'toolkit'}}
         }
         if(!$marker){continue}

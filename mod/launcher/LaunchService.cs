@@ -117,6 +117,9 @@ namespace LmuQuadViewLauncher {
                 } catch(InvalidDataException) { continue; } catch(IOException) { continue; } catch(UnauthorizedAccessException) { continue; }
                 if(layer==null)continue;
                 var name=Value(layer,"name");
+                // QVFR can coexist with VectorXR's independently configured OSD.
+                // Leave its registered layer and activation preferences alone.
+                if(backend=="QVFR"&&name==VectorXrProviderName)continue;
                 if(name!=ProviderName&&name!=VectorXrProviderName&&!((backend=="VectorXR"||backend=="VRS")&&name=="XR_APILAYER_MBUCCHIA_toolkit"))continue;
                 var disable=Value(layer,"disable_environment");
                 if(!ValidDisable(name,disable))throw new InvalidDataException("Cannot isolate installed layer "+name+": missing recognizable disable switch.");
@@ -129,6 +132,7 @@ namespace LmuQuadViewLauncher {
         internal static LayerPlan MakeLayerPlan(string root,string backend,ProviderManifest provider,string runDirectory) {
             root=System.IO.Path.GetFullPath(root);CheckSearchPath(root);
             var plan=new LayerPlan {Paths=root,Layers=AdapterName,DisableVariable=provider==null?null:provider.DisableVariable};
+            if(backend=="QVFR")plan.DisableVariables.Remove("DISABLE_XR_APILAYER_DIENERTECH_VECTORXR");
             if(provider!=null&&!plan.DisableVariables.Contains(provider.DisableVariable))plan.DisableVariables.Add(provider.DisableVariable);
             if(backend=="Native"||backend=="VRS") return plan;
             var expectedName=NameForBackend(backend);

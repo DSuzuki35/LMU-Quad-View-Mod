@@ -6,6 +6,10 @@ Versions before 1.0 remain experimental and may change compatibility or settings
 
 ## 0.2.0 - 2026-11-02
 
+- Allow the independently configured VectorXR overlay alongside mbucchia QVFR;
+  remove the blanket VectorXR layer block in QVFR GUI and CLI launches.
+  Keep VectorXR's own Quadviews feature off when QVFR is the selected provider.
+
 - Add experimental NVIDIA Stereo VRS as an alternative to Quad Views. It keeps
   two original eye renders, with 1x1 shading inside the focus rectangle and
   selectable 1x1, 2x2 or 4x4 peripheral shading in verified world-sort scopes.

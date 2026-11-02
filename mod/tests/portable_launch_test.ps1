@@ -13,6 +13,7 @@ try {
     $plan=New-LmuLayerPlan -Backend QVFR -ManifestRoot $root -QuadViewsManifest $manifest -RunDirectory (Join-Path $root 'run')
     Assert ($plan.Layers -eq 'XR_APILAYER_LMU_quadview;XR_APILAYER_MBUCCHIA_quad_views_foveated') 'Wrong Windows layer order/delimiter'
     Assert ($plan.DisableVariable -eq 'DISABLE_QUAD_VIEWS_FOVEATED') 'Missing process-local implicit disable'
+    Assert ($plan.DisableVariables -notcontains 'DISABLE_XR_APILAYER_DIENERTECH_VECTORXR') 'QVFR must allow the separately configured VectorXR overlay'
     $copy=Get-Content -LiteralPath $plan.ExplicitManifest -Raw | ConvertFrom-Json
     Assert ([IO.Path]::IsPathRooted($copy.api_layer.library_path)) 'Library must remain at original location'
     Assert (!$copy.api_layer.PSObject.Properties['disable_environment'] -and !$copy.api_layer.PSObject.Properties['enable_environment']) 'Explicit copy retained implicit activation switches'
@@ -23,6 +24,11 @@ try {
     $vectorManifest=Join-Path $provider 'vector.json'
     $vectorBefore=$before.Replace('XR_APILAYER_MBUCCHIA_quad_views_foveated','XR_APILAYER_DIENERTECH_VECTORXR').Replace('DISABLE_QUAD_VIEWS_FOVEATED','DISABLE_XR_APILAYER_DIENERTECH_VECTORXR')
     [IO.File]::WriteAllText($vectorManifest,$vectorBefore)
+    $customVector=Join-Path $provider 'custom-vector.json'
+    [IO.File]::WriteAllText($customVector,$vectorBefore.Replace('DISABLE_XR_APILAYER_DIENERTECH_VECTORXR','DISABLE_VENDOR_VECTORXR'))
+    $overlayDisables=@(Get-LmuImplicitDisables -Backend QVFR -AdditionalManifests @($vectorManifest,$customVector))
+    Assert ($overlayDisables -notcontains 'DISABLE_XR_APILAYER_DIENERTECH_VECTORXR' -and $overlayDisables -notcontains 'DISABLE_VENDOR_VECTORXR') 'Registered VectorXR manifest reintroduced overlay block'
+    Assert ($native.DisableVariables -contains 'DISABLE_XR_APILAYER_DIENERTECH_VECTORXR') 'Native backend isolation changed'
     $vector=New-LmuLayerPlan -Backend VectorXR -ManifestRoot $root -QuadViewsManifest $vectorManifest -RunDirectory (Join-Path $root 'vector-run')
     Assert ($vector.Layers -eq 'XR_APILAYER_LMU_quadview;XR_APILAYER_DIENERTECH_VECTORXR') 'VectorXR order/name'
     Assert ($vector.DisableVariables -contains 'DISABLE_QUAD_VIEWS_FOVEATED') 'Competing QVFR not disabled'
