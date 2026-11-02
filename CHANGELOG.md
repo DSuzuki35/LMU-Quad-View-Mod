@@ -6,6 +6,10 @@ Versions before 1.0 remain experimental and may change compatibility or settings
 
 ## 0.2.0 - 2026-11-02
 
+- **Rendered crop is still highly experimental.** Please test and report image,
+  menu/HUD, head-motion or performance issues through GitHub Issues. Include your
+  headset/runtime/provider, crop settings and reproduction steps. Reset crop to
+  100/100 to disable it. No reliable FPS or CPU improvement has been demonstrated.
 - Keep menus and HUD at their uncropped physical size when vertical crop changes
   LMU's UI mesh. Preserve native curvature, depth and saved scale preferences.
 - Fix rendered crop with QVFR: embed the smaller peripheral render into a black

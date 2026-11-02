@@ -68,6 +68,11 @@ Save and restart LMU to apply. Old settings default to zero.
 Outer smoothing defaults off; it leaves focus sharp but adds unmeasured GPU cost.
 The smaller outer-target optimization can be disabled in Setup for diagnosis.
 Rendered FOV / crop is the mod's own crop: independent width/height, 25..100%.
+Crop is still HIGHLY EXPERIMENTAL. Please test and report results or problems:
+https://github.com/DSuzuki35/LMU-Quad-View-Mod/issues
+Include headset, runtime/provider, crop values and reproduction steps, especially
+for image alignment, menus/HUD or head motion. Reset to 100/100 to disable crop.
+No reliable FPS or CPU gain has been established by the short cockpit tests.
 100/100 is full view. Lower values trim the centered view without zoom and reduce
 outer target dimensions; uncovered edges are black. Focus resolution is unchanged.
 Focus is kept inside the cropped view, and narrowed if it cannot fit. Actual GPU

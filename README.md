@@ -119,6 +119,12 @@ the padding adds one GPU blit per eye. In-game crop support remains deferred.
 
 **Rendered FOV / crop** controls the mod's own crop independently of LMU's saved
 crop settings. Width and height each range from 25–100%; 100/100 is the full view.
+**Crop is still highly experimental. Please test and report your results through
+[GitHub Issues](https://github.com/DSuzuki35/LMU-Quad-View-Mod/issues).** Include your
+headset, runtime/provider, crop values and reproduction steps, especially for
+image alignment, menus/HUD or head-motion problems. Use 100/100 to disable crop.
+The available short cockpit measurements do not establish a reliable FPS or CPU
+gain; do not expect performance to improve in proportion to the crop percentage.
 Lower values trim the centered projected view without zoom, leaving uncovered
 edges black. Outer target dimensions shrink with the retained tangent-space FOV;
 75% width and 50% height use approximately 37.5% of the original outer pixels.
