@@ -156,11 +156,17 @@ public:
     OuterResample(const OuterResample&)=delete;
     OuterResample& operator=(const OuterResample&)=delete;
     bool draw(ID3D11DeviceContext* context,ID3D11Texture2D* source,
-              ID3D11RenderTargetView* destination,unsigned width,unsigned height,float blurRadius=0.f){
+              ID3D11RenderTargetView* destination,unsigned width,unsigned height,float blurRadius=0.f,
+              const D3D11_VIEWPORT* content=nullptr){
         using namespace outer_resample_detail;
         if(!std::isfinite(blurRadius)||blurRadius<0||blurRadius>3||!context||!source||!destination||!width||!height||
            width>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION||height>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION||
            context->GetType()!=D3D11_DEVICE_CONTEXT_IMMEDIATE)return false;
+        if(content&&(!std::isfinite(content->TopLeftX)||!std::isfinite(content->TopLeftY)||
+           !std::isfinite(content->Width)||!std::isfinite(content->Height)||
+           content->TopLeftX<0||content->TopLeftY<0||content->Width<=0||content->Height<=0||
+           content->TopLeftX+content->Width>float(width)||content->TopLeftY+content->Height>float(height)||
+           content->MinDepth!=0||content->MaxDepth!=1))return false;
         D3D11_TEXTURE2D_DESC input{};source->GetDesc(&input);
         D3D11_RENDER_TARGET_VIEW_DESC outputView{};destination->GetDesc(&outputView);
         if(!family(input.Format)||!typed(outputView.Format)||!input.Width||!input.Height||
@@ -198,7 +204,10 @@ public:
         context->OMSetRenderTargets(1,&destination,nullptr);
         context->OMSetBlendState(blend_.get(),nullptr,0xffffffffu);
         context->OMSetDepthStencilState(depth_.get(),0);context->RSSetState(raster_.get());
-        const D3D11_VIEWPORT viewport{0,0,float(width),float(height),0,1};
+        // Embed a cropped projection in a full-FOV peripheral image. QVFR's
+        // compositor assumes its original peripheral FOV regardless of submission.
+        if(content){const float black[4]{0,0,0,1};context->ClearRenderTargetView(destination,black);}
+        const D3D11_VIEWPORT viewport=content?*content:D3D11_VIEWPORT{0,0,float(width),float(height),0,1};
         context->RSSetViewports(1,&viewport);context->Draw(3,0);
         // Do not retain the acquired destination or source in our dormant
         // context-state object. No shader writes touch application resources.

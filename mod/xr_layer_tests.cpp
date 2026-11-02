@@ -235,7 +235,8 @@ XrResult XRAPI_CALL createSwapchain(XrSession,const XrSwapchainCreateInfo* in,Xr
     unsigned expected=scaledRequested&&own?(fixtureDimension==32?8:29):fixtureDimension;
     unsigned expectedW=runtimeSettings&&own?runtimeOuterWidth(unsigned(textures.size()-1)):expected;
     unsigned expectedH=runtimeSettings&&own?runtimeOuterHeight(unsigned(textures.size()-1)):expected;
-    if(own){expectedW=expectedCropWidth(expectedW);expectedH=expectedCropHeight(expectedH);}
+    // QVFR composites peripheral images against its original, uncropped FOV.
+    // Cropped rendering must be padded back into this full-size output.
     assert(overlayTestActive||(in->width==expectedW&&in->height==expectedH&&in->sampleCount==1&&in->format==(srgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_UNORM)));
     D3D11_TEXTURE2D_DESC desc{};desc.Width=in->width;desc.Height=in->height;desc.MipLevels=1;desc.ArraySize=1;
     desc.Format=srgbRuntime?(typedSrgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_TYPELESS):DXGI_FORMAT(in->format);desc.SampleDesc.Count=1;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_RENDER_TARGET|((scaledRequested||runtimeSettings||cropRequested)?D3D11_BIND_SHADER_RESOURCE:0);
@@ -322,6 +323,22 @@ void assertCopiedPixels(ID3D11Texture2D* destination) {
     assert(*static_cast<const uint32_t*>(map.pData)==0x7f0a2040u);
     context->Unmap(staging,0);context->Release();staging->Release();
 }
+void assertRenderPixels(unsigned eye){
+    auto target=lmuqv::xr_outer_target(eye);assert(target.rtv);
+    ID3D11Resource* resource=nullptr;target.rtv->GetResource(&resource);
+    ID3D11Texture2D* texture=nullptr;
+    assert(SUCCEEDED(resource->QueryInterface(__uuidof(ID3D11Texture2D),reinterpret_cast<void**>(&texture))));
+    assertCopiedPixels(texture);texture->Release();resource->Release();
+}
+void assertPaddedPixels(unsigned eye){
+    if(!cropRequested)return;
+    auto* texture=textures[eye+1];D3D11_TEXTURE2D_DESC desc{};texture->GetDesc(&desc);
+    assert(texturePixel(texture,desc.Width/2,desc.Height/2)==0x7f0a2040u);
+    assert(texturePixel(texture,desc.Width/2,0)==0xff000000u);
+    assert(texturePixel(texture,desc.Width/2,desc.Height-1)==0xff000000u);
+    assert(texturePixel(texture,0,desc.Height/2)==0xff000000u);
+    assert(texturePixel(texture,desc.Width-1,desc.Height/2)==0xff000000u);
+}
 XrResult XRAPI_CALL endFrame(XrSession,const XrFrameEndInfo* in) {
     frameCalls+='E';
     if(overlayTestActive){
@@ -343,21 +360,21 @@ XrResult XRAPI_CALL endFrame(XrSession,const XrFrameEndInfo* in) {
         assert(p->views[0].pose.position.x==10&&p->views[2].pose.position.x==(debugRuntime?10:12));
         unsigned outerSize=scaledRequested?(fixtureDimension==32?8:29):fixtureDimension;
         for(unsigned eye=0;eye<2;++eye){
-            assert(p->views[eye].subImage.imageRect.extent.width==int(expectedCropWidth(runtimeSettings?runtimeOuterWidth(eye):outerSize)));
-            assert(p->views[eye].subImage.imageRect.extent.height==int(expectedCropHeight(runtimeSettings?runtimeOuterHeight(eye):outerSize)));
+            assert(p->views[eye].subImage.imageRect.extent.width==int(runtimeSettings?runtimeOuterWidth(eye):outerSize));
+            assert(p->views[eye].subImage.imageRect.extent.height==int(runtimeSettings?runtimeOuterHeight(eye):outerSize));
         }
         assert(p->views[2].subImage.imageRect.extent.width==int(fixtureDimension)&&p->views[3].subImage.imageRect.extent.height==int(fixtureDimension));
         if(cropRequested){
-            for(unsigned view=0;view<4;++view)
+            for(unsigned view=2;view<4;++view)
                 assert(std::memcmp(&p->views[view].fov,&renderedCropViews[view].fov,sizeof(XrFovf))==0);
         }
         if(movingFocusTest){
             for(unsigned eye=0;eye<4;++eye){
-                assert(std::memcmp(&p->views[eye].fov,&renderedMovingViews[eye].fov,sizeof(XrFovf))==0);
+                if(eye>=2||!cropRequested)assert(std::memcmp(&p->views[eye].fov,&renderedMovingViews[eye].fov,sizeof(XrFovf))==0);
                 assert(std::memcmp(&p->views[eye].pose,&renderedMovingViews[eye].pose,sizeof(XrPosef))==0);
             }
-            assertOuterFov(p->views[0].fov,-1.1f,0.9f,0.8f,-0.7f);
-            assertOuterFov(p->views[1].fov,-0.85f,1.0f,0.75f,-0.85f);
+            assertFov(p->views[0].fov,-1.1f,0.9f,0.8f,-0.7f);
+            assertFov(p->views[1].fov,-0.85f,1.0f,0.75f,-0.85f);
             if(in->displayTime==501){
                 assertFocusFov(p->views[2].fov,-0.30f,0.20f,0.25f,-0.15f);
                 assertFocusFov(p->views[3].fov,-0.15f,0.35f,0.20f,-0.30f,1);
@@ -708,8 +725,9 @@ int main(int argc,char** argv) {
     checkOuterTarget(0,true);checkOuterTarget(1,false);
     D3D11_RENDER_TARGET_VIEW_DESC outerView{};lmuqv::xr_outer_rtv(0)->GetDesc(&outerView);
     assert(outerView.Format==(typedSrgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_UNORM));
-    assertCopiedPixels(textures[1]);
+    assertRenderPixels(0);
     finish();assert(submittedLayers==0&&releaseCount==1);
+    assertPaddedPixels(0);
     assert(!lmuqv::xr_outer_rtv(0));
     checkOuterTarget(0,false);
     frameCalls.clear();
@@ -908,7 +926,7 @@ int main(int argc,char** argv) {
             std::vector<uint32_t> pixels(nativeDesc.Width*nativeDesc.Height,0x7f0a2040u);
             D3D11_SUBRESOURCE_DATA initial{pixels.data(),nativeDesc.Width*4,0};ID3D11Texture2D* native=nullptr;
             assert(SUCCEEDED(device->CreateTexture2D(&nativeDesc,&initial,&native)));
-            begin();assert(lmuqv::xr_copy_outer(eye,native));assertCopiedPixels(textures[eye+1]);finish();native->Release();
+            begin();assert(lmuqv::xr_copy_outer(eye,native));assertRenderPixels(eye);finish();assertPaddedPixels(eye);native->Release();
         }
         // Arbitrary color chain sizes may belong to an OSD. Projection ownership
         // is checked at EndFrame; creation alone cannot identify their purpose.
@@ -946,7 +964,7 @@ int main(int argc,char** argv) {
         ID3D11Texture2D* nativeSmall=nullptr;
         assert(SUCCEEDED(device->CreateTexture2D(&nativeDesc,&initial,&nativeSmall)));
         begin();assert(lmuqv::xr_copy_outer(0,nativeSmall)&&lmuqv::xr_copy_outer(1,nativeSmall));
-        assertCopiedPixels(textures[1]);assertCopiedPixels(textures[2]);finish();
+        assertRenderPixels(0);assertRenderPixels(1);finish();assertPaddedPixels(0);assertPaddedPixels(1);
         assert(submittedViews==4);nativeSmall->Release();
     }
     profileOnCloseRequested|=profileCloseOtherThread;

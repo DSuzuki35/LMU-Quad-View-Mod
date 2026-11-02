@@ -16,7 +16,8 @@ inline uint32_t crop_dimension(uint32_t full,double percent){
 }
 // Fit the entire focus image inside the reduced field. Near the crop edge its
 // center stops following gaze; shrink its angular span only when it cannot fit.
-// All views share this geometry for rendering, UI and compositor submission.
+// Rendering and UI share this geometry. Peripheral output is subsequently
+// embedded in its original FOV for compositors which cache the full eye FOV.
 inline bool apply_view_crop(XrView* views,double width,double height){
     if(!views||!std::isfinite(width)||!std::isfinite(height)||width<25||width>100||height<25||height>100)return false;
     if(width==100&&height==100)return true;
@@ -39,5 +40,20 @@ inline bool apply_view_crop(XrView* views,double width,double height){
         if(!scale_focus_fov(focus,100,100))return false;
     }
     std::copy(result.begin(),result.end(),views);return true;
+}
+// Normalized image bounds, top-left origin. Work in tangent space so asymmetric
+// eyes and off-center projections retain exactly the same angular scale.
+inline bool crop_bounds(XrFovf full,XrFovf crop,std::array<float,4>& bounds){
+    if(!scale_focus_fov(full,100,100)||!scale_focus_fov(crop,100,100))return false;
+    const double l=std::tan(double(full.angleLeft)),r=std::tan(double(full.angleRight));
+    const double u=std::tan(double(full.angleUp)),d=std::tan(double(full.angleDown));
+    const std::array<double,4> values{{(std::tan(double(crop.angleLeft))-l)/(r-l),
+        (u-std::tan(double(crop.angleUp)))/(u-d),(std::tan(double(crop.angleRight))-l)/(r-l),
+        (u-std::tan(double(crop.angleDown)))/(u-d)}};
+    for(unsigned i=0;i<4;++i){
+        if(!std::isfinite(values[i])||values[i]<-1e-6||values[i]>1+1e-6)return false;
+        bounds[i]=float((std::clamp)(values[i],0.0,1.0));
+    }
+    return bounds[2]>bounds[0]&&bounds[3]>bounds[1];
 }
 }

@@ -258,6 +258,38 @@ void blur_pixels(Device& dev,State& state){
     }
     }
 }
+void padded_pixels(Device& dev,State& state){
+    // Uneven 47% crop, including the fractional viewport from ceil render sizes.
+    // Colored source quadrants must occupy the matching subrectangle, surrounded
+    // by opaque black; repeating the draw must clear stale output/UI as well.
+    for(auto format:{DXGI_FORMAT_R8G8B8A8_UNORM,DXGI_FORMAT_R8G8B8A8_UNORM_SRGB}){
+        std::vector<unsigned char> bytes(8*8*4);
+        for(unsigned y=0;y<8;++y)for(unsigned x=0;x<8;++x){
+            auto* p=&bytes[(y*8+x)*4];p[0]=x<4?64:192;p[1]=y<4?32:160;p[2]=96;p[3]=173;
+        }
+        Texture src(dev,8,8,format,D3D11_BIND_SHADER_RESOURCE,bytes.data());
+        Texture dst(dev,20,20,format,D3D11_BIND_RENDER_TARGET);
+        lmuqv::OuterResample pass;state.bind();
+        const D3D11_VIEWPORT rect{2.5f,5.3f,15.f,9.4f,0,1};
+        for(unsigned run=0;run<2;++run){
+            const float white[4]{1,1,1,0};dev.c->ClearRenderTargetView(dst.r.p,white);
+            require(pass.draw(dev.c.p,src.t.p,dst.r.p,20,20,0,&rect),"padded draw");state.verify();
+            auto data=read(dev,dst.t.p);
+            for(unsigned y=0;y<20;++y)for(unsigned x=0;x<20;++x){
+                const auto* p=&data[(y*20+x)*4];
+                if(x<2||x>18||y<5||y>14)require(p[0]==0&&p[1]==0&&p[2]==0&&p[3]==255,"padding not opaque black");
+            }
+            for(unsigned y:{7u,12u})for(unsigned x:{5u,14u}){
+                const auto* p=&data[(y*20+x)*4];
+                require(std::abs(int(p[0])-(x<10?64:192))<=1&&std::abs(int(p[1])-(y<10?32:160))<=1&&
+                    std::abs(int(p[2])-96)<=1&&p[3]==173,"padded content scale/orientation/gamma");
+            }
+            auto bad=rect;bad.Width=21;
+            require(!pass.draw(dev.c.p,src.t.p,dst.r.p,20,20,0,&bad),"out of bounds padding accepted");
+            state.verify();require(read(dev,dst.t.p)==data,"invalid padding altered destination");
+        }
+    }
+}
 void invalid(Device& dev,State& state){
     lmuqv::OuterResample pass;Texture src(dev,4,4,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_SHADER_RESOURCE);
     Texture dst(dev,2,2,DXGI_FORMAT_R8G8B8A8_UNORM,D3D11_BIND_RENDER_TARGET);
@@ -361,6 +393,7 @@ int main(){try{
     for(const char* invalid:{"NaN","inf","-1","3.1","1junk","0x1","1,5"})require(!lmuqv::parse_outer_blur(invalid,radius)&&radius==0,"invalid blur parse");
     channels_and_orientation(device,state);
     blur_pixels(device,state);
+    padded_pixels(device,state);
     invalid(device,state);
     binding_hazards(device);
     std::cout<<"OuterResample WARP pixel/gamma/state/validation/cache tests passed\n";return 0;

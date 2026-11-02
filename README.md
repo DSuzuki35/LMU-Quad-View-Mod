@@ -112,7 +112,10 @@ Stored percentages and native rendering are unchanged.
 Outer smoothing defaults to off and leaves the focus image sharp. Start with
 0.5–1 pixel if desired. It adds GPU work; headset cost has not been measured.
 It does not replace temporal anti-aliasing. The smaller outer-target optimization
-can be disabled in Setup for diagnosis. In-game crop support remains deferred.
+can be disabled in Setup for diagnosis. Launcher crop removes edge coverage
+without changing the angular image scale. Cropped peripheral renders are padded
+with black before composition; full-size output swapchains remain allocated and
+the padding adds one GPU blit per eye. In-game crop support remains deferred.
 
 **Rendered FOV / crop** controls the mod's own crop independently of LMU's saved
 crop settings. Width and height each range from 25–100%; 100/100 is the full view.

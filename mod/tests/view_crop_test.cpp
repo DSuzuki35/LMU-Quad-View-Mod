@@ -33,6 +33,25 @@ int main(){
         assert(!std::memcmp(&views[eye].pose,&original[eye].pose,sizeof(XrPosef)));
     }
     std::memcpy(views,original,sizeof(views));views[2].fov=views[0].fov;views[3].fov=views[1].fov;
+    // Actual reported height 47%, with asymmetric eyes: padding must preserve
+    // each ray's full-image coordinate, rather than enlarge the cropped image.
+    views[1].fov={-.85f,1.f,.75f,-.85f};
+    const XrFovf full[2]{views[0].fov,views[1].fov};
+    assert(apply_view_crop(views,75,47));
+    for(unsigned eye=0;eye<2;++eye){
+        std::array<float,4> bounds{};assert(crop_bounds(full[eye],views[eye].fov,bounds));
+        assert(std::abs(bounds[0]-.125f)<1e-6&&std::abs(bounds[1]-.265f)<1e-6);
+        assert(std::abs(bounds[2]-.875f)<1e-6&&std::abs(bounds[3]-.735f)<1e-6);
+        const auto& f=full[eye];const auto& c=views[eye].fov;
+        for(double ray:{-.1,0.,.1}){
+            double cropped=(ray-std::tan(c.angleLeft))/(std::tan(c.angleRight)-std::tan(c.angleLeft));
+            double padded=bounds[0]+cropped*(bounds[2]-bounds[0]);
+            double expected=(ray-std::tan(f.angleLeft))/(std::tan(f.angleRight)-std::tan(f.angleLeft));
+            assert(std::abs(padded-expected)<1e-6);
+        }
+        std::array<float,4> invalid{};assert(!crop_bounds(c,f,invalid));
+    }
+    std::memcpy(views,original,sizeof(views));views[2].fov=views[0].fov;views[3].fov=views[1].fov;
     assert(apply_view_crop(views,25,25));
     assert(!std::memcmp(&views[2].fov,&views[0].fov,sizeof(XrFovf)));
     std::memcpy(views,original,sizeof(views));views[3].fov.angleLeft=std::numeric_limits<float>::quiet_NaN();

@@ -75,6 +75,7 @@ struct Dispatch {
     }
 } next;
 lmuqv::OuterResample outerResample; // Owns COM state; deliberately outside the copy-resettable XR State.
+lmuqv::OuterResample cropResample; // Separate cache: does not consume native source SRV slots.
 struct Outer {
     XrSwapchain chain{};
     std::vector<XrSwapchainImageD3D11KHR> images;
@@ -82,6 +83,9 @@ struct Outer {
     bool acquired=false, waited=false;
     uint32_t index=0;
     uint32_t width=0,height=0;
+    uint32_t outputWidth=0,outputHeight=0;
+    ID3D11Texture2D* croppedTexture{};
+    ID3D11RenderTargetView* croppedRtv{};
 };
 struct AppImageOwnership { uint32_t index=0;bool waited=false; };
 struct AppChain {
@@ -116,6 +120,7 @@ struct State {
     XrTime predictedTime{}, locateTime{};
     XrSpace locateSpace{};
     XrView views[4]{};
+    XrFovf fullOuterFov[2]{};
     ID3D11Device* device{};
     ID3D11DeviceContext* context{};
     Outer outer[2];
@@ -130,6 +135,7 @@ struct State {
     XrSystemId foveationSystem=XR_NULL_SYSTEM_ID;
     uint32_t runtimeFocusWidth=0,runtimeFocusHeight=0;
     uint32_t runtimeOuterWidth[2]{},runtimeOuterHeight[2]{};
+    uint32_t runtimeOutputWidth[2]{},runtimeOutputHeight[2]{};
     lmuqv::XrOutputSizes outputSizes;
     lmuqv::FocusBoxSize focusBox;
     lmuqv::FocusOffset focusOffsetX,focusOffsetY;
@@ -268,7 +274,20 @@ bool releaseOuters() {
             if(r!=XR_SUCCESS){logf("outer cleanup wait eye=%u result=%d (acquisition retained)",eye,r);okay=false;continue;}
             outer.waited=true;
         }
-        if(outer.index<outer.rtvs.size())drawFocusDebug(eye,false,outer.rtvs[outer.index]);
+        if(outer.index<outer.rtvs.size())drawFocusDebug(eye,false,outer.croppedRtv?outer.croppedRtv:outer.rtvs[outer.index]);
+        if(outer.croppedTexture&&s.captures[eye]){
+            std::array<float,4> bounds{};
+            bool padded=s.frame&&s.located&&outer.index<outer.rtvs.size()&&
+                lmuqv::crop_bounds(s.fullOuterFov[eye],s.views[eye].fov,bounds);
+            if(padded){
+                const float w=float(outer.outputWidth),h=float(outer.outputHeight);
+                const D3D11_VIEWPORT viewport{bounds[0]*w,bounds[1]*h,
+                    bounds[2]*w-bounds[0]*w,bounds[3]*h-bounds[1]*h,0,1};
+                padded=cropResample.draw(s.context,outer.croppedTexture,outer.rtvs[outer.index],
+                    outer.outputWidth,outer.outputHeight,0,&viewport);
+            }
+            if(!padded){logf("outer crop embedding failed eye=%u; suppressing projection",eye);s.captures[eye]=false;okay=false;}
+        }
         if(outer.index<outer.images.size())diagnosePixelSlot(eye,outer.images[outer.index].texture);
         auto release=structure<XrSwapchainImageReleaseInfo>(XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO);
         XrResult r=next.ReleaseSwapchainImage(outer.chain,&release);
@@ -281,6 +300,8 @@ void destroyOuter() {
     releaseOuters();
     for(auto& eye:s.outer) {
         for(auto* rtv:eye.rtvs) if(rtv)rtv->Release();
+        if(eye.croppedRtv)eye.croppedRtv->Release();
+        if(eye.croppedTexture)eye.croppedTexture->Release();
         if(eye.chain) { XrResult r=next.DestroySwapchain(eye.chain);logf("destroy outer swapchain result=%d acquired=%d",r,eye.acquired); }
         eye=Outer{};
     }
@@ -289,9 +310,9 @@ void destroyOuter() {
 void clearSession() {
     vrsGaze.resetSession();
     benchmarkReset();
-    outerResample.reset();
     for(auto& entry:s.appChains)clearFocusRtvs(entry.second);
     destroyOuter();
+    outerResample.reset();cropResample.reset();
     if(s.context) s.context->Release();
     if(s.device) s.device->Release();
     s.context=nullptr;s.device=nullptr;s.session=XR_NULL_HANDLE;s.running=false;
@@ -343,11 +364,15 @@ XrResult selectRuntimeSizes(const std::array<XrViewConfigurationView,4>& runtime
     if(!valid){logf("runtime sizing incompatible: outer recommendations must be nonzero and <= common focus %ux%u on EACH axis and within runtime/device limits; refusing session/hooks",width,height);return XR_ERROR_LIMIT_REACHED;}
     if(s.session&&s.runtimeSizesReady){
         bool same=width==s.runtimeFocusWidth&&height==s.runtimeFocusHeight;
-        for(unsigned eye=0;eye<2;++eye)same=same&&lmuqv::crop_dimension(runtime[eye].recommendedImageRectWidth,s.cropWidth.percent)==s.runtimeOuterWidth[eye]&&lmuqv::crop_dimension(runtime[eye].recommendedImageRectHeight,s.cropHeight.percent)==s.runtimeOuterHeight[eye];
+        for(unsigned eye=0;eye<2;++eye)same=same&&runtime[eye].recommendedImageRectWidth==s.runtimeOutputWidth[eye]&&runtime[eye].recommendedImageRectHeight==s.runtimeOutputHeight[eye];
         if(!same){logf("Runtime recommendations changed during session; restart required");return XR_ERROR_RUNTIME_FAILURE;}
     }
     s.runtimeFocusWidth=width;s.runtimeFocusHeight=height;
-    for(unsigned eye=0;eye<2;++eye){s.runtimeOuterWidth[eye]=lmuqv::crop_dimension(runtime[eye].recommendedImageRectWidth,s.cropWidth.percent);s.runtimeOuterHeight[eye]=lmuqv::crop_dimension(runtime[eye].recommendedImageRectHeight,s.cropHeight.percent);}
+    for(unsigned eye=0;eye<2;++eye){
+        s.runtimeOutputWidth[eye]=runtime[eye].recommendedImageRectWidth;s.runtimeOutputHeight[eye]=runtime[eye].recommendedImageRectHeight;
+        s.runtimeOuterWidth[eye]=lmuqv::crop_dimension(s.runtimeOutputWidth[eye],s.cropWidth.percent);
+        s.runtimeOuterHeight[eye]=lmuqv::crop_dimension(s.runtimeOutputHeight[eye],s.cropHeight.percent);
+    }
     s.runtimeSizesReady=true;
     logf("Runtime selected outer0=%ux%u outer1=%ux%u common focus=%ux%u; crop=%g/%g%%, focus resolution unchanged",s.runtimeOuterWidth[0],s.runtimeOuterHeight[0],s.runtimeOuterWidth[1],s.runtimeOuterHeight[1],width,height,s.cropWidth.percent,s.cropHeight.percent);
     return XR_SUCCESS;
@@ -369,15 +394,16 @@ bool createOuter(const XrSwapchainCreateInfo& info) {
         return false;
     }
     XrSwapchainCreateInfo own=info;own.next=nullptr;
-    own.width=lmuqv::crop_dimension(lmuqv::outer_dimension(info.width,s.outputSizes),s.cropWidth.percent);own.height=lmuqv::crop_dimension(lmuqv::outer_dimension(info.height,s.outputSizes),s.cropHeight.percent);
+    own.width=lmuqv::outer_dimension(info.width,s.outputSizes);own.height=lmuqv::outer_dimension(info.height,s.outputSizes);
     if(!own.width||!own.height)return false;
     own.usageFlags=XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
     for(unsigned i=0;i<2;++i) {
         auto& eye=s.outer[i];
-        if(s.runtimeSettings){own.width=s.runtimeOuterWidth[i];own.height=s.runtimeOuterHeight[i];}
+        if(s.runtimeSettings){own.width=s.runtimeOutputWidth[i];own.height=s.runtimeOutputHeight[i];}
         XrResult r=createInputSwapchain(s.session,own,&eye.chain,i?"outer1":"outer0");
         if(XR_FAILED(r)) { logf("create outer %u result=%d",i,r);destroyOuter();return false; }
-        eye.width=own.width;eye.height=own.height;
+        eye.outputWidth=own.width;eye.outputHeight=own.height;
+        eye.width=lmuqv::crop_dimension(own.width,s.cropWidth.percent);eye.height=lmuqv::crop_dimension(own.height,s.cropHeight.percent);
         uint32_t count=0;r=next.EnumerateSwapchainImages(eye.chain,0,&count,nullptr);
         if(XR_FAILED(r)||!count||count>64) {logf("outer image count %u result=%d count=%u",i,r,count);destroyOuter();return false;}
         eye.images.resize(count);
@@ -406,6 +432,16 @@ bool createOuter(const XrSwapchainCreateInfo& info) {
             D3D11_TEXTURE2D_DESC resource{};eye.images[image].texture->GetDesc(&resource);
             logf("outer RTV eye=%u image=%u resourceFormat=%u swapchainFormat=%u uiFormat=%u",i,image,resource.Format,swapchainFormat,desc.Format);
             desc.Format=uiFormat;
+        }
+        if(s.cropWidth.percent!=100||s.cropHeight.percent!=100){
+            D3D11_TEXTURE2D_DESC cropped{};eye.images[0].texture->GetDesc(&cropped);
+            cropped.Width=eye.width;cropped.Height=eye.height;cropped.Usage=D3D11_USAGE_DEFAULT;
+            cropped.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;cropped.CPUAccessFlags=0;cropped.MiscFlags=0;
+            HRESULT hr=s.device->CreateTexture2D(&cropped,nullptr,&eye.croppedTexture);
+            eye.rtvs[0]->GetDesc(&desc);
+            if(SUCCEEDED(hr))hr=s.device->CreateRenderTargetView(eye.croppedTexture,&desc,&eye.croppedRtv);
+            if(FAILED(hr)){logf("outer crop target failed eye=%u result=%08lx",i,static_cast<unsigned long>(hr));destroyOuter();return false;}
+            logf("outer crop target eye=%u render=%ux%u fullFovOutput=%ux%u",i,eye.width,eye.height,eye.outputWidth,eye.outputHeight);
         }
     }
     s.colorInfo=info;s.colorInfo.next=nullptr; // App/source validation uses focus dimensions, not outer output dimensions.
@@ -614,7 +650,8 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
     uint32_t runtimeCount=0;XrResult r=next.LocateViews(session,&modified,state,4,&runtimeCount,runtime);
     if(XR_FAILED(r))return r;
     if(runtimeCount!=4)return XR_ERROR_RUNTIME_FAILURE;
-    // One shared FOV feeds engine rendering, debug borders and final composition.
+    for(unsigned eye=0;eye<2;++eye)s.fullOuterFov[eye]=runtime[eye].fov;
+    // Cropped FOV feeds rendering/UI; output is embedded back into fullOuterFov.
     // Translate each freshly located gaze FOV once; keep poses and never clamp to the outer FOV.
     if(!s.rawFovLogged){
         for(unsigned eye=0;eye<4;++eye)logf("Raw runtime locate FOV view=%u left=%.9g right=%.9g up=%.9g down=%.9g runtimeSettings=%d",eye,runtime[eye].fov.angleLeft,runtime[eye].fov.angleRight,runtime[eye].fov.angleUp,runtime[eye].fov.angleDown,s.runtimeSettings);
@@ -850,9 +887,10 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
         auto& v=convertedViews;
         for(unsigned eye=0;eye<2;++eye){
             v[eye]=structure<XrCompositionLayerProjectionView>(XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW);
-            v[eye].pose=projection->views[eye].pose;v[eye].fov=s.views[eye].fov;
+            const auto& outer=s.outer[eye];
+            v[eye].pose=projection->views[eye].pose;v[eye].fov=outer.croppedTexture?s.fullOuterFov[eye]:s.views[eye].fov;
             v[eye].subImage.swapchain=s.outer[eye].chain;
-            v[eye].subImage.imageRect.extent={static_cast<int32_t>(s.outer[eye].width),static_cast<int32_t>(s.outer[eye].height)};
+            v[eye].subImage.imageRect.extent={static_cast<int32_t>(outer.croppedTexture?outer.outputWidth:outer.width),static_cast<int32_t>(outer.croppedTexture?outer.outputHeight:outer.height)};
             v[eye+2]=projection->views[eye];v[eye+2].pose=focusPoses[eye];v[eye+2].fov=s.views[eye+2].fov;
         }
         convertedProjection = *projection;
@@ -1030,7 +1068,7 @@ OuterTarget xr_outer_target(unsigned eye) {
     const auto& outer = s.outer[eye];
     if (!outer.acquired || !outer.waited || outer.index >= outer.rtvs.size()) return {};
     if (!outer.rtvs[outer.index]) return {};
-    return {outer.rtvs[outer.index], outer.width, outer.height};
+    return {outer.croppedRtv?outer.croppedRtv:outer.rtvs[outer.index], outer.width, outer.height};
 }
 ID3D11RenderTargetView* xr_outer_rtv(unsigned eye) {
     return xr_outer_target(eye).rtv;
@@ -1143,11 +1181,13 @@ bool xr_copy_outer(unsigned eye,ID3D11Texture2D* source) {
     waitProfile.end();
     bool copied=false;
     if(outer.index<outer.images.size()&&outer.images[outer.index].texture){
-        ID3D11Texture2D* destination=outer.images[outer.index].texture;D3D11_TEXTURE2D_DESC dst{};destination->GetDesc(&dst);
+        ID3D11Texture2D* destination=outer.croppedTexture?outer.croppedTexture:outer.images[outer.index].texture;
+        ID3D11RenderTargetView* target=outer.croppedRtv?outer.croppedRtv:outer.rtvs[outer.index];
+        D3D11_TEXTURE2D_DESC dst{};destination->GetDesc(&dst);
         if(dst.Width==outer.width&&dst.Height==outer.height&&dst.ArraySize==src.ArraySize&&dst.MipLevels==src.MipLevels&&dst.SampleDesc.Count==1&&formatFamily(dst.Format)==formatFamily(src.Format)){
             bool preserveCopy=!shaderTransfer;
             if(!resized&&s.outerBlur>0&&outer_resample_detail::typed(src.Format)&&outer.index<outer.rtvs.size()&&outer.rtvs[outer.index]){
-                D3D11_RENDER_TARGET_VIEW_DESC view{};outer.rtvs[outer.index]->GetDesc(&view);
+                D3D11_RENDER_TARGET_VIEW_DESC view{};target->GetDesc(&view);
                 if(outer_resample_detail::srgb(src.Format)!=outer_resample_detail::srgb(view.Format)){
                     preserveCopy=true;
                     if(s.blurEncodingWarnings++<4||s.frames%120==0)
@@ -1156,7 +1196,7 @@ bool xr_copy_outer(unsigned eye,ID3D11Texture2D* source) {
             }
             if(s.frames<10||s.frames%120==0)logf("outer transfer eye=%u source=%p sourceFmt=%u size=%ux%u destination=%p resourceFmt=%u size=%ux%u chain=%p image=%u operation=%s",eye,static_cast<void*>(source),unsigned(src.Format),src.Width,src.Height,static_cast<void*>(destination),unsigned(dst.Format),dst.Width,dst.Height,static_cast<void*>(outer.chain),outer.index,preserveCopy?"CopyResource":s.outerBlur>0?"shader-blur":"shader-resample");
             if(preserveCopy){s.context->CopyResource(destination,source);copied=SUCCEEDED(s.device->GetDeviceRemovedReason());}
-            else if(outer.index<outer.rtvs.size())copied=outerResample.draw(s.context,source,outer.rtvs[outer.index],outer.width,outer.height,s.outerBlur);
+            else if(outer.index<outer.rtvs.size())copied=outerResample.draw(s.context,source,target,outer.width,outer.height,s.outerBlur);
         }
     }
     s.captures[eye]=copied;

@@ -918,6 +918,21 @@ void uiHook(void* object,ID3D11DeviceContext* context,const UiArgs* originalArgs
             *address<ID3D11Texture2D*>(0x1b1c6b8+eye*8),targetSlots[eye],*address<ID3D11ShaderResourceView*>(0x1b1c6d8+eye*8),context);
         char line[200]{};std::snprintf(line,sizeof(line),"native final extent=%ux%u copyOffsets left=%u,%u right=%u,%u",
             *address<unsigned>(0x1b1c654),*address<unsigned>(0x1b1c658),*address<unsigned>(0x1b1c644),*address<unsigned>(0x1b1c64c),*address<unsigned>(0x1b1c648),*address<unsigned>(0x1b1c650));log_line(line);
+        if(nativeCropWidth.percent!=100||nativeCropHeight.percent!=100){
+            const auto* camera=address<lmu::reconstructed::VrCameraState>(0x1b1be30);
+            if(readable(camera,sizeof(*camera)))for(unsigned eye=0;eye<2;++eye){
+                Matrix cropped{};
+                if(!projection(views[eye],.1f,1000,cropped))continue;
+                const auto& native=camera->engine_projection[eye].matrix;
+                float uiDifference=0;
+                for(unsigned j=0;j<16;++j)uiDifference=(std::max)(uiDifference,
+                    std::abs(originalArgs->transform[eye].matrix[j]-camera->ui_composite[eye].matrix[j]));
+                char detail[512]{};std::snprintf(detail,sizeof(detail),
+                    "crop UI projection eye=%u mode=%u native=[%.7g %.7g %.7g %.7g %.7g] render=[%.7g %.7g %.7g %.7g %.7g] argsCameraMaxDiff=%.7g",
+                    eye,originalArgs->mode,native[0],native[5],native[8],native[9],native[11],
+                    cropped[0],cropped[5],cropped[8],cropped[9],cropped[11],uiDifference);log_line(detail);
+            }
+        }
     }
     if(menu) {
         // The menu's artwork is sampled from obj+c8, separate from these final eye targets.

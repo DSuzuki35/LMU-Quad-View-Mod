@@ -6,6 +6,10 @@ Versions before 1.0 remain experimental and may change compatibility or settings
 
 ## 0.2.0 - 2026-11-02
 
+- Fix rendered crop with QVFR: embed the smaller peripheral render into a black
+  full-FOV output so QVFR does not stretch it against the focus views. Preserve
+  submitted pose compensation and focus geometry. This adds one peripheral blit
+  per eye when cropping; full-size output swapchains remain allocated.
 - Allow the independently configured VectorXR overlay alongside mbucchia QVFR;
   remove the blanket VectorXR layer block in QVFR GUI and CLI launches.
   Keep VectorXR's own Quadviews feature off when QVFR is the selected provider.
