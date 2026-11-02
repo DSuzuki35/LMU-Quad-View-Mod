@@ -115,6 +115,36 @@ void depth(Device& device){
     clone.reset();clone.reset();empty(clone);
     std::cout<<"typeless depth DSV/SRV passed\n";
 }
+void ssr_mips(Device& device){
+    D3D11_TEXTURE2D_DESC desc{};desc.Width=64;desc.Height=48;desc.MipLevels=7;desc.ArraySize=1;
+    desc.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;desc.SampleDesc.Count=1;
+    desc.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE;
+    desc.MiscFlags=D3D11_RESOURCE_MISC_GENERATE_MIPS;
+    Com<ID3D11Texture2D> original;check(device.d->CreateTexture2D(&desc,nullptr,original.put()),"SSR texture");
+    Com<ID3D11RenderTargetView> rtv;Com<ID3D11ShaderResourceView> srv;
+    check(device.d->CreateRenderTargetView(original.p,nullptr,rtv.put()),"SSR RTV");
+    check(device.d->CreateShaderResourceView(original.p,nullptr,srv.put()),"SSR SRV");
+    lmuqv::NativeOuterTexture clone;
+    require(!clone.create(original.p,nullptr,srv.p,rtv.p,nullptr,32,24),"default path accepted mip chain");
+    require(clone.create(original.p,nullptr,srv.p,rtv.p,nullptr,32,24,true),"SSR mip clone");
+    D3D11_TEXTURE2D_DESC actual{};clone.texture()->GetDesc(&actual);
+    require(actual.Width==32&&actual.Height==24&&actual.MipLevels==6&&actual.MiscFlags==desc.MiscFlags,"SSR mip descriptor");
+    D3D11_SHADER_RESOURCE_VIEW_DESC sd{};clone.srv()->GetDesc(&sd);
+    require(sd.Texture2D.MostDetailedMip==0&&sd.Texture2D.MipLevels==6,"SSR SRV chain");
+    const float green[4]{0,1,0,1};device.c->ClearRenderTargetView(clone.rtv(),green);device.c->GenerateMips(clone.srv());
+    actual.Usage=D3D11_USAGE_STAGING;actual.CPUAccessFlags=D3D11_CPU_ACCESS_READ;actual.BindFlags=actual.MiscFlags=0;
+    Com<ID3D11Texture2D> staging;check(device.d->CreateTexture2D(&actual,nullptr,staging.put()),"SSR staging");
+    device.c->CopyResource(staging.p,clone.texture());
+    D3D11_MAPPED_SUBRESOURCE map{};check(device.c->Map(staging.p,5,D3D11_MAP_READ,0,&map),"SSR final mip map");
+    const auto* p=static_cast<const unsigned short*>(map.pData);
+    const bool greenMip=p[0]==0&&p[1]==0x3c00&&p[2]==0&&p[3]==0x3c00;
+    device.c->Unmap(staging.p,5);require(greenMip,"SSR final mip not generated");
+    auto* saved=clone.texture();
+    sd.Texture2D.MipLevels=3;
+    Com<ID3D11ShaderResourceView> partial;check(device.d->CreateShaderResourceView(original.p,&sd,partial.put()),"SSR partial SRV");
+    require(!clone.create(original.p,nullptr,partial.p,rtv.p,nullptr,32,24,true)&&clone.texture()==saved,"partial mip chain accepted");
+    std::cout<<"SSR mip resizing/generation/readback/rejection passed\n";
+}
 void msaa(Device& device){
     UINT quality=0;check(device.d->CheckMultisampleQualityLevels(DXGI_FORMAT_R8G8B8A8_UNORM,2,&quality),"MSAA query");
     if(!quality){std::cout<<"SKIP WARP MSAA2 unsupported\n";return;}
@@ -133,5 +163,5 @@ void msaa(Device& device){
     std::cout<<"WARP MSAA2 RTV/SRV passed\n";
 }
 }
-int main(){try{Device device;color(device,DXGI_FORMAT_R8G8B8A8_UNORM);color(device,DXGI_FORMAT_R8G8B8A8_TYPELESS);depth(device);msaa(device);std::cout<<"NativeOuterTexture tests passed\n";return 0;}
+int main(){try{Device device;color(device,DXGI_FORMAT_R8G8B8A8_UNORM);color(device,DXGI_FORMAT_R8G8B8A8_TYPELESS);depth(device);msaa(device);ssr_mips(device);std::cout<<"NativeOuterTexture tests passed\n";return 0;}
 catch(const std::exception& e){std::cerr<<"NativeOuterTexture: "<<e.what()<<"\n";return 1;}}

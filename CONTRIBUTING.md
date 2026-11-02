@@ -75,6 +75,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Focus-offset CLI tests failed' }
 
 ## Find the relevant code
 
+For the opt-in performance branch controls, also run
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\mod\tests\performance_launch_test.ps1`.
+This checks launch configuration without starting the game. See
+[PERFORMANCE-EXPERIMENT.md](PERFORMANCE-EXPERIMENT.md) for scope, usage and pending
+headset validation.
+
 | Area | Start here |
 | --- | --- |
 | Launcher UI and launch environment | `mod/launcher/Launcher.cs`, `LaunchService.cs` |

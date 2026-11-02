@@ -41,13 +41,23 @@ public:
     ~NativeOuterTexture(){reset();}
     bool create(ID3D11Texture2D* original,ID3D11DepthStencilView* dsv,
                 ID3D11ShaderResourceView* srv,ID3D11RenderTargetView* rtv,
-                ID3D11UnorderedAccessView* uav,UINT width,UINT height){
+                ID3D11UnorderedAccessView* uav,UINT width,UINT height,bool allowMipChain=false){
         using namespace native_outer_detail;
         if(!original||!width||!height||width>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION||
            height>D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION)return false;
         D3D11_TEXTURE2D_DESC desc{};original->GetDesc(&desc);
-        if(width>desc.Width||height>desc.Height||desc.ArraySize!=1||desc.MipLevels!=1||
+        if(width>desc.Width||height>desc.Height||desc.ArraySize!=1||(!allowMipChain&&desc.MipLevels!=1)||
            !desc.SampleDesc.Count||desc.Usage==D3D11_USAGE_IMMUTABLE)return false;
+        // SSR exposes a whole mip chain through one SRV and a base-level RTV.
+        // Shrinking storage removes only levels that cannot physically exist.
+        // Per-mip RTV/DSV arrays and partial SRVs are deliberately unsupported.
+        UINT mipLevels=desc.MipLevels;
+        if(allowMipChain){
+            if(dsv||uav||!srv||!rtv||desc.SampleDesc.Count!=1||
+               (desc.MiscFlags&~D3D11_RESOURCE_MISC_GENERATE_MIPS))return false;
+            UINT limit=1;for(UINT extent=width>height?width:height;extent>1;extent>>=1)++limit;
+            if(mipLevels>limit)mipLevels=limit;
+        }
         Com<ID3D11Device> device;original->GetDevice(&device.p);
         if(!device.p||FAILED(device.p->GetDeviceRemovedReason())||
            !support(device.p,desc.Format,D3D11_FORMAT_SUPPORT_TEXTURE2D)||
@@ -68,9 +78,10 @@ public:
             srv->GetDesc(&sd);
             if((msaa?sd.ViewDimension!=D3D11_SRV_DIMENSION_TEXTURE2DMS:
                 sd.ViewDimension!=D3D11_SRV_DIMENSION_TEXTURE2D||sd.Texture2D.MostDetailedMip!=0||
-                (sd.Texture2D.MipLevels!=1&&sd.Texture2D.MipLevels!=UINT(-1)))||
+                (sd.Texture2D.MipLevels!=desc.MipLevels&&sd.Texture2D.MipLevels!=UINT(-1)))||
                !support(device.p,sd.Format,D3D11_FORMAT_SUPPORT_SHADER_LOAD))return false;
         }
+        if(allowMipChain)sd.Texture2D.MipLevels=mipLevels;
         if(rtv){
             rtv->GetDesc(&rd);
             if((msaa?rd.ViewDimension!=D3D11_RTV_DIMENSION_TEXTURE2DMS:
@@ -83,8 +94,8 @@ public:
                !support(device.p,ud.Format,D3D11_FORMAT_SUPPORT_TYPED_UNORDERED_ACCESS_VIEW))return false;
         }
         // D3D creation validates exact format, usage, binding and MSAA quality
-        // combinations. Keep every descriptor member except W/H unchanged.
-        desc.Width=width;desc.Height=height;
+        // combinations. Only SSR may also trim the mip chain to fit W/H.
+        desc.Width=width;desc.Height=height;desc.MipLevels=mipLevels;
         NativeOuterTexture candidate;
         if(FAILED(device.p->CreateTexture2D(&desc,nullptr,&candidate.texture_))||
            (dsv&&FAILED(device.p->CreateDepthStencilView(candidate.texture_,&dd,&candidate.dsv_)))||
