@@ -6,6 +6,8 @@ Versions before 1.0 remain experimental and may change compatibility or settings
 
 ## 0.2.0 - 2026-11-02
 
+- Keep menus and HUD at their uncropped physical size when vertical crop changes
+  LMU's UI mesh. Preserve native curvature, depth and saved scale preferences.
 - Fix rendered crop with QVFR: embed the smaller peripheral render into a black
   full-FOV output so QVFR does not stretch it against the focus views. Preserve
   submitted pose compensation and focus geometry. This adds one peripheral blit

@@ -5,6 +5,9 @@
 #include <iostream>
 
 namespace lmuqv {
+bool testQuadFrame=false,testFullFovAvailable=true,testUiScenePresent=false;
+XrView testFrameViews[4]{};
+XrFovf testFullFov[2]{};
 bool xr_runtime_sizes(unsigned eye,uint32_t& width,uint32_t& height,uint32_t& focusWidth,uint32_t& focusHeight){
     if(eye>1)return false;
     width=eye?20:24;height=eye?28:16;focusWidth=focusHeight=32;return true;
@@ -13,21 +16,85 @@ bool xr_vrs_active(){return false;}
 bool xr_vrs_focus(unsigned,VrsFocus&){return false;}
 bool xr_vrs_render_focus(unsigned,const float*,VrsFocus&){return false;}
 void xr_vrs_scene_complete(unsigned){}
-bool xr_quad_active() {return false;}
-bool xr_frame_views(XrView (&)[4]) {return false;}
+bool xr_quad_active() {return testQuadFrame;}
+bool xr_frame_views(XrView (&views)[4]) {
+    if(!testQuadFrame)return false;
+    std::copy_n(testFrameViews,4,views);return true;
+}
+bool xr_frame_full_outer_fov(XrFovf (&fov)[2]) {
+    if(!testQuadFrame||!testFullFovAvailable)return false;
+    std::copy_n(testFullFov,2,fov);return true;
+}
 bool xr_copy_outer(unsigned,ID3D11Texture2D*) {return false;}
 void xr_scene_focus_complete(unsigned) {}
-ID3D11RenderTargetView* xr_outer_rtv(unsigned) {return nullptr;}
+ID3D11RenderTargetView* xr_outer_rtv(unsigned) {
+    return testUiScenePresent?reinterpret_cast<ID3D11RenderTargetView*>(std::uintptr_t(1)):nullptr;
+}
 OuterTarget xr_outer_target(unsigned) {return {};}
 void log_line(const char*) {}
 void flush_log(){}
 }
 namespace {
 unsigned masks=0,derived=0;
+float expectedUiPlaneFov=0,expectedUiScale=0;
+unsigned uiPlaneDraws=0;
+void checkUiPlane(void* object,ID3D11DeviceContext*,const lmuqv::UiArgs* args){
+    float value{};std::memcpy(&value,static_cast<const std::byte*>(object)+0xc4,sizeof(value));
+    if(std::abs(value-expectedUiPlaneFov)>1e-6f){
+        std::cerr<<"UI plane FOV must retain its baked mesh curvature basis\n";std::exit(1);
+    }
+    std::memcpy(&value,static_cast<const std::byte*>(object)+(args->mode==1?0x100:0xf8),sizeof(value));
+    if(std::abs(value-expectedUiScale)>1e-6f){
+        std::cerr<<"cropped UI must retain full-FOV XY size: got scale "<<value<<" expected "<<expectedUiScale<<'\n';std::exit(1);
+    }
+    ++uiPlaneDraws;
+}
 unsigned lastFlags=0;
 bool lastSuppress=false;
 void require(bool value,const char* message) {
     if(!value) {std::cerr<<message<<'\n';std::exit(1);}
+}
+void uiPlaneSizeTest(){
+    using namespace lmuqv;
+    std::array<std::byte,0x108> object{};
+    // Native settings are independent scale/depth values, not part of the FOV correction.
+    const float settings[]{2560,1440,.8f,.5f,1.f,.5f};
+    for(unsigned i=0;i<6;++i){
+        const size_t offsets[]{0x88,0x8c,0xf8,0xfc,0x100,0x104};
+        std::memcpy(object.data()+offsets[i],&settings[i],sizeof(float));
+    }
+    testFullFov[0]={-1.05546f,.84253f,.58247751f,-.58247751f};
+    testFullFov[1]={-.84253f,1.05546f,.58247751f,-.58247751f};
+    for(unsigned eye=0;eye<2;++eye){
+        testFrameViews[eye].fov={testFullFov[eye].angleLeft,testFullFov[eye].angleRight,.30023717f,-.30023717f};
+        testFrameViews[eye+2].fov={-.2f,.2f,.2f,-.2f};
+    }
+    const float croppedSpan=testFrameViews[0].fov.angleUp-testFrameViews[0].fov.angleDown;
+    std::memcpy(object.data()+0xc4,&croppedSpan,sizeof(float));
+    const auto original=object;
+    UiArgs args{};args.mode=2;
+    uiOriginal=checkUiPlane;testQuadFrame=true;nativeRuntimeSettings=true;
+    expectedUiPlaneFov=croppedSpan;
+    const float ratio=std::tan((testFullFov[0].angleUp-testFullFov[0].angleDown)*.5f)/std::tan(croppedSpan*.5f);
+    expectedUiScale=.8f*ratio;
+    uiHook(object.data(),nullptr,&args);
+    require(object==original,"UI angular plane override leaked into game state or changed user preferences");
+    args.mode=1;expectedUiScale=ratio;
+    uiHook(object.data(),nullptr,&args);
+    require(object==original,"HUD plane override leaked into native settings");
+    args.mode=3;expectedUiScale=.8f*ratio;testUiScenePresent=true;
+    uiHook(object.data(),nullptr,&args);
+    require(object==original,"mode3 plane override leaked into native settings");
+    args.mode=2;testUiScenePresent=false;
+    // Projection validation fallback must also unwind the temporary field override.
+    testFrameViews[2].fov={};
+    uiHook(object.data(),nullptr,&args);
+    require(object==original,"UI projection fallback leaked the plane override");
+    testFullFovAvailable=false;expectedUiScale=.8f;
+    uiHook(object.data(),nullptr,&args);
+    require(object==original,"unavailable full FOV mutated native UI state");
+    testQuadFrame=false;testFullFovAvailable=true;uiOriginal=nullptr;nativeRuntimeSettings=false;
+    require(uiPlaneDraws==5,"UI plane fixture did not exercise all native calls");
 }
 void setProjection(void* ptr,const float* p) {
     auto* view=static_cast<lmuqv::ViewSnapshot*>(ptr);
@@ -105,6 +172,8 @@ void outerUploadSettingsTest(){
 }
 int main() {
     using namespace lmuqv;
+    SetEnvironmentVariableA("LMU_QV_DIAGNOSTICS","0");
+    uiPlaneSizeTest();
     outerUploadScopeTest();outerUploadSettingsTest();
     unsigned nativeWidth=0,nativeHeight=0;
     nativeRuntimeSettings=true;

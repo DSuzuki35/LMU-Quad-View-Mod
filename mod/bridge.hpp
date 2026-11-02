@@ -18,6 +18,7 @@ void xr_vrs_scene_complete(unsigned eye);
 // False in legacy mode or before validated runtime recommendations are available.
 bool xr_runtime_sizes(unsigned eye,uint32_t& outerWidth,uint32_t& outerHeight,uint32_t& focusWidth,uint32_t& focusHeight);
 bool xr_frame_views(XrView (&views)[4]);
+bool xr_frame_full_outer_fov(XrFovf (&fov)[2]);
 // Paired-pass integration infrastructure, not an enable switch for stereo.
 // Prepare before application swapchains are created. A held, waited image stays
 // runtime-owned by this layer if the app releases it early. The rendering owner

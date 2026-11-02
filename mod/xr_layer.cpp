@@ -1126,6 +1126,11 @@ bool xr_frame_views(XrView (&views)[4]) {
     if(!s.quad||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
     std::copy(std::begin(s.views),std::end(s.views),std::begin(views));return true;
 }
+bool xr_frame_full_outer_fov(XrFovf (&fov)[2]) {
+    std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    if(!s.quad||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
+    std::copy(std::begin(s.fullOuterFov),std::end(s.fullOuterFov),std::begin(fov));return true;
+}
 bool xr_prepare_focus_image_ownership(){
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(!s.quad||!s.session||!s.context||s.frame||!s.appChains.empty())return false;

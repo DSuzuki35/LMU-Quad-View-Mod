@@ -366,6 +366,28 @@ void profileTest(){
     assert(lmuqv::renderProfile.samples(lmuqv::ProfileSlot::non_scene_provider_submit)==1);
     lmuqv::renderProfile.shutdown();std::cout<<"EndFrame profile scene/menu submission boundaries PASS\n";
 }
+void fullOuterFovTest(){
+    Fixture f;
+    s.fullOuterFov[0]={-.8f,.7f,.6f,-.55f};
+    s.fullOuterFov[1]={-.7f,.8f,.6f,-.55f};
+    XrFovf output[2]{};
+    assert(lmuqv::xr_frame_full_outer_fov(output));
+    assert(std::memcmp(output,s.fullOuterFov,sizeof(output))==0);
+    assert(output[0].angleUp!=s.views[0].fov.angleUp);
+    for(unsigned invalid=0;invalid<5;++invalid){
+        s.quad=s.frame=s.shouldRender=s.located=true;s.locateTime=s.predictedTime;
+        switch(invalid){
+        case 0:s.quad=false;break;
+        case 1:s.frame=false;break;
+        case 2:s.shouldRender=false;break;
+        case 3:s.located=false;break;
+        case 4:--s.locateTime;break;
+        }
+        std::memset(output,0,sizeof(output));
+        assert(!lmuqv::xr_frame_full_outer_fov(output));
+        assert(output[0].angleUp==0&&output[1].angleDown==0);
+    }
+}
 }
 int main(int argc,char** argv){
     SetErrorMode(SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX);
@@ -373,6 +395,7 @@ int main(int argc,char** argv){
     const bool runProfile=argc>1&&!std::strcmp(argv[1],"--profile");
     SetEnvironmentVariableA("LMU_QV_DIAGNOSTICS",runProfile?"1":"0");
     if(runProfile){profileTest();return 0;}
+    fullOuterFovTest();
     if(argc>1&&!std::strcmp(argv[1],"--different-space")){compensatedSubmission(true);return 0;}
     compensatedSubmission(false);compensatedSubmission(true);invalidPoses();compensationEdges();
     std::cout<<"EndFrame same/different-space compensation and invalid poses PASS\n";

@@ -15,6 +15,7 @@ bool xr_vrs_render_focus(unsigned,const float*,VrsFocus&){return false;}
 void xr_vrs_scene_complete(unsigned){}
 bool xr_quad_active(){return false;}
 bool xr_frame_views(XrView (&)[4]){return false;}
+bool xr_frame_full_outer_fov(XrFovf (&)[2]){return false;}
 bool xr_copy_outer(unsigned,ID3D11Texture2D*){return false;}
 void xr_scene_focus_complete(unsigned){}
 ID3D11RenderTargetView* xr_outer_rtv(unsigned){return nullptr;}

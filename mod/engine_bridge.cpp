@@ -4,6 +4,7 @@
 #include "caller_address.hpp"
 #include "quad_math.hpp"
 #include "ui_d3d_state.hpp"
+#include "ui_plane_scale.hpp"
 #include "gpu_timing.hpp"
 #include "render_profile.hpp"
 #include "stereo_audit.hpp"
@@ -918,7 +919,7 @@ void uiHook(void* object,ID3D11DeviceContext* context,const UiArgs* originalArgs
             *address<ID3D11Texture2D*>(0x1b1c6b8+eye*8),targetSlots[eye],*address<ID3D11ShaderResourceView*>(0x1b1c6d8+eye*8),context);
         char line[200]{};std::snprintf(line,sizeof(line),"native final extent=%ux%u copyOffsets left=%u,%u right=%u,%u",
             *address<unsigned>(0x1b1c654),*address<unsigned>(0x1b1c658),*address<unsigned>(0x1b1c644),*address<unsigned>(0x1b1c64c),*address<unsigned>(0x1b1c648),*address<unsigned>(0x1b1c650));log_line(line);
-        if(nativeCropWidth.percent!=100||nativeCropHeight.percent!=100){
+        if(nativeRuntimeSettings||nativeCropWidth.percent!=100||nativeCropHeight.percent!=100){
             const auto* camera=address<lmu::reconstructed::VrCameraState>(0x1b1be30);
             if(readable(camera,sizeof(*camera)))for(unsigned eye=0;eye<2;++eye){
                 Matrix cropped{};
@@ -932,8 +933,33 @@ void uiHook(void* object,ID3D11DeviceContext* context,const UiArgs* originalArgs
                     eye,originalArgs->mode,native[0],native[5],native[8],native[9],native[11],
                     cropped[0],cropped[5],cropped[8],cropped[9],cropped[11],uiDifference);log_line(detail);
             }
+            if(readable(object,0x108)){
+                auto value=[&](size_t offset){float v{};std::memcpy(&v,static_cast<const std::byte*>(object)+offset,sizeof(v));return v;};
+                char detail[240]{};std::snprintf(detail,sizeof(detail),
+                    "crop UI geometry mode=%u sourceSize=%.7g/%.7g planeFov=%.7g menuScale=%.7g/%.7g hudScale=%.7g/%.7g",
+                    originalArgs->mode,value(0x88),value(0x8c),value(0xc4),value(0xf8),value(0xfc),value(0x100),value(0x104));log_line(detail);
+            }
         }
     }
+    XrFovf fullOuterFov[2]{};
+    float planeScaleFactor=1.f;
+    void* planeScale=nullptr;
+    if(readable(object,0x108)&&xr_frame_full_outer_fov(fullOuterFov)){
+        auto* bytes=static_cast<std::byte*>(object);
+        float planeFov{};std::memcpy(&planeFov,bytes+0xc4,sizeof(planeFov));
+        planeScaleFactor=ui_plane_scale_factor(planeFov,
+            views[0].fov.angleUp-views[0].fov.angleDown,
+            fullOuterFov[0].angleUp-fullOuterFov[0].angleDown);
+        planeScale=bytes+(originalArgs->mode==1?0x100:0xf8);
+        if(diagnostics_enabled()&&(diagnostics<=4||diagnostics%600==0)){
+            char detail[200]{};std::snprintf(detail,sizeof(detail),
+                "crop UI size mode=%u planeFov=%.7g fullSpan=%.7g xyScaleFactor=%.7g; native depth and curvature retained",
+                originalArgs->mode,planeFov,fullOuterFov[0].angleUp-fullOuterFov[0].angleDown,planeScaleFactor);log_line(detail);
+        }
+    }
+    // Apply to both focus and peripheral draws, including fallback calls. The
+    // native c4 extent and depth stay intact so the baked mesh keeps its curve.
+    UiPlaneScaleScope planeSize(planeScale,planeScaleFactor);
     if(menu) {
         // The menu's artwork is sampled from obj+c8, separate from these final eye targets.
         // Mode 3 also runs while a scene is allocated during loading. Only prepare backgrounds
