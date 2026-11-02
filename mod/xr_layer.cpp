@@ -5,9 +5,11 @@
 #include "focus_overlay.hpp"
 #include "xr_sizes.hpp"
 #include "focus_box.hpp"
+#include "view_crop.hpp"
 #include "outer_resample.hpp"
 #include "render_profile.hpp"
 #include "swapchain_sampling.hpp"
+#include "submission_pose.hpp"
 #include "stereo_audit.hpp"
 #include <algorithm>
 #include <array>
@@ -121,6 +123,7 @@ struct State {
     lmuqv::XrOutputSizes outputSizes;
     lmuqv::FocusBoxSize focusBox;
     lmuqv::FocusOffset focusOffsetX,focusOffsetY;
+    lmuqv::CropPercent cropWidth,cropHeight;
     bool pixelEnabled=false,pixelDone=false,pixelRequireScene=false;
     uint64_t pixelFrame=0;
     unsigned pixelMask=0,pixelSuccessMask=0;
@@ -292,13 +295,13 @@ XrResult selectRuntimeSizes(const std::array<XrViewConfigurationView,4>& runtime
     if(!valid){logf("runtime sizing incompatible: outer recommendations must be nonzero and <= common focus %ux%u on EACH axis and within runtime/device limits; refusing session/hooks",width,height);return XR_ERROR_LIMIT_REACHED;}
     if(s.session&&s.runtimeSizesReady){
         bool same=width==s.runtimeFocusWidth&&height==s.runtimeFocusHeight;
-        for(unsigned eye=0;eye<2;++eye)same=same&&runtime[eye].recommendedImageRectWidth==s.runtimeOuterWidth[eye]&&runtime[eye].recommendedImageRectHeight==s.runtimeOuterHeight[eye];
+        for(unsigned eye=0;eye<2;++eye)same=same&&lmuqv::crop_dimension(runtime[eye].recommendedImageRectWidth,s.cropWidth.percent)==s.runtimeOuterWidth[eye]&&lmuqv::crop_dimension(runtime[eye].recommendedImageRectHeight,s.cropHeight.percent)==s.runtimeOuterHeight[eye];
         if(!same){logf("Runtime recommendations changed during session; restart required");return XR_ERROR_RUNTIME_FAILURE;}
     }
     s.runtimeFocusWidth=width;s.runtimeFocusHeight=height;
-    for(unsigned eye=0;eye<2;++eye){s.runtimeOuterWidth[eye]=runtime[eye].recommendedImageRectWidth;s.runtimeOuterHeight[eye]=runtime[eye].recommendedImageRectHeight;}
+    for(unsigned eye=0;eye<2;++eye){s.runtimeOuterWidth[eye]=lmuqv::crop_dimension(runtime[eye].recommendedImageRectWidth,s.cropWidth.percent);s.runtimeOuterHeight[eye]=lmuqv::crop_dimension(runtime[eye].recommendedImageRectHeight,s.cropHeight.percent);}
     s.runtimeSizesReady=true;
-    logf("Runtime selected exact outer0=%ux%u outer1=%ux%u common focus=%ux%u; no percentage scaling",s.runtimeOuterWidth[0],s.runtimeOuterHeight[0],s.runtimeOuterWidth[1],s.runtimeOuterHeight[1],width,height);
+    logf("Runtime selected outer0=%ux%u outer1=%ux%u common focus=%ux%u; crop=%g/%g%%, focus resolution unchanged",s.runtimeOuterWidth[0],s.runtimeOuterHeight[0],s.runtimeOuterWidth[1],s.runtimeOuterHeight[1],width,height,s.cropWidth.percent,s.cropHeight.percent);
     return XR_SUCCESS;
 }
 XrResult createInputSwapchain(XrSession session,const XrSwapchainCreateInfo& info,XrSwapchain* chain,const char* role){
@@ -318,7 +321,7 @@ bool createOuter(const XrSwapchainCreateInfo& info) {
         return false;
     }
     XrSwapchainCreateInfo own=info;own.next=nullptr;
-    own.width=lmuqv::outer_dimension(info.width,s.outputSizes);own.height=lmuqv::outer_dimension(info.height,s.outputSizes);
+    own.width=lmuqv::crop_dimension(lmuqv::outer_dimension(info.width,s.outputSizes),s.cropWidth.percent);own.height=lmuqv::crop_dimension(lmuqv::outer_dimension(info.height,s.outputSizes),s.cropHeight.percent);
     if(!own.width||!own.height)return false;
     own.usageFlags=XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
     for(unsigned i=0;i<2;++i) {
@@ -551,6 +554,9 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
             return XR_ERROR_RUNTIME_FAILURE;
         }
     }
+    if(!lmuqv::apply_view_crop(runtime,s.cropWidth.percent,s.cropHeight.percent)){
+        logf("Invalid rendered crop FOV; rejecting located views");return XR_ERROR_RUNTIME_FAILURE;
+    }
     const auto valid=XR_VIEW_STATE_POSITION_VALID_BIT|XR_VIEW_STATE_ORIENTATION_VALID_BIT;
     s.located=(state->viewStateFlags&valid)==valid;s.locateTime=info->displayTime;s.locateSpace=info->space;
     std::copy(std::begin(runtime),std::end(runtime),std::begin(s.views));
@@ -728,19 +734,25 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
                 logf("Projection refused: native eye identity, format, or subImage bounds invalid; required focus=%ux%u. If native handles are wrapped by another layer, disable that layer's resolution override/upscaler for diagnosis",s.runtimeFocusWidth,s.runtimeFocusHeight);
             continue;
         }
-        if(!captured||projection->space!=s.locateSpace){
+        if(!captured||projection->space==XR_NULL_HANDLE){
             if(s.frames<10||s.frames%120==0)logf("Projection refused: released=%d begun=%d shouldRender=%d located=%d captures=%d/%d timeMatch=%d spaceMatch=%d",released,s.frame,s.shouldRender,s.located,s.captures[0],s.captures[1],s.locateTime==info->displayTime,projection->space==s.locateSpace);
             continue;
         }
         // One engine scene capture pair cannot represent a second projection layer.
         if(submitted)continue;
+        std::array<XrPosef,2> focusPoses;
+        if(!lmuqv::submission_focus_pose(projection->views[0].pose,s.views[0].pose,s.views[2].pose,focusPoses[0])||
+           !lmuqv::submission_focus_pose(projection->views[1].pose,s.views[1].pose,s.views[3].pose,focusPoses[1])){
+            if(s.frames<10||s.frames%120==0)logf("Projection refused: invalid submitted or cached pose");
+            continue;
+        }
         auto& v=convertedViews;
         for(unsigned eye=0;eye<2;++eye){
             v[eye]=structure<XrCompositionLayerProjectionView>(XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW);
-            v[eye].pose=s.views[eye].pose;v[eye].fov=s.views[eye].fov;
+            v[eye].pose=projection->views[eye].pose;v[eye].fov=s.views[eye].fov;
             v[eye].subImage.swapchain=s.outer[eye].chain;
             v[eye].subImage.imageRect.extent={static_cast<int32_t>(s.outer[eye].width),static_cast<int32_t>(s.outer[eye].height)};
-            v[eye+2]=projection->views[eye];v[eye+2].pose=s.views[eye+2].pose;v[eye+2].fov=s.views[eye+2].fov;
+            v[eye+2]=projection->views[eye];v[eye+2].pose=focusPoses[eye];v[eye+2].fov=s.views[eye+2].fov;
         }
         convertedProjection = *projection;
         convertedProjection.viewCount = 4;
@@ -818,7 +830,14 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
     const auto sampledLength=GetEnvironmentVariableA("LMU_QV_VECTORXR_DIRECT_INPUTS",sampledSetting,sizeof(sampledSetting));
     s.sampledInputs=quad&&sampledLength==1&&sampledSetting[0]=='1';
     if(s.sampledInputs)logf("sampled_input enabled for eligible color swapchains; requests SAMPLED usage; downstream copy fallback retained");
-    if(s.runtimeSettings)logf("Runtime settings enabled: runtime focus size preserved; mod focus offsets applied; exact runtime outer and common focus dimensions; legacy percentage controls ignored");
+    char cropWidth[128]{},cropHeight[128]{};
+    const auto cropWidthLength=GetEnvironmentVariableA("LMU_QV_CROP_WIDTH_PERCENT",cropWidth,sizeof(cropWidth));
+    const auto cropHeightLength=GetEnvironmentVariableA("LMU_QV_CROP_HEIGHT_PERCENT",cropHeight,sizeof(cropHeight));
+    s.cropWidth=lmuqv::parse_crop_percent(cropWidthLength>=sizeof(cropWidth)?"invalid":cropWidth);
+    s.cropHeight=lmuqv::parse_crop_percent(cropHeightLength>=sizeof(cropHeight)?"invalid":cropHeight);
+    if(!s.cropWidth.valid||!s.cropHeight.valid)logf("Invalid crop percentage; affected axis reset to 100 (range 25..100)");
+    if(quad)logf("Rendered crop width=%g%% height=%g%%; outer FOV and target dimensions reduced together; focus fitted within crop; restart required",s.cropWidth.percent,s.cropHeight.percent);
+    if(s.runtimeSettings)logf("Runtime settings enabled: runtime focus size preserved; mod focus offsets and crop applied; legacy percentage controls ignored");
     if(!s.runtimeSettings){
     char outerPercent[128]{},focusPercent[128]{};
     DWORD outerLength=GetEnvironmentVariableA("LMU_QV_OUTER_PIXELS_PERCENT",outerPercent,sizeof(outerPercent));

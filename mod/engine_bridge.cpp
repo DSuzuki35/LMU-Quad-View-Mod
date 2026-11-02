@@ -17,6 +17,7 @@
 #include "native_upload_reuse.hpp"
 #include "native_upload_batch.hpp"
 #include "xr_sizes.hpp"
+#include "view_crop.hpp"
 #include "native_xr_views.hpp"
 #include "resource_diagnostics.hpp"
 #include "../prototype/lmu_reconstructed.hpp"
@@ -91,6 +92,7 @@ bool nativeOuterOptIn=false,nativeOuterFailed=false;
 // or failed restoration is not: keep those separate from the performance path.
 bool nativeQuadSubmissionBlocked=false;
 XrOutputSizes nativeOuterSizes;
+CropPercent nativeCropWidth,nativeCropHeight;
 bool nativeRuntimeSettings=false,nativeOuterSeparateBanks=false;
 const float* fovScaleHook(void* renderer){
     const auto* original=fovScaleOriginal(renderer);
@@ -114,7 +116,7 @@ bool nativeOuterDimensions(unsigned eye,unsigned fullW,unsigned fullH,unsigned& 
     if(nativeRuntimeSettings){
         uint32_t focusW=0,focusH=0;
         if(!xr_runtime_sizes(eye,width,height,focusW,focusH)||fullW!=focusW||fullH!=focusH)return false;
-    }else{width=outer_dimension(fullW,nativeOuterSizes);height=outer_dimension(fullH,nativeOuterSizes);}
+    }else{width=crop_dimension(outer_dimension(fullW,nativeOuterSizes),nativeCropWidth.percent);height=crop_dimension(outer_dimension(fullH,nativeOuterSizes),nativeCropHeight.percent);}
     return width&&height&&width<=fullW&&height<=fullH;
 }
 thread_local ViewSnapshot* nativeOuterExpected=nullptr;
@@ -1035,6 +1037,11 @@ bool engine_start(ID3D11DeviceContext* context) {
         GetEnvironmentVariableA("LMU_QV_OUTER_PIXELS_PERCENT",outer,sizeof(outer));
         GetEnvironmentVariableA("LMU_QV_FOCUS_PIXELS_PERCENT",focus,sizeof(focus));
         nativeOuterSizes=parse_output_sizes(outer,focus);
+        char cropWidth[128]{},cropHeight[128]{};
+        const auto widthLength=GetEnvironmentVariableA("LMU_QV_CROP_WIDTH_PERCENT",cropWidth,sizeof(cropWidth));
+        const auto heightLength=GetEnvironmentVariableA("LMU_QV_CROP_HEIGHT_PERCENT",cropHeight,sizeof(cropHeight));
+        nativeCropWidth=parse_crop_percent(widthLength>=sizeof(cropWidth)?"invalid":cropWidth);
+        nativeCropHeight=parse_crop_percent(heightLength>=sizeof(cropHeight)?"invalid":cropHeight);
         if(!nativeOuterSizes.valid||nativeOuterSizes.outerPercent>=nativeOuterSizes.focusPercent)return false;
         }
         for(const auto& anchor:native_outer_anchors)if(!matches(anchor.rva,anchor.bytes)){

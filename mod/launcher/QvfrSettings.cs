@@ -28,6 +28,8 @@ namespace LmuQuadViewLauncher
         public decimal OuterBlur { get; set; }
         public decimal OuterPercent { get; set; }
         public decimal InnerPercent { get; set; }
+        public decimal CropWidthPercent { get; set; }
+        public decimal CropHeightPercent { get; set; }
         public decimal FocusWidthPercent { get; set; }
         public decimal FocusHeightPercent { get; set; }
         public decimal FocusOffsetXPercent { get; set; }
@@ -42,6 +44,7 @@ namespace LmuQuadViewLauncher
             RenderProfileSeconds=120;
             DiagnosticsEnabled=true;
             FocusWidthPercent = FocusHeightPercent = 50;
+            CropWidthPercent = CropHeightPercent = 100;
         }
     }
     public static class QvfrSettings
@@ -51,6 +54,8 @@ namespace LmuQuadViewLauncher
         public static void Validate(LauncherSettings s)
         {
             if (s == null) throw new ArgumentNullException("settings");
+            if(s.CropWidthPercent<25||s.CropWidthPercent>100||s.CropHeightPercent<25||s.CropHeightPercent>100)
+                throw new ArgumentException("Rendered FOV width and height must be between 25 and 100 percent.");
             if(s.FocusOffsetXPercent < -50 || s.FocusOffsetXPercent > 50 || s.FocusOffsetYPercent < -50 || s.FocusOffsetYPercent > 50) throw new ArgumentException("Focus offsets must be between -50 and +50 percent.");
             if(s.RenderProfileSeconds<30||s.RenderProfileSeconds>300)throw new ArgumentException("Capture length must be between 30 and 300 seconds.");
             if(s.FocusAspectRatio!=0&&(s.FocusAspectRatio<0.1m||s.FocusAspectRatio>10m)) throw new ArgumentException("Invalid measured focus aspect ratio.");
@@ -90,6 +95,8 @@ namespace LmuQuadViewLauncher
             s.OuterBlur = Decimal.Parse(Value(x, "OuterBlur", "0"), CultureInfo.InvariantCulture);
             s.OuterPercent = Decimal.Parse(Value(x, "OuterPercent", "25"), CultureInfo.InvariantCulture);
             s.InnerPercent = Decimal.Parse(Value(x, "InnerPercent", "100"), CultureInfo.InvariantCulture);
+            s.CropWidthPercent = Decimal.Parse(Value(x, "CropWidthPercent", "100"), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture);
+            s.CropHeightPercent = Decimal.Parse(Value(x, "CropHeightPercent", "100"), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture);
             s.FocusWidthPercent = Decimal.Parse(Value(x, "FocusWidthPercent", "50"), CultureInfo.InvariantCulture);
             s.FocusHeightPercent = Decimal.Parse(Value(x, "FocusHeightPercent", "50"), CultureInfo.InvariantCulture);
             s.FocusOffsetXPercent = Decimal.Parse(Value(x, "FocusOffsetXPercent", "0"), CultureInfo.InvariantCulture);
@@ -114,6 +121,7 @@ namespace LmuQuadViewLauncher
                 new XElement("NativeOuterResolution", s.NativeOuterResolution), new XElement("UseRuntimeSettings", true),
                 new XElement("OuterBlur", s.OuterBlur),
                 new XElement("OuterPercent", s.OuterPercent), new XElement("InnerPercent", s.InnerPercent),
+                new XElement("CropWidthPercent", s.CropWidthPercent), new XElement("CropHeightPercent", s.CropHeightPercent),
                 new XElement("FocusWidthPercent", s.FocusWidthPercent), new XElement("FocusHeightPercent", s.FocusHeightPercent),
                 new XElement("FocusOffsetXPercent", s.FocusOffsetXPercent), new XElement("FocusOffsetYPercent", s.FocusOffsetYPercent),
                 new XElement("FocusAspectRatio", s.FocusAspectRatio));

@@ -45,6 +45,8 @@ bool statsRequested=false, expectStatsBeforeRelease=false;
 bool sceneStatsRequested=false;
 bool captureRequested=false,captureMissing=false,captureInvalid=false;
 bool movingFocusTest=false;
+bool cropRequested=false,invalidCropRequested=false;
+XrView renderedCropViews[4]{};
 bool outerBlurRequested=false;
 bool typedSrgbRuntime=false;
 bool sampledInputsRequested=false,rejectSampledInputs=false;
@@ -97,15 +99,51 @@ std::string frameCalls;
 void assertFov(const XrFovf& fov,float left,float right,float up,float down) {
     assert(fov.angleLeft==left&&fov.angleRight==right&&fov.angleUp==up&&fov.angleDown==down);
 }
-// Catch angle-space scaling, moving the gaze center, double application, and
-// submitting a different FOV from the one used by the engine.
-void assertFocusFov(const XrFovf& actual,float left,float right,float up,float down,unsigned eye=0) {
-    const XrFovf original{left,right,up,down};
-    if(focusBoxPercent==100&&focusHeightPercent==100&&focusOffsetX==0&&focusOffsetY==0){assert(std::memcmp(&actual,&original,sizeof(original))==0);return;}
+void assertOuterFov(const XrFovf& actual,float left,float right,float up,float down) {
+    if(!cropRequested){assertFov(actual,left,right,up,down);return;}
     const double l=std::tan(double(left)),r=std::tan(double(right));
     const double u=std::tan(double(up)),d=std::tan(double(down));
     const double al=std::tan(double(actual.angleLeft)),ar=std::tan(double(actual.angleRight));
     const double au=std::tan(double(actual.angleUp)),ad=std::tan(double(actual.angleDown));
+    assert(std::abs((ar-al)/(r-l)-.75)<1e-6);
+    assert(std::abs((au-ad)/(u-d)-.50)<1e-6);
+    assert(std::abs(al+ar-l-r)<1e-6&&std::abs(au+ad-u-d)<1e-6);
+}
+void assertFocusContained(const XrView* views) {
+    for(unsigned eye=0;eye<2;++eye){
+        const auto& outer=views[eye].fov;const auto& focus=views[eye+2].fov;
+        assert(focus.angleLeft>=outer.angleLeft-1e-6f&&focus.angleRight<=outer.angleRight+1e-6f);
+        assert(focus.angleDown>=outer.angleDown-1e-6f&&focus.angleUp<=outer.angleUp+1e-6f);
+        assert(focus.angleLeft<focus.angleRight&&focus.angleDown<focus.angleUp);
+    }
+}
+unsigned expectedCropWidth(unsigned size){return cropRequested?(size*3+3)/4:size;}
+unsigned expectedCropHeight(unsigned size){return cropRequested?(size+1)/2:size;}
+// Catch angle-space scaling, moving the gaze center, double application, and
+// submitting a different FOV from the one used by the engine.
+void assertFocusFov(const XrFovf& actual,float left,float right,float up,float down,unsigned eye=0) {
+    const XrFovf original{left,right,up,down};
+    if(!cropRequested&&focusBoxPercent==100&&focusHeightPercent==100&&focusOffsetX==0&&focusOffsetY==0){assert(std::memcmp(&actual,&original,sizeof(original))==0);return;}
+    const double l=std::tan(double(left)),r=std::tan(double(right));
+    const double u=std::tan(double(up)),d=std::tan(double(down));
+    const double al=std::tan(double(actual.angleLeft)),ar=std::tan(double(actual.angleRight));
+    const double au=std::tan(double(actual.angleUp)),ad=std::tan(double(actual.angleDown));
+    if(cropRequested){
+        // Preserve focus span when it fits, then move its center only far enough
+        // to fit. An oversized focus fills the available cropped outer extent.
+        const double ol=std::tan(double(eye?-0.85f:-1.1f)),orr=std::tan(double(eye?1.0f:0.9f));
+        const double od=std::tan(double(eye?-0.85f:-0.7f)),ou=std::tan(double(eye?0.75f:0.8f));
+        const double halfW=(orr-ol)*.75/2,halfH=(ou-od)*.50/2;
+        const double minX=(ol+orr)/2-halfW,maxX=(ol+orr)/2+halfW;
+        const double minY=(od+ou)/2-halfH,maxY=(od+ou)/2+halfH;
+        const double width=std::min((r-l)*focusBoxPercent/100,2*halfW);
+        const double height=std::min((u-d)*focusHeightPercent/100,2*halfH);
+        const double centerX=std::max(minX+width/2,std::min(maxX-width/2,(l+r)/2+(orr-ol)*focusOffsetX/100));
+        const double centerY=std::max(minY+height/2,std::min(maxY-height/2,(u+d)/2+(ou-od)*focusOffsetY/100));
+        assert(std::abs(ar-al-width)<1e-6&&std::abs(au-ad-height)<1e-6);
+        assert(std::abs((al+ar)/2-centerX)<1e-6&&std::abs((au+ad)/2-centerY)<1e-6);
+        return;
+    }
     assert(std::abs((ar-al)/(r-l)-focusBoxPercent/100)<1e-6);
     assert(std::abs((au-ad)/(u-d)-focusHeightPercent/100)<1e-6);
     const double dx=(std::tan(double(eye?1.0f:0.9f))-std::tan(double(eye?-0.85f:-1.1f)))*focusOffsetX/100;
@@ -196,9 +234,10 @@ XrResult XRAPI_CALL createSwapchain(XrSession,const XrSwapchainCreateInfo* in,Xr
     unsigned expected=scaledRequested&&own?(fixtureDimension==32?8:29):fixtureDimension;
     unsigned expectedW=runtimeSettings&&own?runtimeOuterWidth(unsigned(textures.size()-1)):expected;
     unsigned expectedH=runtimeSettings&&own?runtimeOuterHeight(unsigned(textures.size()-1)):expected;
+    if(own){expectedW=expectedCropWidth(expectedW);expectedH=expectedCropHeight(expectedH);}
     assert(overlayTestActive||(in->width==expectedW&&in->height==expectedH&&in->sampleCount==1&&in->format==(srgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_UNORM)));
     D3D11_TEXTURE2D_DESC desc{};desc.Width=in->width;desc.Height=in->height;desc.MipLevels=1;desc.ArraySize=1;
-    desc.Format=srgbRuntime?(typedSrgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_TYPELESS):DXGI_FORMAT(in->format);desc.SampleDesc.Count=1;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_RENDER_TARGET|((scaledRequested||runtimeSettings)?D3D11_BIND_SHADER_RESOURCE:0);
+    desc.Format=srgbRuntime?(typedSrgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_TYPELESS):DXGI_FORMAT(in->format);desc.SampleDesc.Count=1;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_RENDER_TARGET|((scaledRequested||runtimeSettings||cropRequested)?D3D11_BIND_SHADER_RESOURCE:0);
     if(in->usageFlags&XR_SWAPCHAIN_USAGE_SAMPLED_BIT)desc.BindFlags|=D3D11_BIND_SHADER_RESOURCE;
     ID3D11Texture2D* texture=nullptr;assert(SUCCEEDED(device->CreateTexture2D(&desc,nullptr,&texture)));
     *out=reinterpret_cast<XrSwapchain>(textures.size()+10);textures.push_back(texture);swapchains.push_back(*out);ownership.emplace_back();return XR_SUCCESS;
@@ -303,17 +342,21 @@ XrResult XRAPI_CALL endFrame(XrSession,const XrFrameEndInfo* in) {
         assert(p->views[0].pose.position.x==10&&p->views[2].pose.position.x==(debugRuntime?10:12));
         unsigned outerSize=scaledRequested?(fixtureDimension==32?8:29):fixtureDimension;
         for(unsigned eye=0;eye<2;++eye){
-            assert(p->views[eye].subImage.imageRect.extent.width==int(runtimeSettings?runtimeOuterWidth(eye):outerSize));
-            assert(p->views[eye].subImage.imageRect.extent.height==int(runtimeSettings?runtimeOuterHeight(eye):outerSize));
+            assert(p->views[eye].subImage.imageRect.extent.width==int(expectedCropWidth(runtimeSettings?runtimeOuterWidth(eye):outerSize)));
+            assert(p->views[eye].subImage.imageRect.extent.height==int(expectedCropHeight(runtimeSettings?runtimeOuterHeight(eye):outerSize)));
         }
         assert(p->views[2].subImage.imageRect.extent.width==int(fixtureDimension)&&p->views[3].subImage.imageRect.extent.height==int(fixtureDimension));
+        if(cropRequested){
+            for(unsigned view=0;view<4;++view)
+                assert(std::memcmp(&p->views[view].fov,&renderedCropViews[view].fov,sizeof(XrFovf))==0);
+        }
         if(movingFocusTest){
             for(unsigned eye=0;eye<4;++eye){
                 assert(std::memcmp(&p->views[eye].fov,&renderedMovingViews[eye].fov,sizeof(XrFovf))==0);
                 assert(std::memcmp(&p->views[eye].pose,&renderedMovingViews[eye].pose,sizeof(XrPosef))==0);
             }
-            assertFov(p->views[0].fov,-1.1f,0.9f,0.8f,-0.7f);
-            assertFov(p->views[1].fov,-0.85f,1.0f,0.75f,-0.85f);
+            assertOuterFov(p->views[0].fov,-1.1f,0.9f,0.8f,-0.7f);
+            assertOuterFov(p->views[1].fov,-0.85f,1.0f,0.75f,-0.85f);
             if(in->displayTime==501){
                 assertFocusFov(p->views[2].fov,-0.30f,0.20f,0.25f,-0.15f);
                 assertFocusFov(p->views[3].fov,-0.15f,0.35f,0.20f,-0.30f,1);
@@ -447,6 +490,8 @@ int main(int argc,char** argv) {
         if(!std::strcmp(argv[arg],"--focus-box-large"))focusBoxPercent=200;
         invalidFocusBoxRequested|=!std::strcmp(argv[arg],"--invalid-focus-box");
         asymmetricFocusRequested|=!std::strcmp(argv[arg],"--focus-asymmetric");
+        cropRequested|=!std::strcmp(argv[arg],"--crop");
+        invalidCropRequested|=!std::strcmp(argv[arg],"--invalid-crop");
         scaledRequested|=!std::strcmp(argv[arg],"--scaled");
         invalidSizesRequested|=!std::strcmp(argv[arg],"--invalid-sizes");
         runtimeSettings|=!std::strcmp(argv[arg],"--runtime-settings");
@@ -472,6 +517,9 @@ int main(int argc,char** argv) {
     SetEnvironmentVariableA("LMU_QV_MODE", "quad");
     SetEnvironmentVariableA("LMU_QV_FOVEATION_MODE",fixedFoveation?"fixed":nullptr);
     SetEnvironmentVariableA("LMU_QV_OUTER_BLUR",outerBlurRequested?"1":nullptr);
+    if(invalidCropRequested)cropRequested=false;
+    SetEnvironmentVariableA("LMU_QV_CROP_WIDTH_PERCENT",invalidCropRequested?"NaN":cropRequested?"75":nullptr);
+    SetEnvironmentVariableA("LMU_QV_CROP_HEIGHT_PERCENT",invalidCropRequested?"50junk":cropRequested?"50":nullptr);
     if(invalidSizesRequested)scaledRequested=false;
     SetEnvironmentVariableA("LMU_QV_OUTER_PIXELS_PERCENT",invalidSizesRequested?"NaN":scaledRequested?"10":nullptr);
     SetEnvironmentVariableA("LMU_QV_FOCUS_PIXELS_PERCENT",invalidSizesRequested||scaledRequested?"200":nullptr);
@@ -556,7 +604,7 @@ int main(int argc,char** argv) {
     struct { XrView views[2]; uint64_t guard; } located{};
     located.views[0].type=located.views[1].type=XR_TYPE_VIEW;
     located.guard=0x1122334455667788ull;
-    XrViewLocateInfo li{};li.type=XR_TYPE_VIEW_LOCATE_INFO;li.viewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+    XrViewLocateInfo li{};li.type=XR_TYPE_VIEW_LOCATE_INFO;li.space=reinterpret_cast<XrSpace>(1);li.viewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
     XrBaseInStructure appLocateNext{};appLocateNext.type=XR_TYPE_UNKNOWN;
     li.next=expectedLocateNext=&appLocateNext; // Opaque application chain must remain linked, not rewritten.
     XrViewState state{};state.type=XR_TYPE_VIEW_STATE;
@@ -607,8 +655,8 @@ int main(int argc,char** argv) {
     uint32_t blackPixels[32*32]{};for(auto& pixel:blackPixels)pixel=0xff000000u;
     D3D11_SUBRESOURCE_DATA blackData{};blackData.pSysMem=blackPixels;blackData.SysMemPitch=32*sizeof(uint32_t);
     ID3D11Texture2D* black=nullptr;sourceDesc.Width=32;assert(SUCCEEDED(device->CreateTexture2D(&sourceDesc,&blackData,&black)));
-    XrCompositionLayerProjectionView pv[2]{};for(unsigned i=0;i<2;++i){pv[i].type=XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;pv[i].subImage.swapchain=i?right:left;pv[i].subImage.imageRect.extent={32,32};}
-    XrCompositionLayerProjection projection{};projection.type=XR_TYPE_COMPOSITION_LAYER_PROJECTION;projection.viewCount=2;projection.views=pv;
+    XrCompositionLayerProjectionView pv[2]{};for(unsigned i=0;i<2;++i){pv[i].type=XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;pv[i].pose=located.views[i].pose;pv[i].fov=located.views[i].fov;pv[i].subImage.swapchain=i?right:left;pv[i].subImage.imageRect.extent={32,32};}
+    XrCompositionLayerProjection projection{};projection.type=XR_TYPE_COMPOSITION_LAYER_PROJECTION;projection.space=li.space;projection.viewCount=2;projection.views=pv;
     const auto* layer=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
     XrFrameEndInfo end{};end.type=XR_TYPE_FRAME_END_INFO;end.displayTime=123;end.layerCount=1;end.layers=&layer;
     auto begin=[&](){
@@ -621,7 +669,12 @@ int main(int argc,char** argv) {
         assert(!lmuqv::xr_frame_views(engineViews));
         li.displayTime=123;assert(locateViews(session,&li,&state,2,&count,located.views)==XR_SUCCESS);
         assert(lmuqv::xr_frame_views(engineViews)==runtimeShouldRender);
-        if(runtimeShouldRender)assert(engineViews[0].pose.position.x==10&&engineViews[3].pose.position.x==13);
+        for(unsigned eye=0;eye<2;++eye){pv[eye].pose=located.views[eye].pose;pv[eye].fov=located.views[eye].fov;}
+        if(runtimeShouldRender){
+            assert(engineViews[0].pose.position.x==10&&engineViews[3].pose.position.x==13);
+            for(unsigned eye=0;eye<2;++eye)assertOuterFov(located.views[eye].fov,-.4f,.4f,.4f,-.4f);
+            if(cropRequested){assertFocusContained(engineViews);std::memcpy(renderedCropViews,engineViews,sizeof(engineViews));}
+        }
     };
     auto finish=[&](){
         const auto auditEnds=lmuqv::stereoAuditFrameEnds;
@@ -793,8 +846,8 @@ int main(int argc,char** argv) {
         li.displayTime=frameTime;
         assert(locateViews(session,&li,&state,2,&count,located.views)==XR_SUCCESS&&count==2);
         assert(located.guard==0x1122334455667788ull);
-        assertFov(located.views[0].fov,-1.1f,0.9f,0.8f,-0.7f);
-        assertFov(located.views[1].fov,-0.85f,1.0f,0.75f,-0.85f);
+        assertOuterFov(located.views[0].fov,-1.1f,0.9f,0.8f,-0.7f);
+        assertOuterFov(located.views[1].fov,-0.85f,1.0f,0.75f,-0.85f);
         assert(lmuqv::xr_frame_views(cached));
         XrView repeated[4]{};
         assert(locateViews(session,&li,&state,2,&count,located.views)==XR_SUCCESS);
@@ -804,9 +857,11 @@ int main(int argc,char** argv) {
             assert(std::memcmp(&cached[eye].pose,&repeated[eye].pose,sizeof(XrPosef))==0);
         }
         std::memcpy(renderedMovingViews,cached,sizeof(cached));
+        if(cropRequested){assertFocusContained(cached);std::memcpy(renderedCropViews,cached,sizeof(cached));}
+        for(unsigned eye=0;eye<2;++eye){pv[eye].pose=located.views[eye].pose;pv[eye].fov=located.views[eye].fov;}
         assert(cached[2].pose.position.x==12&&cached[3].pose.position.x==13&&cached[2].pose.orientation.w==1&&cached[3].pose.orientation.w==1);
-        assertFov(cached[0].fov,-1.1f,0.9f,0.8f,-0.7f);
-        assertFov(cached[1].fov,-0.85f,1.0f,0.75f,-0.85f);
+        assertOuterFov(cached[0].fov,-1.1f,0.9f,0.8f,-0.7f);
+        assertOuterFov(cached[1].fov,-0.85f,1.0f,0.75f,-0.85f);
         if(frameTime==501){
             assertFocusFov(cached[2].fov,-0.30f,0.20f,0.25f,-0.15f);
             assertFocusFov(cached[3].fov,-0.15f,0.35f,0.20f,-0.30f,1);
@@ -847,7 +902,7 @@ int main(int argc,char** argv) {
     if(runtimeSettings){
         for(unsigned eye=0;eye<2;++eye){
             D3D11_TEXTURE2D_DESC nativeDesc{};source->GetDesc(&nativeDesc);
-            nativeDesc.Width=runtimeOuterWidth(eye);nativeDesc.Height=runtimeOuterHeight(eye);nativeDesc.BindFlags=outerBlurRequested?D3D11_BIND_SHADER_RESOURCE:0;
+            nativeDesc.Width=expectedCropWidth(runtimeOuterWidth(eye));nativeDesc.Height=expectedCropHeight(runtimeOuterHeight(eye));nativeDesc.BindFlags=outerBlurRequested?D3D11_BIND_SHADER_RESOURCE:0;
             std::vector<uint32_t> pixels(nativeDesc.Width*nativeDesc.Height,0x7f0a2040u);
             D3D11_SUBRESOURCE_DATA initial{pixels.data(),nativeDesc.Width*4,0};ID3D11Texture2D* native=nullptr;
             assert(SUCCEEDED(device->CreateTexture2D(&nativeDesc,&initial,&native)));
@@ -883,7 +938,7 @@ int main(int argc,char** argv) {
         // swapchain: accept it and copy exactly, without requiring a full-size
         // intermediate or a shader-resource bind flag for resampling.
         D3D11_TEXTURE2D_DESC nativeDesc{};source->GetDesc(&nativeDesc);
-        nativeDesc.Width=nativeDesc.Height=8;nativeDesc.BindFlags=0;
+        nativeDesc.Width=expectedCropWidth(8);nativeDesc.Height=expectedCropHeight(8);nativeDesc.BindFlags=0;
         std::array<uint32_t,64> pixels{};pixels.fill(0x7f0a2040u);
         D3D11_SUBRESOURCE_DATA initial{pixels.data(),8*4,0};
         ID3D11Texture2D* nativeSmall=nullptr;
@@ -956,6 +1011,7 @@ int main(int argc,char** argv) {
                 assert(texturePixel(textures[appChain==left?0:3],3,64)==0x7f0a2040u); // No paint before successful Wait.
                 assert(appWait(appChain,&wi)==XR_SUCCESS&&appRelease(appChain,&ri)==XR_SUCCESS);
             }
+            for(unsigned eye=0;eye<2;++eye){pv[eye].pose=located.views[eye].pose;pv[eye].fov=located.views[eye].fov;}
             pv[0].subImage.swapchain=left;pv[1].subImage.swapchain=right;pv[0].subImage.imageRect.extent=pv[1].subImage.imageRect.extent={128,128};
             end.displayTime=time;assert(reinterpret_cast<PFN_xrEndFrame>(load("xrEndFrame"))(session,&end)==XR_SUCCESS&&submittedViews==4);
         }
@@ -1001,7 +1057,7 @@ int main(int argc,char** argv) {
         const auto osdBefore=osd;expectedOverlay=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&osd);
         XrCompositionLayerProjectionView eyeViews[2]{};
         for(unsigned eye=0;eye<2;++eye){eyeViews[eye].type=XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;eyeViews[eye].subImage.swapchain=eye?overlayRight:overlayLeft;eyeViews[eye].subImage.imageRect.extent={128,128};}
-        XrCompositionLayerProjection eyeLayer{};eyeLayer.type=XR_TYPE_COMPOSITION_LAYER_PROJECTION;eyeLayer.viewCount=2;eyeLayer.views=eyeViews;
+        XrCompositionLayerProjection eyeLayer{};eyeLayer.type=XR_TYPE_COMPOSITION_LAYER_PROJECTION;eyeLayer.space=li.space;eyeLayer.viewCount=2;eyeLayer.views=eyeViews;
         const XrCompositionLayerBaseHeader* layerList[]={reinterpret_cast<const XrCompositionLayerBaseHeader*>(&eyeLayer),expectedOverlay};
         auto osdEnd=end;osdEnd.displayTime=701;osdEnd.layerCount=2;osdEnd.layers=layerList;
         runtimeTime=701;li.displayTime=701;
@@ -1010,6 +1066,7 @@ int main(int argc,char** argv) {
             assert(reinterpret_cast<PFN_xrWaitFrame>(load("xrWaitFrame"))(session,nullptr,&fs)==XR_SUCCESS);
             assert(reinterpret_cast<PFN_xrBeginFrame>(load("xrBeginFrame"))(session,nullptr)==XR_SUCCESS);
             assert(locateViews(session,&li,&state,2,&count,located.views)==XR_SUCCESS);
+            for(unsigned eye=0;eye<2;++eye){eyeViews[eye].pose=located.views[eye].pose;eyeViews[eye].fov=located.views[eye].fov;}
         };
         const auto statsStart=currentLog().size();
         expectedOverlayProjections=0;

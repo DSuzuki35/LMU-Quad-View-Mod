@@ -46,11 +46,23 @@ Fixed. Positive moves right/up; negative moves left/down. Each value is -50..50%
 of that eye's full projected view width/height. Auto keeps following gaze with
 the requested offset. Focus size and render resolution stay unchanged. Large
 offsets may place part of the region outside the visible view; offsets are not
-clamped to the outer edges. Reset offsets restores zero/provider placement.
+clamped to the outer edges when crop is off. Reset offsets restores zero/provider placement.
 Save and restart LMU to apply. Old settings default to zero.
 Outer smoothing defaults off; it leaves focus sharp but adds unmeasured GPU cost.
 The smaller outer-target optimization can be disabled in Setup for diagnosis.
-Crop support is deferred. Keep the pinned game-build guard enabled.
+Rendered FOV / crop is the mod's own crop: independent width/height, 25..100%.
+100/100 is full view. Lower values trim the centered view without zoom and reduce
+outer target dimensions; uncovered edges are black. Focus resolution is unchanged.
+Focus is kept inside the cropped view, and narrowed if it cannot fit. Actual GPU
+savings depend on the smaller native outer bank; full-size fallback/PPFX costs remain.
+Restart LMU for crop, resolution or FOV changes. Live controls are not implemented.
+LMU's own crop settings remain bypassed. Keep the pinned game-build guard enabled.
+
+MOTION COMPENSATION TEST CANDIDATE
+Submission preserves compensated poses and accepts changed projection spaces.
+First test Qubic with crop at 100/100, then compare compensation on/off. A valid
+test should show quadProjections=1 in the actual quad log and correct stable
+tracking. Then test crop separately. Fake-runtime tests do not verify a real rig.
 
 LIMITS
 Original eye draws plus two focus scene traversals remain. Shared-path CPU

@@ -47,6 +47,9 @@ int main() {
     require(!nativeOuterDimensions(0,31,32,nativeWidth,nativeHeight),"LMU input scaling must reject mismatched native target size");
     nativeRuntimeSettings=false;
     require(nativeOuterDimensions(0,32,32,nativeWidth,nativeHeight)&&nativeWidth==8&&nativeHeight==8,"legacy native percentage sizing changed");
+    nativeCropWidth=parse_crop_percent("75");nativeCropHeight=parse_crop_percent("50");
+    require(nativeOuterDimensions(0,32,32,nativeWidth,nativeHeight)&&nativeWidth==6&&nativeHeight==4,"legacy bank must match cropped XR outer output");
+    nativeCropWidth={};nativeCropHeight={};
     // Ordering guard requested for the nested-render restoration fix; no NVAPI/GPU execution.
     std::string engineSource;
     for(const char* path:{"engine_bridge.cpp","mod/engine_bridge.cpp","../engine_bridge.cpp"}){

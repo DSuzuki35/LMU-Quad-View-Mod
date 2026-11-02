@@ -6,11 +6,16 @@ using LmuQuadViewLauncher;
 class SettingsTests
 {
     static void Require(bool value, string name) { if (!value) throw new Exception(name); }
-    static void Rejected(Action action) { bool rejected=false; try { action(); } catch(ArgumentException) { rejected=true; } catch(InvalidDataException) { rejected=true; } Require(rejected,"Invalid settings accepted"); }
+    static void Rejected(Action action) { bool rejected=false; try { action(); } catch(ArgumentException) { rejected=true; } catch(InvalidDataException) { rejected=true; } catch(FormatException) { rejected=true; } Require(rejected,"Invalid settings accepted"); }
     static void Main()
     {
         string folder=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"settings-test-"+Guid.NewGuid().ToString("N")); Directory.CreateDirectory(folder);
         var s=new LauncherSettings { Backend="QVFR", OuterPercent=10,InnerPercent=200,FocusWidthPercent=33,FocusHeightPercent=25 };
+        foreach(var name in new[]{"CropWidthPercent","CropHeightPercent"}) {
+            var property=typeof(LauncherSettings).GetProperty(name);
+            Require(property!=null,"Rendered FOV crop setting missing: "+name);
+            Require((decimal)property.GetValue(new LauncherSettings(),null)==100,"Crop must default to full FOV");
+        }
         Require(typeof(LauncherSettings).GetProperty("FocusOffsetXPercent")!=null,"Horizontal offset setting missing");
         Require(typeof(LauncherSettings).GetProperty("FocusOffsetYPercent")!=null,"Vertical offset setting missing");
         string old="# custom\n[exe:DCS.exe]\nfocus_multiplier=1.7\n";
@@ -37,7 +42,16 @@ class SettingsTests
         s.OuterBlur=4; Rejected(delegate{QvfrSettings.Validate(s);}); s.OuterBlur=1.25m;
         s.FocusAspectRatio=2.19283709218806m;s.RenderProfiling=true;s.RenderProfileSeconds=300;s.DiagnosticsEnabled=false;s.StereoDrawAudit=true;s.StereoShaderCapture=true;s.StereoPairProof=true;s.CpuUploadReuse=true;
         s.FocusOffsetXPercent=-50;s.FocusOffsetYPercent=12.5m;
+        s.CropWidthPercent=75.5m;s.CropHeightPercent=42.25m;
         string xml=Path.Combine(folder,"launcher-settings.xml"); QvfrSettings.Save(xml,s); var loaded=QvfrSettings.Load(xml);
+        Require(loaded.CropWidthPercent==75.5m&&loaded.CropHeightPercent==42.25m,"Independent crop values did not roundtrip invariantly");
+        Require(File.ReadAllText(xml).Contains("<CropWidthPercent>75.5</CropWidthPercent>"),"Crop XML used local decimal separator");
+        foreach(var invalid in new[]{24.9m,100.1m}) {
+            s.CropWidthPercent=invalid;Rejected(delegate{QvfrSettings.Validate(s);});s.CropWidthPercent=75.5m;
+            s.CropHeightPercent=invalid;Rejected(delegate{QvfrSettings.Validate(s);});s.CropHeightPercent=42.25m;
+        }
+        s.CropWidthPercent=25;s.CropHeightPercent=100;QvfrSettings.Validate(s);s.CropWidthPercent=75.5m;s.CropHeightPercent=42.25m;
+        Require(QvfrSettings.ProfileText(old,s)==text,"Crop settings leaked into provider profile");
         Require(loaded.FocusOffsetXPercent==-50&&loaded.FocusOffsetYPercent==12.5m,"Offsets did not roundtrip invariantly");
         s.FocusOffsetXPercent=-50.1m;Rejected(delegate{QvfrSettings.Validate(s);});s.FocusOffsetXPercent=50;
         s.FocusOffsetYPercent=50.1m;Rejected(delegate{QvfrSettings.Validate(s);});s.FocusOffsetYPercent=-50;
@@ -61,6 +75,13 @@ class SettingsTests
         Require(!loaded.StereoShaderCapture,"Existing settings must not enable shader capture");
         Require(!loaded.StereoPairProof&&!loaded.CpuUploadReuse&&!loaded.CpuUploadBatch,"Existing settings must not enable prototype options");
         Require(loaded.FocusOffsetXPercent==0&&loaded.FocusOffsetYPercent==0,"Old settings must default offsets to zero");
+        Require(loaded.CropWidthPercent==100&&loaded.CropHeightPercent==100,"Old settings must preserve full rendered FOV");
+        File.WriteAllText(xml,"<QuadView><CropWidthPercent>75.5</CropWidthPercent></QuadView>");
+        loaded=QvfrSettings.Load(xml);Require(loaded.CropWidthPercent==75.5m&&loaded.CropHeightPercent==100,"Partially migrated crop settings lost independent default");
+        foreach(var invalid in new[]{"75,5","24.9","100.1","NaN",""}) {
+            File.WriteAllText(xml,"<QuadView><CropHeightPercent>"+invalid+"</CropHeightPercent></QuadView>");
+            Rejected(delegate{QvfrSettings.Load(xml);});
+        }
         Require(loaded.FocusAspectRatio==0,"Old settings invent headset geometry");
         s.Backend="VectorXR";s.VectorXrManifest=@"E:\VectorXR\layer.json";s.QuadViewsManifest=@"E:\QVFR\layer.json";
         QvfrSettings.Save(xml,s);loaded=QvfrSettings.Load(xml);

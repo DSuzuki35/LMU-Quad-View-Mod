@@ -10,7 +10,10 @@ class LaunchServiceTests {
         var root=Path.Combine(Path.GetTempPath(),"lmu-launch-tests-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);
         var originalOffset=Environment.GetEnvironmentVariable("LMU_QV_FOCUS_OFFSET_X_PERCENT");
         var originalVrs=Environment.GetEnvironmentVariable("LMU_QV_VRS_EXCLUSIVE");
+        var originalCrop=Environment.GetEnvironmentVariable("LMU_QV_CROP_WIDTH_PERCENT");
+        var originalCulture=System.Threading.Thread.CurrentThread.CurrentCulture;
         try {
+            System.Threading.Thread.CurrentThread.CurrentCulture=System.Globalization.CultureInfo.GetCultureInfo("de-DE");
             var providerRoot=Path.Combine(root,"provider's files");Directory.CreateDirectory(providerRoot);
             var dll=Path.Combine(providerRoot,"provider.dll");File.WriteAllBytes(dll,new byte[]{1,2,3});
             var manifest=Path.Combine(providerRoot,"quad.json");
@@ -28,8 +31,12 @@ class LaunchServiceTests {
             var settings=new LauncherSettings {GameDirectory=Path.Combine(root,"game's folder"),Backend="QVFR",FoveationMode="fixed",DebugFocus=true,NativeOuterResolution=false,OuterBlur=1.25m};
             Environment.SetEnvironmentVariable("LMU_QV_VRS_EXCLUSIVE","1");
             Environment.SetEnvironmentVariable("LMU_QV_FOCUS_OFFSET_X_PERCENT","49");
+            Environment.SetEnvironmentVariable("LMU_QV_CROP_WIDTH_PERCENT","29");
+            settings.CropWidthPercent=75.5m;settings.CropHeightPercent=42.25m;
             settings.FocusOffsetXPercent=-12.5m;settings.FocusOffsetYPercent=50;
             var info=LaunchService.MakeStartInfo(root,settings,plan,Path.Combine(root,"quad.log"));
+            Check(info.EnvironmentVariables["LMU_QV_CROP_WIDTH_PERCENT"]=="75.5"&&info.EnvironmentVariables["LMU_QV_CROP_HEIGHT_PERCENT"]=="42.25","Independent crop not exported invariantly");
+            Check(Environment.GetEnvironmentVariable("LMU_QV_CROP_WIDTH_PERCENT")=="29","Crop leaked into host environment");
             Check(info.EnvironmentVariables["LMU_QV_FOCUS_OFFSET_X_PERCENT"]=="-12.5"&&info.EnvironmentVariables["LMU_QV_FOCUS_OFFSET_Y_PERCENT"]=="50","Signed offsets not exported invariantly");
             Check(Environment.GetEnvironmentVariable("LMU_QV_FOCUS_OFFSET_X_PERCENT")=="49","Offset leaked into host environment");
             var metadataFactory=typeof(LaunchService).GetMethod("PreparedMetadata",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic);
@@ -37,6 +44,7 @@ class LaunchServiceTests {
             Directory.CreateDirectory(Path.Combine(root,"build"));File.WriteAllBytes(Path.Combine(root,"build","lmu_quadview.dll"),new byte[]{4,5,6});
             var prepared=metadataFactory.Invoke(null,new object[]{root,settings,plan,info,Path.Combine(root,"quad.log")});
             var savedMetadata=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(new JavaScriptSerializer().Serialize(prepared));
+            Check(Convert.ToDecimal(savedMetadata["CropWidthPercent"])==75.5m&&Convert.ToDecimal(savedMetadata["CropHeightPercent"])==42.25m,"Crop missing from run metadata");
             Check(Convert.ToDecimal(savedMetadata["FocusOffsetXPercent"])==-12.5m&&Convert.ToDecimal(savedMetadata["FocusOffsetYPercent"])==50,"Offsets missing from run metadata");
             Check(!info.UseShellExecute&&info.Arguments=="+XR"&&info.FileName==Path.Combine(settings.GameDirectory,"Le Mans Ultimate.exe"),"Must launch executable directly");
             Check(info.EnvironmentVariables[plan.DisableVariable]=="1","Implicit QVFR not disabled in child");
@@ -47,6 +55,8 @@ class LaunchServiceTests {
             Check(info.EnvironmentVariables["LMU_QV_VECTORXR_DIRECT_INPUTS"]=="0","QVFR must retain its original input flags");
             Check(info.EnvironmentVariables["LMU_QV_USE_RUNTIME_SETTINGS"]=="1"&&info.EnvironmentVariables["LMU_QV_FOCUS_PIXELS_PERCENT"]=="100","Provider dimensions scaled twice");
             var native=LaunchService.MakeLayerPlan(root,"Native",provider,null);
+            var fullView=LaunchService.MakeStartInfo(root,new LauncherSettings(),native,Path.Combine(root,"zero.log"));
+            Check(fullView.EnvironmentVariables["LMU_QV_CROP_WIDTH_PERCENT"]=="100"&&fullView.EnvironmentVariables["LMU_QV_CROP_HEIGHT_PERCENT"]=="100","Stale inherited crop survived defaults");
             Check(LaunchService.MakeStartInfo(root,new LauncherSettings(),native,Path.Combine(root,"zero.log")).EnvironmentVariables["LMU_QV_FOCUS_OFFSET_X_PERCENT"]=="0","Stale inherited offset survived defaults");
             Check(native.Layers=="XR_APILAYER_LMU_quadview"&&native.DisableVariable==provider.DisableVariable,"Native did not suppress implicit emulation");
             var vectorManifest=Path.Combine(providerRoot,"vector.json");
@@ -82,9 +92,10 @@ class LaunchServiceTests {
             Reject(delegate{LaunchService.ReadProviderManifest(malformedManifest);},"Explicit malformed provider must still be rejected");
             LaunchService.AddImplicitDisables(vectorPlan,new[]{manifest,vectorManifest,toolkit,customQvfr},"VectorXR");
             foreach(var providerName in new[]{"Native","QVFR","VectorXR"})foreach(var foveation in new[]{"fixed","auto"}) {
-                var position=new LauncherSettings {Backend=providerName,FoveationMode=foveation,FocusOffsetXPercent=50,FocusOffsetYPercent=-50};
+                var position=new LauncherSettings {Backend=providerName,FoveationMode=foveation,FocusOffsetXPercent=50,FocusOffsetYPercent=-50,CropWidthPercent=25,CropHeightPercent=80.5m};
                 var selectedPlan=providerName=="Native"?native:providerName=="QVFR"?plan:vectorPlan;
                 var child=LaunchService.MakeStartInfo(root,position,selectedPlan,Path.Combine(root,"position.log"));
+                Check(child.EnvironmentVariables["LMU_QV_CROP_WIDTH_PERCENT"]=="25"&&child.EnvironmentVariables["LMU_QV_CROP_HEIGHT_PERCENT"]=="80.5","Crop lost for "+providerName+" "+foveation);
                 Check(child.EnvironmentVariables["LMU_QV_FOCUS_OFFSET_X_PERCENT"]=="50"&&child.EnvironmentVariables["LMU_QV_FOCUS_OFFSET_Y_PERCENT"]=="-50","Offsets lost for "+providerName+" "+foveation);
             }
             var vectorSettings=new LauncherSettings {GameDirectory=settings.GameDirectory,Backend="VectorXR",FoveationMode="fixed"};
@@ -152,6 +163,8 @@ class LaunchServiceTests {
             Console.WriteLine("LaunchService tests passed: QVFR/VectorXR/native, discovery, explicit order, duplicate/conflicting-layer isolation, manifests, environment reset, pinned hash guard");
             return 0;
         } finally {
+            System.Threading.Thread.CurrentThread.CurrentCulture=originalCulture;
+            Environment.SetEnvironmentVariable("LMU_QV_CROP_WIDTH_PERCENT",originalCrop);
             Environment.SetEnvironmentVariable("LMU_QV_FOCUS_OFFSET_X_PERCENT",originalOffset);
             Environment.SetEnvironmentVariable("LMU_QV_VRS_EXCLUSIVE",originalVrs);
             if(Path.GetFullPath(root).StartsWith(Path.GetFullPath(Path.GetTempPath()),StringComparison.OrdinalIgnoreCase)) Directory.Delete(root,true);

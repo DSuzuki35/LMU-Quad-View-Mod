@@ -27,6 +27,7 @@ void operator delete[](void* p,size_t,std::align_val_t)noexcept{_aligned_free(p)
 #include <cassert>
 #include <chrono>
 #include <iostream>
+#include <limits>
 
 namespace {
 unsigned auditEnds=0,runtimeEnds=0,releases=0,waits=0;
@@ -110,6 +111,7 @@ struct Fixture {
             s.views[view].pose.position={float(100+view),float(200+view),float(300+view)};
             s.views[view].fov={float(-4-int(view)),float(4+view),float(5+view),float(-5-int(view))};
         }
+        for(unsigned eye=0;eye<2;++eye)views[eye].pose=s.views[eye].pose;
         projection=structure<XrCompositionLayerProjection>(XR_TYPE_COMPOSITION_LAYER_PROJECTION);
         projection.next=&projectionNext;projection.layerFlags=XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT|XR_COMPOSITION_LAYER_CORRECT_CHROMATIC_ABERRATION_BIT;
         projection.space=s.locateSpace;projection.viewCount=2;projection.views=views.data();
@@ -156,7 +158,7 @@ struct Fixture {
             assert(focus.subImage.imageRect.extent.width==100&&focus.subImage.imageRect.extent.height==200&&focus.subImage.imageArrayIndex==eye);
         }
         // The adapter must neither rewrite the caller's layers nor retain ownership.
-        assert(projection.viewCount==2&&projection.views==views.data()&&views[0].pose.position.x==0);
+        assert(projection.viewCount==2&&projection.views==views.data()&&views[0].pose.position.x==100);
         assert(!s.frame&&!s.shouldRender&&!s.located&&!s.captures[0]&&!s.captures[1]);
         assert(!s.outer[0].acquired&&!s.outer[1].acquired&&releases==2&&waits==0);
         assert(eventCount==4&&events[0]==1&&events[1]==2&&events[2]==3&&events[3]==4);
@@ -187,7 +189,7 @@ void semantics(){
         case 1:f.projection.viewCount=4;break;
         case 2:f.views[0].subImage.swapchain=f.views[1].subImage.swapchain;break;
         case 3:f.views[1].subImage.imageRect.extent.width=2000;break;
-        case 4:f.projection.space=reinterpret_cast<XrSpace>(99);break;
+        case 4:f.projection.space=XR_NULL_HANDLE;break;
         case 5:s.captures[1]=false;break;
         case 6:s.locateTime=99;break;
         case 7:s.frame=false;break;
@@ -218,6 +220,95 @@ void semantics(){
         Fixture f;s.focusOwnership=true;s.appChains.at(f.views[0].subImage.swapchain).focusLease=1;
         assert(layerEndFrame(s.session,&f.info)==XR_ERROR_CALL_ORDER_INVALID);
         assert(runtimeEnds==0&&releases==0&&auditEnds==0&&s.frame&&s.outer[0].acquired&&s.outer[1].acquired);
+    }
+}
+
+void checkPose(const XrPosef& actual,const XrPosef& expected){
+    const auto close=[](float a,float b){return std::abs(a-b)<0.00001f;};
+    assert(close(actual.position.x,expected.position.x)&&close(actual.position.y,expected.position.y)&&close(actual.position.z,expected.position.z));
+    assert(close(actual.orientation.x,expected.orientation.x)&&close(actual.orientation.y,expected.orientation.y)&&
+           close(actual.orientation.z,expected.orientation.z)&&close(actual.orientation.w,expected.orientation.w));
+}
+void compensatedSubmission(bool differentSpace){
+    Fixture f;
+    if(differentSpace)f.projection.space=reinterpret_cast<XrSpace>(99);
+    constexpr float h=0.7071067811865475f;
+    // Left: cached outer is Z+90, focus is Z+180 and two units up.
+    // Submitted outer is Z+180: its Z+90 correction moves focus two units left.
+    s.views[0].pose={{0,0,h,h},{10,20,30}};
+    s.views[2].pose={{0,0,1,0},{10,22,30}};
+    f.views[0].pose={{0,0,1,0},{5,6,7}};
+    // Right deliberately has a different correction (Y+180) and focus offset.
+    s.views[1].pose={{0,0,0,1},{-1,2,3}};
+    s.views[3].pose={{0,0,0,1},{-1,2,4}};
+    f.views[1].pose={{0,1,0,0},{4,5,6}};
+    const auto sourceViews=f.views;
+    f.info.layerCount=2;f.layers[1]=Fixture::header(f.overlays[0]);
+    assert(f.submit()==0);
+    assert(received.projectionCount==1&&received.projection.viewCount==4);
+    assert(received.projection.space==f.projection.space&&received.info.displayTime==f.info.displayTime);
+    assert(received.info.layerCount==2&&received.layers[1]==Fixture::header(f.overlays[0]));
+    for(unsigned eye=0;eye<2;++eye){
+        assert(std::memcmp(&received.views[eye].pose,&sourceViews[eye].pose,sizeof(XrPosef))==0);
+        assert(std::memcmp(&f.views[eye],&sourceViews[eye],sizeof(sourceViews[eye]))==0);
+        assert(received.views[eye+2].next==sourceViews[eye].next);
+        assert(std::memcmp(&received.views[eye+2].subImage,&sourceViews[eye].subImage,sizeof(XrSwapchainSubImage))==0);
+    }
+    checkPose(received.views[2].pose,{{0,0,h,-h},{3,6,7}});
+    checkPose(received.views[3].pose,{{0,1,0,0},{4,5,5}});
+    for(unsigned view=0;view<4;++view)assert(std::memcmp(&received.views[view].fov,&s.views[view].fov,sizeof(XrFovf))==0);
+    assert(releases==2&&runtimeEnds==1&&!s.frame);
+}
+void invalidPoses(){
+    for(unsigned source=0;source<6;++source)for(unsigned bad=0;bad<6;++bad){
+        Fixture f;f.info.layerCount=2;f.layers[1]=Fixture::header(f.overlays[0]);
+        auto& pose=source<2?f.views[source].pose:s.views[source-2].pose;
+        switch(bad){
+        case 0:pose.position.x=std::numeric_limits<float>::infinity();break;
+        case 1:pose.position.z=std::numeric_limits<float>::quiet_NaN();break;
+        case 2:pose.orientation.y=std::numeric_limits<float>::infinity();break;
+        case 3:pose.orientation={0,0,0,0};break;
+        case 4:pose.orientation={0,0,0,2};break;
+        case 5:pose.orientation.w=std::numeric_limits<float>::quiet_NaN();break;
+        }
+        assert(f.submit()==0);
+        assert(received.projectionCount==0&&received.info.layerCount==1&&received.layers[0]==Fixture::header(f.overlays[0]));
+        assert(releases==2&&runtimeEnds==1&&!s.frame);
+    }
+}
+void compensationEdges(){
+    {
+        // A layer may move its reference space without rewriting the pose values.
+        Fixture f;f.projection.space=reinterpret_cast<XrSpace>(99);
+        const auto cached=s.views;
+        assert(f.submit()==0&&received.projectionCount==1&&received.projection.space==f.projection.space);
+        for(unsigned view=0;view<4;++view)assert(std::memcmp(&received.views[view].pose,&cached[view].pose,sizeof(XrPosef))==0);
+    }
+    {
+        // A physically identical quaternion with the opposite sign must not flip the offset.
+        Fixture f;f.views[0].pose.orientation.w=-1;
+        assert(f.submit()==0&&received.projectionCount==1);
+        checkPose(received.views[2].pose,{{0,0,0,-1},{102,202,302}});
+    }
+    {
+        // Accepted normalization drift must not scale the rotated focus displacement.
+        Fixture f;s.views[0].pose.orientation.w=1.005f;s.views[2].pose.orientation.w=0.995f;
+        f.views[0].pose.orientation={0,0,1.005f,0};
+        assert(f.submit()==0&&received.projectionCount==1);
+        assert(received.views[0].pose.orientation.z==1.005f);
+        checkPose(received.views[2].pose,{{0,0,1,0},{98,198,302}});
+    }
+    {
+        // Coincident outer/focus cameras preserve the submitted pose exactly.
+        Fixture f;s.views[2].pose=s.views[0].pose;f.views[0].pose={{0,1,0,0},{1,2,3}};
+        assert(f.submit()==0&&received.projectionCount==1);
+        assert(std::memcmp(&received.views[2].pose,&f.views[0].pose,sizeof(XrPosef))==0);
+    }
+    {
+        // Finite inputs whose transformed position cannot fit XrPosef must be rejected.
+        Fixture f;const float large=std::numeric_limits<float>::max()*0.75f;
+        s.views[0].pose.position.x=-large;s.views[2].pose.position.x=large;f.views[0].pose.position.x=large;
+        assert(f.submit()==0&&received.projectionCount==0);
     }
 }
 
@@ -264,6 +355,9 @@ int main(int argc,char** argv){
     const bool runProfile=argc>1&&!std::strcmp(argv[1],"--profile");
     SetEnvironmentVariableA("LMU_QV_DIAGNOSTICS",runProfile?"1":"0");
     if(runProfile){profileTest();return 0;}
+    if(argc>1&&!std::strcmp(argv[1],"--different-space")){compensatedSubmission(true);return 0;}
+    compensatedSubmission(false);compensatedSubmission(true);invalidPoses();compensationEdges();
+    std::cout<<"EndFrame same/different-space compensation and invalid poses PASS\n";
     semantics();std::cout<<"EndFrame metadata, ordering, rejection, fallback, passthrough and ownership PASS\n";
     if(runBenchmark){benchmark();return 0;}
     bool allocationFree=true;for(unsigned count:{1u,4u,16u})allocationFree=(allocationTest(count)==0)&&allocationFree;

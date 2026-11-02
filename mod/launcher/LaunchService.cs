@@ -172,6 +172,8 @@ namespace LmuQuadViewLauncher {
             environment["LMU_QV_PROFILE_SECONDS"]=settings.RenderProfileSeconds.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_VECTORXR_DIRECT_INPUTS"]=settings.Backend=="VectorXR"?"1":"0";
             environment["LMU_QV_OUTER_BLUR"]=settings.OuterBlur.ToString(CultureInfo.InvariantCulture);
+            environment["LMU_QV_CROP_WIDTH_PERCENT"]=settings.CropWidthPercent.ToString(CultureInfo.InvariantCulture);
+            environment["LMU_QV_CROP_HEIGHT_PERCENT"]=settings.CropHeightPercent.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_FOCUS_OFFSET_X_PERCENT"]=settings.FocusOffsetXPercent.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_FOCUS_OFFSET_Y_PERCENT"]=settings.FocusOffsetYPercent.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_NATIVE_OUTER"]=settings.NativeOuterResolution?"1":"0";
@@ -227,6 +229,7 @@ namespace LmuQuadViewLauncher {
                 ExplicitManifest=plan.ExplicitManifest,EnabledLayers=plan.Layers,DisabledImplicitSwitches=plan.DisableVariables,Log=log,
                 DebugFocus=settings.DebugFocus,RenderProfiling=settings.RenderProfiling,StereoDrawAudit=settings.StereoDrawAudit,StereoShaderCapture=settings.StereoShaderCapture,StereoPairProof=settings.StereoPairProof,CpuUploadReuse=settings.CpuUploadReuse,CpuUploadBatch=settings.CpuUploadBatch,RenderProfileSeconds=settings.RenderProfileSeconds,NativeOuterResolution=settings.NativeOuterResolution,UseRuntimeSettings=true,
                 VectorXrDirectInputs=settings.Backend=="VectorXR",OuterBlur=settings.OuterBlur,
+                CropWidthPercent=settings.CropWidthPercent,CropHeightPercent=settings.CropHeightPercent,
                 FocusOffsetXPercent=settings.FocusOffsetXPercent,FocusOffsetYPercent=settings.FocusOffsetYPercent,
                 OuterPercent=settings.OuterPercent,InnerPercent=settings.InnerPercent,FocusWidthPercent=settings.FocusWidthPercent,FocusHeightPercent=settings.FocusHeightPercent,
                 PreparedUTC=DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture)};

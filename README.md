@@ -64,7 +64,7 @@ shifts the region right by 5% of that eye's full projected view width.
 In Auto, the offset is relative to the provider's current gaze position; eye
 tracking continues to move the region. The shift does not change its projected
 size or render resolution. It is not clamped to the outer-view edges, so large
-offsets can put part of the region outside the visible view. **Reset offsets**
+offsets can put part of the region outside the visible view when crop is off. **Reset offsets**
 sets both to zero, restoring provider placement exactly. Save and restart LMU
 after changing offsets. Existing settings default to zero.
 
@@ -84,6 +84,22 @@ Outer smoothing defaults to off and leaves the focus image sharp. Start with
 0.5–1 pixel if desired. It adds GPU work; headset cost has not been measured.
 It does not replace temporal anti-aliasing. The smaller outer-target optimization
 can be disabled in Setup for diagnosis. In-game crop support remains deferred.
+
+**Rendered FOV / crop** controls the mod's own crop independently of LMU's saved
+crop settings. Width and height each range from 25–100%; 100/100 is the full view.
+Lower values trim the centered projected view without zoom, leaving uncovered
+edges black. Outer target dimensions shrink with the retained tangent-space FOV;
+75% width and 50% height use approximately 37.5% of the original outer pixels.
+This is not a total GPU/frame-time saving: focus textures keep their resolution,
+PPFX intermediates may remain full-size, and the full-size outer fallback loses
+the native outer-render saving. Focus follows gaze until the crop boundary, where
+it is kept inside; a focus region larger than the crop is narrowed to fit.
+Save and restart LMU to apply. Resolution and FOV controls are not live controls.
+
+The motion-compensation candidate preserves incoming projection poses and transfers
+their correction to the focus views, including when a layer changes reference space.
+Fake-runtime regressions pass; actual Qubic compensation and cropped composition
+still need headset validation. Disable crop (100/100) for the first Qubic A/B test.
 
 ## What this release does
 

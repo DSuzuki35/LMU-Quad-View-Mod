@@ -48,7 +48,7 @@ class GuiLayoutTests {
         for(var parent=control.Parent;parent!=null;parent=parent.Parent) {
             var bounds=parent.RectangleToScreen(parent.ClientRectangle);
             bounds.Inflate(1,1);
-            Check(bounds.Contains(rectangle),control.Name+" is clipped by "+parent.GetType().Name+" "+parent.Name);
+            Check(bounds.Contains(rectangle),control.Name+" "+rectangle+" is clipped by "+parent.GetType().Name+" "+parent.Name+" "+bounds);
         }
     }
     static void NoNativeScrollBars(Form form) {
@@ -145,6 +145,14 @@ class GuiLayoutTests {
             foreach(var name in new[]{"FocusOffsetXPercent","FocusOffsetYPercent"}) {
                 var control=Named(form,name);control.Focus();Settle(form);FullyVisible(control);
             }
+            foreach(var name in new[]{"CropWidthPercent","CropHeightPercent","ResetCrop"}) {
+                var control=Named(form,name);control.Focus();Settle(form);FullyVisible(control);
+            }
+            TextFits(Named(form,"ResetCrop"));TextFits(Named(form,"CropTitle"));
+            var cropHint=Named(form,"CropHint");
+            var wrapped=TextRenderer.MeasureText(cropHint.Text,cropHint.Font,new Size(cropHint.ClientSize.Width,Int32.MaxValue),TextFormatFlags.WordBreak);
+            Check(wrapped.Height<=cropHint.ClientSize.Height,"Crop explanation is clipped");
+            Screenshot(form,Path.Combine(output,stem+"-crop.png"));
         }
         Screenshot(form,Path.Combine(output,stem+"-"+pageName+"-bottom.png"));
         Console.WriteLine(stem+" "+pageName+": text/ancestor bounds, footer reachability, dark scrolling PASS; scroll="+scroll.Maximum);
@@ -158,11 +166,19 @@ class GuiLayoutTests {
             using(var form=new Launcher()) {
                 var flags=BindingFlags.Instance|BindingFlags.NonPublic;
                 foreach(var providerName in new[]{"Native","QVFR","VectorXR"})foreach(var foveation in new[]{"fixed","auto"}) {
-                    var offsets=new LauncherSettings {Backend=providerName,FoveationMode=foveation,FocusOffsetXPercent=-12.5m,FocusOffsetYPercent=50};
+                    var offsets=new LauncherSettings {Backend=providerName,FoveationMode=foveation,FocusOffsetXPercent=-12.5m,FocusOffsetYPercent=50,CropWidthPercent=75.5m,CropHeightPercent=25};
                     typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{offsets});
                     var x=(PercentSetting)Named(form,"FocusOffsetXPercent");var y=(PercentSetting)Named(form,"FocusOffsetYPercent");
                     Check(x.Enabled&&y.Enabled&&x.Value==-12.5m&&y.Value==50,"Offsets disabled or lost for "+providerName+" "+foveation);
                     var saved=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
+                    var cropX=(PercentSetting)Named(form,"CropWidthPercent");var cropY=(PercentSetting)Named(form,"CropHeightPercent");
+                    Check(cropX.Enabled&&cropY.Enabled&&cropX.Value==75.5m&&cropY.Value==25,"Crop disabled or lost for "+providerName+" "+foveation);
+                    Check(saved.CropWidthPercent==75.5m&&saved.CropHeightPercent==25,"Crop GUI roundtrip failed");
+                    cropX.Value=80;Check(cropY.Value==25,"Crop dimensions are linked");
+                    cropX.Value=0;cropY.Value=101;Check(cropX.Value==25&&cropY.Value==100,"Crop UI range incorrect");
+                    typeof(Button).GetMethod("OnClick",flags).Invoke(Named(form,"ResetCrop"),new object[]{EventArgs.Empty});
+                    var full=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
+                    Check(full.CropWidthPercent==100&&full.CropHeightPercent==100,"Reset did not restore full FOV");
                     Check(saved.FocusOffsetXPercent==-12.5m&&saved.FocusOffsetYPercent==50,"Offset GUI roundtrip failed");
                     typeof(Button).GetMethod("OnClick",flags).Invoke(Named(form,"ResetFocusOffsets"),new object[]{EventArgs.Empty});
                     saved=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);

@@ -19,6 +19,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Focus box tests compilation failed' }
     & .\build\focus_box_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Focus box tests failed' }
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/view_crop_test.cpp -o build/view_crop_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'View crop tests compilation failed' }
+    & .\build\view_crop_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'View crop tests failed' }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/native_xr_views_test.cpp -o build/native_xr_views_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native XR view tests compilation failed' }
     & .\build\native_xr_views_test.exe
@@ -136,6 +140,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Diagnostics-off XR tests failed' }
     & .\build\render_profile_test.exe --diagnostics-off
     if ($LASTEXITCODE -ne 0) { throw 'Diagnostics-off profiler tests failed' }
+    foreach($testArgs in @(@('--crop'),@('--crop','--scaled'),@('--crop','--runtime-settings'),@('--crop','--runtime-settings','--srgb'),@('--crop','--runtime-settings','--focus-offset'),@('--invalid-crop'),@('--invalid-crop','--runtime-settings'))){
+        & .\build\xr_layer_tests.exe @testArgs
+        if($LASTEXITCODE -ne 0){throw 'Rendered crop XR tests failed'}
+    }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -shared -I ../prototype/third_party xr_layer.cpp engine_bridge.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o build/version.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o $LayerOutput
     if ($LASTEXITCODE -ne 0) { throw 'Layer compilation failed' }
     Get-FileHash -LiteralPath $LayerOutput -Algorithm SHA256 | Select-Object Hash

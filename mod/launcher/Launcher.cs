@@ -292,6 +292,8 @@ namespace LmuQuadViewLauncher
             TextAlign=HorizontalAlignment.Right,Name="RenderProfileSeconds",AccessibleName="RenderProfileSeconds",Enabled=false};
         readonly PercentSetting outer = new PercentSetting("Outer resolution", 10, 400);
         readonly PercentSetting inner = new PercentSetting("Inner resolution", 25, 400);
+        readonly PercentSetting cropWidth = new PercentSetting("Width", 25, 100) { Name="CropWidthPercent", Value=100 };
+        readonly PercentSetting cropHeight = new PercentSetting("Height", 25, 100) { Name="CropHeightPercent", Value=100 };
         readonly PercentSetting focusWidth = new PercentSetting("Width", 10, 90);
         readonly PercentSetting focusHeight = new PercentSetting("Height", 10, 90);
         readonly PercentSetting focusOffsetX = new PercentSetting("Horizontal", -50, 50) { Name="FocusOffsetXPercent" };
@@ -422,10 +424,10 @@ namespace LmuQuadViewLauncher
         }
         void BuildRendering()
         {
-            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 5, Margin = new Padding(0) };
+            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 6, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 200)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 280));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 250)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54)); renderingPage.SetContent(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 250)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 270)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54)); renderingPage.SetContent(grid);
             var provider = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
             var p = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Margin = new Padding(0) };
             p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -456,6 +458,21 @@ namespace LmuQuadViewLauncher
             positionContent.Controls.Add(focusOffsetX,0,1);positionContent.Controls.Add(focusOffsetY,1,1);
             var positionHint=Caption("Percent of each eye's full view. Positive: right / up. In Auto, offsets are relative to gaze. 0 = no shift. Applies next game launch.");
             positionContent.Controls.Add(positionHint,0,2);positionContent.SetColumnSpan(positionHint,2);position.Controls.Add(positionContent);grid.Controls.Add(position,0,2);grid.SetColumnSpan(position,2);
+            var crop = new Surface { Name="CropCard", Dock=DockStyle.Fill, Margin=new Padding(0,0,0,14), Padding=new Padding(17,12,17,10) };
+            var cropContent = new TableLayoutPanel { Dock=DockStyle.Fill, ColumnCount=2, RowCount=3, Margin=new Padding(0) };
+            cropContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));cropContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,50));
+            cropContent.RowStyles.Add(new RowStyle(SizeType.Absolute,38));cropContent.RowStyles.Add(new RowStyle(SizeType.Absolute,84));cropContent.RowStyles.Add(new RowStyle(SizeType.Percent,100));
+            var cropHeader=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=new Padding(0)};
+            cropHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));cropHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,150));
+            var cropTitle=Theme.Label("Rendered FOV / crop",13F,Theme.Text);cropTitle.Name="CropTitle";cropTitle.Font=new Font("Segoe UI",13F,FontStyle.Bold);
+            cropHeader.Controls.Add(cropTitle,0,0);
+            var resetCrop=Theme.Button("Reset to full",false);resetCrop.Name="ResetCrop";resetCrop.Height=30;resetCrop.Dock=DockStyle.Fill;resetCrop.Font=new Font("Segoe UI",9F);resetCrop.Margin=new Padding(0);
+            resetCrop.Click+=delegate {cropWidth.Value=cropHeight.Value=100;};cropHeader.Controls.Add(resetCrop,1,0);
+            cropContent.Controls.Add(cropHeader,0,0);cropContent.SetColumnSpan(cropHeader,2);
+            cropWidth.Margin=new Padding(0,3,12,0);cropHeight.Margin=new Padding(12,3,0,0);
+            cropContent.Controls.Add(cropWidth,0,1);cropContent.Controls.Add(cropHeight,1,1);
+            var cropHint=Caption("100% = full view. Lower values crop the edges with black borders, without zoom. Reduces outer target pixels; focus resolution stays unchanged. Focus may be constrained to the cropped view. Applies to all providers. Restart LMU to apply; headset settings stay unchanged.");cropHint.Name="CropHint";
+            cropContent.Controls.Add(cropHint,0,2);cropContent.SetColumnSpan(cropHint,2);crop.Controls.Add(cropContent);grid.Controls.Add(crop,0,3);grid.SetColumnSpan(crop,2);
             var preview = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 12), Padding = new Padding(18, 10, 18, 10) };
             var info = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Margin = new Padding(0) };
             info.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); info.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -467,8 +484,8 @@ namespace LmuQuadViewLauncher
             blurRow.Controls.Add(Theme.Label("Outer smoothing (pixels)", 10F, Theme.Text), 0, 0);
             outerBlur.Margin = new Padding(2, 4, 0, 0); blurRow.Controls.Add(outerBlur, 1, 0); info.Controls.Add(blurRow, 1, 0);
             info.Controls.Add(Caption("Softens peripheral shimmer; adds a small GPU pass. Focus stays sharp. 0 = off."), 1, 1);
-            preview.Controls.Add(info); grid.Controls.Add(preview, 0, 3); grid.SetColumnSpan(preview, 2);
-            grid.Controls.Add(resolutionHint, 0, 4); grid.SetColumnSpan(resolutionHint, 2);
+            preview.Controls.Add(info); grid.Controls.Add(preview, 0, 4); grid.SetColumnSpan(preview, 2);
+            grid.Controls.Add(resolutionHint, 0, 5); grid.SetColumnSpan(resolutionHint, 2);
         }
         Control SettingCard(string title, PercentSetting first, PercentSetting second, string hint, Padding margin)
         {
@@ -566,7 +583,7 @@ namespace LmuQuadViewLauncher
                 :focusGeometry==null?"Per-axis % until measured: run LMU once, then read FOV below."
                 :"Equal-axis sizes: 50 / 50 is square near the center. Re-read FOV after headset/FOV changes.";
             resolutionHint.Text = qvfr ? "200% resolution means 2x width and 2x height (4x pixels). Save updates only LMU's QVFR profile and backs up existing settings. Restart LMU after changes."
-                : vector ? "Resolution, focus size and tracking are configured in VectorXR's LMU profile. Controls above are inactive. QVFR and OpenXR Toolkit are bypassed for this launch. Restart LMU after changes."
+                : vector ? "Resolution, focus size and tracking are configured in VectorXR's LMU profile. QVFR and OpenXR Toolkit are bypassed for this launch. Restart LMU after changes."
                 : "Resolution and focus size are controlled by your native runtime. Switch to Quad-Views-Foveated to adjust them here. Restart LMU after changes.";
         }
         void Fill(LauncherSettings s)
@@ -588,6 +605,7 @@ namespace LmuQuadViewLauncher
             cpuUploadBatch.Checked=s.CpuUploadBatch;
             profileDuration.Value=s.RenderProfileSeconds;
             outer.Value = s.OuterPercent; inner.Value = s.InnerPercent;
+            cropWidth.Value=s.CropWidthPercent;cropHeight.Value=s.CropHeightPercent;
             focusWidth.Value = focusGeometry==null?s.FocusWidthPercent:focusGeometry.DisplayWidth(s.FocusWidthPercent);
             focusHeight.Value = focusGeometry==null?s.FocusHeightPercent:focusGeometry.DisplayHeight(s.FocusHeightPercent);
             focusOffsetX.Value=s.FocusOffsetXPercent;focusOffsetY.Value=s.FocusOffsetYPercent;
@@ -600,6 +618,7 @@ namespace LmuQuadViewLauncher
                 Backend = backend.SelectedIndex == 2 ? "VectorXR" : backend.SelectedIndex == 1 ? "QVFR" : "Native", FoveationMode = mode.SelectedIndex == 1 ? "fixed" : "auto",
                 DebugFocus = outline.Checked, RenderProfiling=renderProfiling.Checked, DiagnosticsEnabled=diagnosticsEnabled.Checked,StereoDrawAudit=stereoDrawAudit.Checked,StereoShaderCapture=stereoShaderCapture.Checked,StereoPairProof=stereoPairProof.Checked,CpuUploadReuse=cpuUploadReuse.Checked,CpuUploadBatch=cpuUploadBatch.Checked, RenderProfileSeconds=Decimal.ToInt32(profileDuration.Value), NativeOuterResolution = nativeOuter.Checked,
                 OuterPercent = outer.Value, InnerPercent = inner.Value,
+                CropWidthPercent=cropWidth.Value,CropHeightPercent=cropHeight.Value,
                 FocusWidthPercent = focusGeometry==null?focusWidth.Value:focusGeometry.ProviderWidth(focusWidth.Value),
                 FocusHeightPercent = focusGeometry==null?focusHeight.Value:focusGeometry.ProviderHeight(focusHeight.Value),
                 FocusOffsetXPercent=focusOffsetX.Value,FocusOffsetYPercent=focusOffsetY.Value,

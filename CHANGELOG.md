@@ -4,6 +4,18 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
+## Unreleased - motion compensation / rendered crop candidate
+
+- Preserve submitted stereo pose corrections in all four views instead of rejecting
+  changed reference spaces or overwriting upper-layer compensation.
+- Add independent 25–100% rendered crop width/height in the launcher. Crop reduces
+  outer FOV and target dimensions together; focus resolution stays unchanged and
+  its FOV is kept inside the crop. Settings apply after restarting LMU.
+- Add pose, crop geometry, fake-runtime and launcher/layout regressions.
+- Fix MSVC build argument quoting for checkout paths containing spaces.
+- Qubic hardware and cropped compositor output still require tester validation;
+  no measured GPU improvement or live-setting support is claimed.
+
 ## 0.1.1 - 2026-11-01
 
 ### Added
