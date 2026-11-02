@@ -4,7 +4,7 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
-## Unreleased - benchmark / motion compensation / rendered crop candidate
+## 0.1.2 - 2026-11-02
 
 - Add opt-in head-locked Minimal/Detailed benchmark overlays, Dan Suzuki UI-kit
   styling, live placement, separate DirectInput joystick bindings, and manual

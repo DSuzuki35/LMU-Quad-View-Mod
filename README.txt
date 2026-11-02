@@ -1,16 +1,16 @@
-LMU QUAD VIEW MOD — v0.1.1
+LMU QUAD VIEW MOD — v0.1.2
 
 Free experimental Windows x64 / D3D11 quad-view integration for Le Mans Ultimate.
 Always free; donations are completely optional. Use offline. No Studio397
 endorsement or anti-cheat approval is claimed.
 
-BENCHMARK TEST CANDIDATE
+BENCHMARK OVERLAY (EXPERIMENTAL)
 Open Benchmark, enable it before launch, and leave this launcher running.
 Minimal/Detailed overlays, live placement, separate joystick show/hide and record
 bindings, and manual start/stop captures are available. HTML/CSV/JSON reports
 are saved under benchmarks/. See BENCHMARK.md for setup and measurement limits.
 Diagnose latest launch explains common log failures without exposing raw paths.
-No live headset/physical joystick validation has been performed for this candidate.
+No live headset/physical joystick validation has been performed for these features.
 
 ABOUT THIS PROJECT
 I built this in my spare time with substantial help from AI. I'm an engineer
@@ -77,7 +77,7 @@ Original eye draws plus two focus scene traversals remain. Shared-path CPU
 housekeeping improvements are not full single-pass stereo or a confirmed 4–5 ms
 fix. Experimental upload reuse/batching and paired-draw checks default off.
 Compatibility and performance still require headset testing.
-Full single-pass stereo remains a 0.2.0 research target, not a feature of 0.1.1.
+Full single-pass stereo remains a 0.2.0 research target, not a feature of 0.1.2.
 
 SUPPORT AND PROFILING
 Report version, game build, headset/GPU/driver, runtime/provider, settings and
