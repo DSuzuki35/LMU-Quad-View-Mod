@@ -4,6 +4,24 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
+## 0.2.0 - 2026-11-02
+
+- Add experimental NVIDIA Stereo VRS as an alternative to Quad Views. It keeps
+  two original eye renders, with 1x1 shading inside the focus rectangle and
+  selectable 1x1, 2x2 or 4x4 peripheral shading in verified world-sort scopes.
+- Auto gaze uses OpenXR eye-gaze input when available; missing, inactive or
+  invalid gaze falls back to the fixed focus region. Focus size/offsets apply
+  per eye. Unsupported VRS hardware retains full-rate stereo.
+- Preserve all 0.1.2 quad crop, pose compensation, offset, benchmark overlay,
+  joystick capture, report and diagnostic features. Quad remains the default.
+  VRS uses ordinary stereo resolution/in-game crop rather than quad-only sizing.
+- Add explanatory hover help, an explicit experimental VRS selector and shading
+  rate control. Existing experimental CPU upload reuse/fast-path switches remain
+  available in Quad Views mode.
+- Full native SPS remains unfinished and is not included as a 0.2.0 feature.
+  VRS can reduce shading work; removing extra quad traversals may reduce CPU work.
+  No measured LMU FPS or frametime improvement is claimed.
+
 ## 0.1.2 - 2026-11-02
 
 - Add opt-in head-locked Minimal/Detailed benchmark overlays, Dan Suzuki UI-kit

@@ -5,16 +5,30 @@ A free Windows x64 / D3D11 mod that adds two outer and two focus views to
 Quad-Views-Foveated (QVFR) or VectorXR separately to provide quad views on a
 stereo runtime.
 
-**v0.1.2 is an experimental offline release.** Headset and runtime compatibility
+**v0.2.0 is an experimental offline build.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
-Version 0.1.2 includes a **Benchmark** page with Minimal and
+Version 0.2.0 retains the **Benchmark** page with Minimal and
 Detailed in-headset overlays, separate joystick bindings for visibility and
 manual recording, local HTML/CSV/JSON reports, and latest-launch diagnostics.
 Enable Benchmark before launching and leave the launcher open. See
 [benchmark instructions and measurement limits](BENCHMARK.md). This release
 also includes the motion-compensation and mod-owned crop changes below; real
 headset and joystick compatibility still needs tester validation.
+
+## Stereo VRS (experimental)
+
+Choose **Stereo VRS (NVIDIA, experimental)** for two native stereo views with
+full-rate shading in a focus rectangle and coarser peripheral shading. Auto
+uses OpenXR eye tracking when available, with a fixed fallback; Fixed skips
+eye tracking. Start with 2x2; 1x1 is the full-rate control, 4x4 is more aggressive.
+Quad Views and all 0.1.2 features remain available. Hover over controls for
+short explanations and CPU/GPU tradeoffs. Existing CPU upload experiments remain
+quad-only. Native SPS is unfinished and is not included as a feature.
+
+VRS reduces pixel-shader work and avoids the extra quad focus traversals, but
+image quality and performance depend on the workload. No LMU speedup is claimed.
+See [setup, compatibility and measurement limits](PORTABLE-VRS.txt).
 
 ## About this project
 
@@ -33,7 +47,7 @@ contributions are welcome. See [the contribution guide](CONTRIBUTING.md).
 
 ## Install and launch
 
-1. Download `LMU-Quad-View-Mod-0.1.2.zip` from [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases/tag/v0.1.2).
+1. Use the complete `LMU-Quad-View-Mod-0.2.0.zip` package. Published builds are listed in [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
 2. Extract the **complete ZIP** to a writable folder outside the LMU installation.
 3. Open **LMU-QuadView-Launcher.exe**. Keep its `.exe.config` file beside it.
 4. In **Setup**, select the LMU game folder. Ensure your headset's OpenXR runtime
@@ -47,6 +61,7 @@ show reputation warnings. OpenXR Toolkit is not required.
 
 | Provider | Setup and settings |
 | --- | --- |
+| Stereo VRS | Native stereo runtime and a compatible NVIDIA GPU/driver. Focus size, offsets and peripheral shading rate are set in the launcher. No quad provider required. |
 | Native OpenXR | Requires a runtime exposing quad views. Resolution and FOV come from runtime settings. |
 | Quad-Views-Foveated | Install mbucchia's QVFR separately; Setup links to upstream instructions and can select its manifest. Configure resolution and focus size in the launcher. See [QVFR instructions](PORTABLE-QVFR.txt). |
 | VectorXR | Install separately, enable its LMU Quadviews profile, and select VectorXR. Setup can locate its manifest or accept a JSON path. Configure resolution, focus and tracking in VectorXR; launcher QVFR sizing controls are inactive. See [VectorXR instructions](PORTABLE-VECTORXR.txt). |

@@ -64,6 +64,10 @@ class BenchmarkTests
         using (var controller = new BenchmarkController(root))
         {
             Header(view, 42); controller.AttachMapping(map, 42, DateTime.UtcNow); controller.Tick();
+            view.Write(108,1600U);view.Write(112,1440U);view.Write(116,1600U);view.Write(120,1440U);
+            controller.Tick();Check(controller.Snapshot.Resolution=="Stereo eyes 1600x1440 / 1600x1440","Stereo benchmark invents focus targets");
+            view.Write(124,1200U);view.Write(128,1200U);controller.Tick();
+            Check(controller.Snapshot.Resolution=="Outer 1600x1440 / 1600x1440  Focus 1200x1200","Quad benchmark dimensions regressed");
             Check(controller.Connected && view.ReadInt32(44) == 1 && (view.ReadInt32(40) & 1) == 0, "Config seqlock");
             Check(view.ReadInt32(76) == 768 && view.ReadInt32(80) == 256 && (view.ReadInt32(72) & 1) == 0 && view.ReadInt32(72) != 0, "Bitmap seqlock/dimensions");
             int sequence = view.ReadInt32(72); controller.Tick(); Check(view.ReadInt32(72) == sequence, "Bitmap updates exceeded 5Hz");

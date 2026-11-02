@@ -1,4 +1,10 @@
-LMU QUAD VIEW MOD — v0.1.2
+LMU QUAD VIEW MOD — v0.2.0
+
+STEREO VRS (NVIDIA, EXPERIMENTAL)
+Choose Stereo VRS for two native eye views with reduced peripheral shading.
+Auto eye tracking falls back to a fixed region when unavailable. See
+PORTABLE-VRS.txt. All 0.1.2 features remain; unfinished native SPS is excluded.
+Hover over launcher options for explanations and performance tradeoffs.
 
 Free experimental Windows x64 / D3D11 quad-view integration for Le Mans Ultimate.
 Always free; donations are completely optional. Use offline. No Studio397

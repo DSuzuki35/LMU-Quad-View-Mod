@@ -5,6 +5,11 @@ class LaunchDiagnosticsTests {
     static int Main(){
         try {
             Has(LmuQuadViewLauncher.LaunchDiagnostics.Explain(""),"NO_LOG");
+            Has(LmuQuadViewLauncher.LaunchDiagnostics.Explain("xrEndFrame mode=vrs frame=4 stereoProjections=1 shouldRender=1 result=0"),"SUBMITTING");
+            Has(LmuQuadViewLauncher.LaunchDiagnostics.Explain("xrEndFrame mode=vrs frame=4 stereoProjections=1 shouldRender=1 result=0"),"stereo");
+            Has(LmuQuadViewLauncher.LaunchDiagnostics.Explain("xrEndFrame mode=vrs frame=4 stereoProjections=0 shouldRender=1 result=0"),"NO_SCENE_SUBMISSION");
+            Has(LmuQuadViewLauncher.LaunchDiagnostics.Explain("xrEndFrame mode=vrs frame=4 stereoProjections=0 shouldRender=0 result=0"),"NOT_RENDERING");
+            Has(LmuQuadViewLauncher.LaunchDiagnostics.Explain("xrEndFrame mode=vrs frame=4 stereoProjections=1 shouldRender=1 result=-17"),"SESSION_LOST");
             Has(LmuQuadViewLauncher.LaunchDiagnostics.Explain("xrBeginFrame shouldRender=0\nxrEndFrame frame=2 quadProjections=0 shouldRender=0 result=0"),"NOT_RENDERING");
             Has(LmuQuadViewLauncher.LaunchDiagnostics.Explain("Projection refused: captures=1/1 spaceMatch=0\nxrEndFrame frame=2 quadProjections=0 shouldRender=1 result=0"),"SPACE_MISMATCH");
             Has(LmuQuadViewLauncher.LaunchDiagnostics.Explain("Projection refused: invalid submitted or cached pose\nxrEndFrame frame=2 quadProjections=0 shouldRender=1 result=0"),"INVALID_POSE");

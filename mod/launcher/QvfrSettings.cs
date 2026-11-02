@@ -12,6 +12,7 @@ namespace LmuQuadViewLauncher
     {
         public string GameDirectory { get; set; }
         public string Backend { get; set; }
+        public int VrsPeripheralRate { get; set; }
         public string FoveationMode { get; set; }
         public string QuadViewsManifest { get; set; }
         public string VectorXrManifest { get; set; }
@@ -52,6 +53,7 @@ namespace LmuQuadViewLauncher
         {
             GameDirectory = @"D:\SteamLibrary\steamapps\common\Le Mans Ultimate";
             Backend = "Native"; FoveationMode = "auto"; QuadViewsManifest = ""; VectorXrManifest = "";
+            VrsPeripheralRate = 2;
             NativeOuterResolution = true; OuterPercent = 25; InnerPercent = 100;
             RenderProfileSeconds=120;
             DiagnosticsEnabled=true;
@@ -81,7 +83,8 @@ namespace LmuQuadViewLauncher
             if(s.RenderProfileSeconds<30||s.RenderProfileSeconds>300)throw new ArgumentException("Capture length must be between 30 and 300 seconds.");
             if(s.FocusAspectRatio!=0&&(s.FocusAspectRatio<0.1m||s.FocusAspectRatio>10m)) throw new ArgumentException("Invalid measured focus aspect ratio.");
             if (String.IsNullOrWhiteSpace(s.GameDirectory)) throw new ArgumentException("Select the LMU game folder.");
-            if (s.Backend != "Native" && s.Backend != "QVFR" && s.Backend != "VectorXR") throw new ArgumentException("Choose Native, QVFR or VectorXR.");
+            if (s.Backend != "Native" && s.Backend != "QVFR" && s.Backend != "VectorXR" && s.Backend != "VRS") throw new ArgumentException("Choose Native, QVFR, VectorXR or Stereo VRS.");
+            if(s.VrsPeripheralRate!=1&&s.VrsPeripheralRate!=2&&s.VrsPeripheralRate!=4)throw new ArgumentException("VRS peripheral shading blocks must be 1x1, 2x2 or 4x4.");
             if (s.FoveationMode != "auto" && s.FoveationMode != "fixed") throw new ArgumentException("Choose Auto or Fixed foveation.");
             if (s.OuterBlur < 0 || s.OuterBlur > 3) throw new ArgumentException("Outer smoothing must be between 0 and 3 pixels.");
             if (s.OuterPercent < 10 || s.OuterPercent > 400 || s.InnerPercent < 25 || s.InnerPercent > 400 ||
@@ -106,6 +109,7 @@ namespace LmuQuadViewLauncher
             if (x.Name != "QuadView") throw new InvalidDataException("Unrecognized launcher settings.");
             s.GameDirectory = Value(x, "GameDirectory", s.GameDirectory);
             s.Backend = Value(x, "Backend", s.Backend); s.FoveationMode = Value(x, "FoveationMode", s.FoveationMode);
+            s.VrsPeripheralRate = Int32.Parse(Value(x,"VrsPeripheralRate","2"),CultureInfo.InvariantCulture);
             s.QuadViewsManifest = Value(x, "QuadViewsManifest", "");
             s.VectorXrManifest = Value(x, "VectorXrManifest", "");
             s.DebugFocus = Boolean.Parse(Value(x, "DebugFocus", "false"));
@@ -147,6 +151,7 @@ namespace LmuQuadViewLauncher
             Validate(s);
             var xml = new XElement("QuadView", new XElement("GameDirectory", s.GameDirectory),
                 new XElement("Backend", s.Backend), new XElement("FoveationMode", s.FoveationMode),
+                new XElement("VrsPeripheralRate",s.VrsPeripheralRate),
                 new XElement("QuadViewsManifest", s.QuadViewsManifest ?? ""), new XElement("VectorXrManifest", s.VectorXrManifest ?? ""), new XElement("DebugFocus", s.DebugFocus),
                 new XElement("RenderProfiling", s.RenderProfiling),
                 new XElement("DiagnosticsEnabled",s.DiagnosticsEnabled),

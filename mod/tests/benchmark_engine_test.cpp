@@ -9,6 +9,10 @@ bool xr_runtime_sizes(unsigned eye,uint32_t& width,uint32_t& height,uint32_t& fo
     if(eye>1)return false;
     width=eye?20:24;height=eye?28:16;focusWidth=focusHeight=32;return true;
 }
+bool xr_vrs_active(){return false;}
+bool xr_vrs_focus(unsigned,VrsFocus&){return false;}
+bool xr_vrs_render_focus(unsigned,const float*,VrsFocus&){return false;}
+void xr_vrs_scene_complete(unsigned){}
 bool xr_quad_active(){return false;}
 bool xr_frame_views(XrView (&)[4]){return false;}
 bool xr_copy_outer(unsigned,ID3D11Texture2D*){return false;}

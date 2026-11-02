@@ -23,6 +23,7 @@ $files = @{
     'mod/build/LMU-QuadView-Launcher.exe.config' = 'LMU-QuadView-Launcher.exe.config'
     'PORTABLE-QVFR.txt' = 'PORTABLE-QVFR.txt'
     'PORTABLE-VECTORXR.txt' = 'PORTABLE-VECTORXR.txt'
+    'PORTABLE-VRS.txt' = 'PORTABLE-VRS.txt'
     'RENDER-PROFILING.txt' = 'RENDER-PROFILING.txt'
     'BENCHMARK.md' = 'BENCHMARK.md'
     'PORTABLE-STEREO-RESEARCH.txt' = 'PORTABLE-STEREO-RESEARCH.txt'

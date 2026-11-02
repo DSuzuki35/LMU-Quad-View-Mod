@@ -31,5 +31,5 @@ int main(){
  shared->header.visible=0;before=acquired;assert(!overlay.prepare(*shared,context,true)&&acquired==before);shared->header.visible=1;
  shared->header.bitmapSequence+=2;releaseFail=true;assert(!overlay.prepare(*shared,context,true));before=acquired;assert(!overlay.prepare(*shared,context,true)&&acquired==before);releaseFail=false;assert(overlay.prepare(*shared,context,true));
  shared->header.bitmapSequence|=1;assert(overlay.prepare(*shared,context,true));shared->header.bitmapSequence+=1;overlay.reset();}
- assert(destroyed==2);context->Release();device->Release();std::cout<<"benchmark overlay fake runtime PASS\n";
+ assert(destroyed==2&&released>0&&waits>=released);context->Release();device->Release();std::cout<<"benchmark overlay fake runtime PASS\n";
 }

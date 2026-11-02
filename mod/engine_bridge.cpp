@@ -139,6 +139,7 @@ struct BenchmarkSnapshot {uint64_t phase=0;unsigned requestedRate=1;};
 BenchmarkSnapshot benchmarkSnapshot;
 NvVrs worldVrs;
 bool worldVrsOptIn=false, worldVrsFailed=false;
+bool stereoVrsMode=false;
 ID3D11Device* worldVrsDevice=nullptr;
 ID3D11DeviceContext* worldVrsConfiguredContext=nullptr;
 unsigned worldVrsWidth=0, worldVrsHeight=0, worldVrsRate=0;
@@ -345,9 +346,9 @@ void failWorldVrs(const char* operation) {
     resetWorldVrs();
 }
 bool prepareWorldVrs(ID3D11DeviceContext* context,ViewSnapshot* view) {
-    if(!worldVrsOptIn || worldVrsFailed || !context || !view || view->eye_index!=0 ||
-       !xr_quad_active())return false;
-    auto* texture=*address<ID3D11Texture2D*>(0x1b1c6b8);
+    if(!worldVrsOptIn || worldVrsFailed || !context || !view || view->eye_index<0 || view->eye_index>1 ||
+       (!stereoVrsMode&&view->eye_index!=0) || (!xr_quad_active()&&!xr_vrs_active()))return false;
+    auto* texture=*address<ID3D11Texture2D*>(0x1b1c6b8+(stereoVrsMode?view->eye_index*8:0));
     if(!readable(texture,sizeof(void*)))return false;
     D3D11_TEXTURE2D_DESC desc{};texture->GetDesc(&desc);
     if(!desc.Width || !desc.Height)return false;
@@ -357,7 +358,12 @@ bool prepareWorldVrs(ID3D11DeviceContext* context,ViewSnapshot* view) {
     const bool unchanged=worldVrs.ready() && worldVrsDevice==device &&
         worldVrsConfiguredContext==context && worldVrsWidth==desc.Width &&
         worldVrsHeight==desc.Height && worldVrsRate==rate;
-    if(unchanged) {device->Release();return true;}
+    if(unchanged) {
+        device->Release();
+        if(stereoVrsMode){VrsFocus focus;if(!xr_vrs_render_focus(unsigned(view->eye_index),view->projection.data(),focus))return false;
+            return worldVrs.update_focus(context,focus);}
+        return true;
+    }
     resetWorldVrs();
     if(worldVrsFailed) {device->Release();return false;}
     const bool okay=worldVrs.configure(context,desc.Width,desc.Height,rate,true,
@@ -370,6 +376,8 @@ bool prepareWorldVrs(ID3D11DeviceContext* context,ViewSnapshot* view) {
     char line[200]{};
     std::snprintf(line,sizeof(line),"configured size=%ux%u rate=%u ownership=ExclusiveKnownDisabled; only verified scene sort scopes; other coverage unqualified",
         desc.Width,desc.Height,rate);vrsLog(nullptr,line);
+    if(stereoVrsMode){VrsFocus focus;if(!xr_vrs_render_focus(unsigned(view->eye_index),view->projection.data(),focus))return false;
+        return worldVrs.update_focus(context,focus);}
     return true;
 }
 void logVrsCounters() {
@@ -553,7 +561,13 @@ void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
     }
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     const auto callerRva=caller>=base?caller-base:0;
-    const bool eligible=worldVrsOptIn && !worldVrsFailed && worldVrs.ready() &&
+    bool targetMatches=true;
+    if(stereoVrsMode&&outerVrsContext){
+        UINT count=1;D3D11_VIEWPORT viewport{};outerVrsContext->RSGetViewports(&count,&viewport);
+        targetMatches=count==1&&viewport.TopLeftX==0&&viewport.TopLeftY==0&&
+            viewport.Width==float(worldVrsWidth)&&viewport.Height==float(worldVrsHeight);
+    }
+    const bool eligible=targetMatches&&worldVrsOptIn && !worldVrsFailed && worldVrs.ready() &&
         worldVrsRate==benchmarkRequestedRate() && outerVrsContext==worldVrsConfiguredContext &&
         vrs_scope::outer_world_sort_eligible(vrsInput(view,outerSortDepth!=0),outerMainPassMarker,callerRva);
     // Unexpected recursion is rendered at 1x1. Do not re-enable a suspended parent
@@ -703,7 +717,7 @@ void renderHook(void* unknown, bool laterPass) {
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     ID3D11DeviceContext* profileContext=nullptr;
     unsigned profileEye=0;
-    if((renderProfile.enabled()||stereo_audit_enabled())&&!insideHook&&installed.load()&&caller==base+0xcd1763&&xr_quad_active()){
+    if((renderProfile.enabled()||stereo_audit_enabled())&&!insideHook&&installed.load()&&caller==base+0xcd1763&&(xr_quad_active()||xr_vrs_active())){
         auto* before=*address<ViewSnapshot*>(0x1a51370);
         const auto renderer=*address<std::uintptr_t>(0x1b12be8);
         if(readable(before,sizeof(*before))&&before->eye_index>=0&&before->eye_index<=1&&
@@ -746,7 +760,7 @@ void renderHook(void* unknown, bool laterPass) {
     const bool savedMainMarker=outerMainPassMarker;
     selectedOuterView=nullptr;outerVrsContext=nullptr;outerMainPassMarker=false;
     if(worldVrsOptIn && !worldVrsFailed && !insideHook && installed.load() &&
-       xr_quad_active() && caller==base+0xcd1763) {
+       (xr_quad_active()||xr_vrs_active()) && caller==base+0xcd1763) {
         auto* before=*address<ViewSnapshot*>(0x1a51370);
         const auto renderer=*address<std::uintptr_t>(0x1b12be8);
         if(readable(before,sizeof(*before)) && before->eye_index>=0 && before->eye_index<=1 &&
@@ -754,8 +768,9 @@ void renderHook(void* unknown, bool laterPass) {
            readable(reinterpret_cast<void*>(renderer+0x76f68),sizeof(void*))) {
             auto* context=*reinterpret_cast<ID3D11DeviceContext**>(renderer+0x76f68);
             if(readable(context,sizeof(void*))) {
-                if(!benchmark && before->eye_index==0)prepareWorldVrs(context,before);
-                if(worldVrs.ready() && !worldVrsFailed && context==worldVrsConfiguredContext) {
+                bool prepared=true;
+                if(!benchmark && (stereoVrsMode||before->eye_index==0))prepared=prepareWorldVrs(context,before);
+                if(prepared && worldVrs.ready() && !worldVrsFailed && context==worldVrsConfiguredContext) {
                     selectedOuterView=before;outerVrsContext=context;
                 }
             }
@@ -770,6 +785,11 @@ void renderHook(void* unknown, bool laterPass) {
     ProfileScope outerProfile(profile_eye(ProfileSlot::outer0,profileEye),profileContext!=nullptr);
     StereoAuditScope outerAudit(profileContext?stereo_audit_eye(false,profileEye):StereoAuditPass::none);
     renderOriginal(unknown,laterPass);
+    if(stereoVrsMode&&!insideHook&&caller==base+0xcd1763){
+        auto* renderedView=*address<ViewSnapshot*>(0x1a51370);
+        if(readable(renderedView,sizeof(*renderedView))&&renderedView->eye_index>=0&&renderedView->eye_index<=1)
+            xr_vrs_scene_complete(unsigned(renderedView->eye_index));
+    }
     outerAudit.end();
     outerProfile.end();
     if(profileOuterGpu)renderProfile.gpu_stop(profileContext);
@@ -989,6 +1009,7 @@ bool engine_start(ID3D11DeviceContext* context) {
     if(installed.load()) return true;
     char mode[32]{};GetEnvironmentVariableA("LMU_QV_MODE",mode,sizeof(mode));
     const bool stereoTiming=!std::strcmp(mode,"stereo-timing");
+    stereoVrsMode=!std::strcmp(mode,"vrs");
     char auditSetting[8]{};const auto auditLength=GetEnvironmentVariableA("LMU_QV_STEREO_AUDIT",auditSetting,sizeof(auditSetting));
     wchar_t auditDirectory[32768]{};const auto auditDirectoryLength=GetEnvironmentVariableW(L"LMU_QV_STEREO_AUDIT_DIR",auditDirectory,32768);
     bool auditRequested=diagnostics_enabled()&&!stereoTiming&&auditLength==1&&auditSetting[0]=='1'&&auditDirectoryLength&&auditDirectoryLength<32768;
@@ -996,7 +1017,8 @@ bool engine_start(ID3D11DeviceContext* context) {
     char batchSetting[8]{};nativeUploadBatchOptIn=!stereoTiming&&GetEnvironmentVariableA("LMU_QV_CPU_UPLOAD_BATCH",batchSetting,sizeof(batchSetting))==1&&batchSetting[0]=='1';
     batchFailureLogged=0;batchFailureMessages=0;
     if(nativeUploadBatchOptIn){nativeUploadOptIn=false;if(auditRequested){auditRequested=false;log_line("cpu_upload_batch: draw audit/proof disabled for this run; ordinary render profiling remains available");}}
-    if(std::strcmp(mode,"quad") && !stereoTiming) {log_line("engine: trace mode; no native hooks");return true;}
+    if(stereoVrsMode){auditRequested=false;nativeUploadOptIn=false;nativeUploadBatchOptIn=false;}
+    if(std::strcmp(mode,"quad") && !stereoTiming && !stereoVrsMode) {log_line("engine: trace mode; no native hooks");return true;}
     base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     if(!correctDiskBuild() || !matches(0xd58a70,render_anchor) ||
        !matches(0x557810,projection_setter_anchor) || !matches(0x557870,derived_anchor) ||
@@ -1009,10 +1031,10 @@ bool engine_start(ID3D11DeviceContext* context) {
     worldVrsOptIn=!stereoTiming && vrsLength==1 && vrsOptIn[0]=='1';
     char nativeOptIn[8]{};
     const auto nativeLength=GetEnvironmentVariableA("LMU_QV_NATIVE_OUTER",nativeOptIn,sizeof(nativeOptIn));
-    nativeOuterOptIn=!stereoTiming&&nativeLength==1&&nativeOptIn[0]=='1';nativeOuterFailed=false;
+    nativeOuterOptIn=!stereoVrsMode&&!stereoTiming&&nativeLength==1&&nativeOptIn[0]=='1';nativeOuterFailed=false;
     nativeQuadSubmissionBlocked=false;
     char runtimeSetting[8]{};GetEnvironmentVariableA("LMU_QV_USE_RUNTIME_SETTINGS",runtimeSetting,sizeof(runtimeSetting));
-    nativeRuntimeSettings=!stereoTiming&&!std::strcmp(runtimeSetting,"1");nativeOuterSeparateBanks=false;
+    nativeRuntimeSettings=!stereoVrsMode&&!stereoTiming&&!std::strcmp(runtimeSetting,"1");nativeOuterSeparateBanks=false;
     fovScaleLogged=false;
     if(nativeRuntimeSettings){
         bool cropAnchors=matches(fovScaleRva,fovScaleAnchor);
@@ -1065,7 +1087,7 @@ bool engine_start(ID3D11DeviceContext* context) {
             "engine world VRS: explicit exclusive known-disabled opt-in; default_rate=%u; verified build; caller asserts offline setup and sole VRS ownership; only verified scene sort scopes; other coverage unqualified",
             worldVrsDefaultRate);log_line(message);
     }
-    timingTrigger.clear();timingArmed=false;gpuTiming.reset();timingMask=stereoTiming?0x3:0xf;
+    timingTrigger.clear();timingArmed=false;gpuTiming.reset();timingMask=(stereoTiming||stereoVrsMode)?0x3:0xf;
     pipelineStats.reset();benchmarkPath.clear();benchmarkControl=BenchmarkControl{};benchmarkSnapshot={};
     wchar_t controlPath[32768]{};
     const DWORD controlLength=GetEnvironmentVariableW(L"LMU_QV_BENCH_CONTROL",controlPath,32768);

@@ -286,18 +286,21 @@ namespace LmuQuadViewLauncher
     sealed class Launcher : Form
     {
         readonly string root = AppDomain.CurrentDomain.BaseDirectory;
-        readonly ComboBox backend = Choice(new[] { "Native OpenXR (Pimax, etc.)", "Quad-Views-Foveated (mbucchia)", "VectorXR (experimental)" });
+        readonly ComboBox backend = Choice(new[] { "Native OpenXR (Pimax, etc.)", "Quad-Views-Foveated (mbucchia)", "VectorXR (experimental)", "Stereo VRS (NVIDIA, experimental)" });
+        readonly ComboBox vrsRate = Choice(new[] { "1x1 (full shading)", "2x2 peripheral shading", "4x4 peripheral shading" });
+        readonly ToolTip help = new ToolTip { AutoPopDelay=30000, InitialDelay=350, ReshowDelay=100, ShowAlways=true };
+        bool filling, focusDisplayedAsVrs;
         readonly ComboBox mode = Choice(new[] { "Auto / eye tracking", "Fixed foveation" });
         readonly TextBox game = Field();
         readonly TextBox manifest = Field();
         readonly TextBox vectorManifest = Field();
         readonly CheckBox outline = Toggle("Show green focus outline");
-        readonly CheckBox nativeOuter = Toggle("Use smaller native outer render targets");
+        readonly CheckBox nativeOuter = Toggle("Experimental smaller outer render targets");
         readonly CheckBox renderProfiling = Toggle("Enable render profiling (Ctrl+Alt+F9)");
         readonly CheckBox diagnosticsEnabled=Toggle("Enable diagnostics and logging");
-        readonly CheckBox stereoDrawAudit=Toggle("Record stereo draw audit (Ctrl+Alt+F8)");
-        readonly CheckBox stereoShaderCapture=Toggle("Include shader programs for stereo conversion");
-        readonly CheckBox stereoPairProof=Toggle("Test paired rendering (Ctrl+Alt+F8)");
+        readonly CheckBox stereoDrawAudit=Toggle("Experimental stereo draw audit (Ctrl+Alt+F8)");
+        readonly CheckBox stereoShaderCapture=Toggle("Experimental shader program capture");
+        readonly CheckBox stereoPairProof=Toggle("Experimental paired rendering proof");
         readonly CheckBox cpuUploadReuse=Toggle("Experimental CPU upload reuse");
         readonly CheckBox cpuUploadBatch=Toggle("Experimental CPU upload fast path");
         readonly NumericUpDown profileDuration=new SpacedNumericUpDown {Minimum=30,Maximum=300,Increment=30,Value=120,
@@ -373,6 +376,59 @@ namespace LmuQuadViewLauncher
             stack.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); return stack;
         }
         static Label Caption(string text) { return Theme.Label(text, 9F, Theme.Muted); }
+        void Help(Control control,string text) {
+            help.SetToolTip(control,text);control.AccessibleDescription=text;
+            foreach(Control child in control.Controls)Help(child,text);
+        }
+        void DefaultHelp(Control parent) {
+            foreach(Control control in parent.Controls) {
+                if(control is Button||control is LinkLabel)Help(control,control.Text.Trim()+". This launcher action has no ongoing game CPU/GPU effect; launching applies the saved rendering options.");
+                DefaultHelp(control);
+            }
+        }
+        void ConfigureHelp() {
+            DefaultHelp(this);
+            Help(backend,"Choose one rendering path. Quad views render peripheral and focus views; Stereo VRS keeps native stereo and coarsens peripheral pixel shading on supported NVIDIA hardware. GPU effect depends on the workload; VRS does not merge CPU draw submissions. Experimental paths have no guaranteed performance gain.");
+            Help(mode,"Auto uses available eye tracking; unavailable or invalid gaze falls back to fixed focus. Fixed keeps the region at its configured offset. Tracking adds gaze update work on the CPU; focus placement can change GPU shading cost. Restart LMU to apply.");
+            Help(vrsRate,"Stereo VRS only. 1x1 shades every pixel; 2x2 or 4x4 shares shading over larger peripheral blocks. Focus stays 1x1. Larger blocks can reduce GPU pixel shading but reduce detail; geometry and CPU draw work remain. No measured gain is promised.");
+            Help(Controls.Find("VrsRateCaption",true)[0],help.GetToolTip(vrsRate));
+            Help(game,"Folder containing Le Mans Ultimate.exe. The supported executable is checked before launch. Path selection has no CPU/GPU rendering effect.");
+            Help(manifest,"Optional QVFR manifest path, used only with QVFR. Blank auto-detects its installation. No direct CPU/GPU effect; the selected provider determines rendering behavior.");
+            Help(vectorManifest,"Optional VectorXR manifest, used only with VectorXR. Configure its LMU Quadviews profile separately. No direct CPU/GPU effect from this path setting.");
+            Help(outer,"QVFR only: linear peripheral resolution scale. 200% doubles both dimensions, producing four times the pixels. Higher values increase GPU pixel and memory work; CPU draw count is not reduced. In Stereo VRS use runtime/game resolution instead.");
+            Help(inner,"QVFR only: linear focus resolution scale. Higher values improve central detail and increase GPU pixel/memory work; CPU draw count is not reduced. Native and VectorXR use their own settings; Stereo VRS uses runtime/game resolution.");
+            Help(focusWidth,"Focus width. Stereo VRS uses 10-90% of each eye's projected horizontal span; quad display may use measured FOV calibration. A larger focus covers more detail but can increase GPU shading work. CPU draw work is largely unchanged.");
+            Help(focusHeight,"Focus height. Stereo VRS uses 10-90% of each eye's projected vertical span; quad display may use measured FOV calibration. A larger focus increases full-quality coverage and can increase GPU work. CPU draw work is largely unchanged.");
+            Help(focusOffsetX,"Horizontal shift as a percent of each eye's full projected view: positive is right. Auto adds this offset to gaze; fixed uses the configured center. CPU update cost is small; GPU cost can vary with covered content.");
+            Help(focusOffsetY,"Vertical shift as a percent of each eye's full projected view: positive is up. Auto adds this offset to gaze; fixed uses the configured center. CPU update cost is small; GPU cost can vary with covered content.");
+            string cropHelp="Quad views only. Lower crop percentages remove edge coverage with black borders and smaller outer targets; they can reduce GPU pixel work but do not promise CPU savings. Disabled for Stereo VRS; native in-game crop remains available. Saved quad values are preserved.";
+            Help(cropWidth,cropHelp);Help(cropHeight,cropHelp);Help(Controls.Find("CropHint",true)[0],cropHelp);
+            Help(nativeOuter,"Experimental, quad views only. Smaller native outer render targets may reduce GPU pixel and memory work; CPU draw work remains. Off uses full-size outer rendering plus resampling. Disabled in Stereo VRS; compare visual output and timings.");
+            Help(outerBlur,"Quad views only. Smooth peripheral shimmer with an extra GPU pass; 0 disables it. CPU dispatch and GPU filtering add work. Focus stays sharp. Disabled for Stereo VRS.");
+            Help(outline,"Quad views only: draw a green focus border to inspect size, offset and tracking. Disabled for Stereo VRS; the saved preference is retained. Adds visualization work on the GPU and a small CPU setup cost; turn off for representative performance comparisons.");
+            Help(diagnosticsEnabled,"Enable local mod logs and timing support. Logging adds CPU/file I/O overhead; GPU timing queries can affect measurements when captures are enabled. Off disables profiling, benchmark timing and draw audits for the next launch. Provider logging is separate.");
+            Help(renderProfiling,"Record a timed render profile after Ctrl+Alt+F9. Requires diagnostics. CPU bookkeeping and GPU timestamp queries add measurement overhead. Available with quad views and Stereo VRS; compare equivalent runs.");
+            Help(profileDuration,"Profile capture duration in seconds (30-300). Longer captures collect more samples and files, increasing total CPU/I/O work; they do not change render quality. Profiling queries add overhead while active.");
+            Help(stereoDrawAudit,"Experimental quad-only diagnostic. Ctrl+Alt+F8 captures sampled scene draw state, adding CPU overhead and possible hitches; not a speedup. Disabled for Stereo VRS and the upload fast path.");
+            Help(stereoShaderCapture,"Experimental quad-only diagnostic requiring draw audit. Exports captured shader programs locally for development. Adds CPU copying and disk I/O; no GPU speedup. Keep local shader files out of public reports.");
+            Help(stereoPairProof,"Experimental quad-only proof, not single-pass stereo. Samples one object in private targets while original game draws remain enabled. Adds CPU and GPU work and may hitch; use with profiling off. Disabled for Stereo VRS.");
+            Help(cpuUploadReuse,"Experimental quad-only upload reuse for focus opaque geometry. May avoid redundant CPU constant-buffer uploads; GPU geometry draw work remains. Visual correctness and performance depend on the scene. Disabled in Stereo VRS and when upload fast path is selected.");
+            Help(cpuUploadBatch,"Experimental quad-only unchanged-upload filtering and small-buffer batching for outer/focus geometry. May reduce CPU upload work; does not merge stereo draws or guarantee GPU savings. Disables draw audit and upload reuse. Compare equivalent on/off runs; disabled in Stereo VRS.");
+            Help(benchmarkEnabled,"Opt in to benchmark timing and headset overlay for the next launch. Requires diagnostics. CPU sampling/overlay updates and GPU timing/compositing add overhead. Works with quad views and Stereo VRS; compare equivalent settings.");
+            Help(benchmarkTemplate,"Choose Minimal or Detailed overlay presentation. More displayed metrics can add CPU text/bitmap update work; overlay compositing adds GPU work. Timing data is unchanged.");
+            Help(benchmarkVisible,"Show or hide the headset overlay during the connected session. Hidden overlay reduces overlay drawing/compositing work; benchmark sampling can remain active. This does not change the next-launch benchmark preference.");
+            Help(benchmarkRecord,"Manually start or stop recording benchmark samples. Adds CPU sample processing and report I/O; timing queries have GPU measurement overhead. Use matching track, weather and camera conditions for comparisons.");
+            foreach(var number in new[]{benchmarkX,benchmarkY,benchmarkDistance,benchmarkWidth})Help(number,"Headset overlay placement in metres: horizontal/vertical offset, viewing distance or width. Updates the connected overlay. CPU update cost is small; changing visible overlay coverage can affect GPU compositing. Does not change game rendering resolution.");
+            Help(refreshFov,"Read the latest measured headset FOV to calibrate equal-axis quad focus controls. CPU file read only; no direct GPU effect. Stereo VRS always uses raw projected per-eye percentages, so this control is disabled there.");
+            Help(save,"Save settings for the next launch. QVFR also updates only LMU's provider profile with backups. Stereo VRS does not edit provider profiles. Saving has CPU/file I/O cost but no immediate GPU rendering change.");
+            Help(launch,"Validate the supported game build and launch LMU with the selected settings. Quad providers/Toolkit conflicts are isolated only in the child process. Rendering CPU/GPU effects depend on your chosen options.");
+            foreach(var name in new[]{"AssignVisibility","AssignRecording","ClearVisibility","ClearRecording"})Help(Controls.Find(name,true)[0],"Assign or clear a joystick button for overlay visibility or manual recording. Use separate buttons; Escape cancels assignment. CPU button polling adds a small amount of work; the binding itself has no GPU effect. Save to keep the assignment.");
+            Help(((TableLayoutPanel)outer.Parent).GetControlFromPosition(0,0),help.GetToolTip(outer)+" "+help.GetToolTip(inner));
+            foreach(var option in new[]{nativeOuter,cpuUploadReuse,diagnosticsEnabled,stereoDrawAudit,stereoShaderCapture,stereoPairProof,cpuUploadBatch}) {
+                var table=option.Parent as TableLayoutPanel;
+                if(table!=null) {var caption=table.GetControlFromPosition(0,table.GetRow(option)+1);if(caption!=null)Help(caption,help.GetToolTip(option));}
+            }
+        }
         static void Link(Control parent, string text, string address, int row)
         {
             var link = new LinkLabel { Text = text, Dock = DockStyle.Fill, LinkColor = Theme.Muted,
@@ -397,6 +453,7 @@ namespace LmuQuadViewLauncher
             renderingNav.Name = "RenderingNav"; setupNav.Name = "SetupNav"; benchmarkNav.Name="BenchmarkNav";
             save.Name = "SaveButton"; launch.Name = "LaunchButton";
             backend.Name = "ProviderSelector";
+            vrsRate.Name="VrsPeripheralRate";vrsRate.SelectedIndex=1;
             manifest.Name="QvfrManifest";vectorManifest.Name="VectorXrManifest";
             outer.Name="OuterResolution";inner.Name="InnerResolution";
             ClientSize = new Size(1050, 780); MinimumSize = new Size(900, 700); StartPosition = FormStartPosition.CenterScreen;
@@ -413,16 +470,16 @@ namespace LmuQuadViewLauncher
             heading.Controls.Add(header, 0, 0); heading.Controls.Add(subheader, 0, 1); main.Controls.Add(heading, 0, 0);
             var pages = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0) };
             pages.Controls.Add(benchmarkPage); pages.Controls.Add(setupPage); pages.Controls.Add(renderingPage); main.Controls.Add(pages, 0, 1);
-            BuildRendering(); BuildSetup(); BuildBenchmark(); main.Controls.Add(BuildFooter(), 0, 2);
+            BuildRendering(); BuildSetup(); BuildBenchmark(); main.Controls.Add(BuildFooter(), 0, 2);ConfigureHelp();
             backend.SelectedIndexChanged += delegate { UpdateProvider(); };
             diagnosticsEnabled.Name="DiagnosticsEnabled";
             stereoDrawAudit.Name="StereoDrawAudit";
             stereoShaderCapture.Name="StereoShaderCapture";
             stereoPairProof.Name="StereoPairProof";cpuUploadReuse.Name="CpuUploadReuse";cpuUploadBatch.Name="CpuUploadBatch";
-            cpuUploadBatch.CheckedChanged+=delegate {if(cpuUploadBatch.Checked){cpuUploadReuse.Checked=false;stereoDrawAudit.Checked=false;}cpuUploadReuse.Enabled=!cpuUploadBatch.Checked;stereoDrawAudit.Enabled=diagnosticsEnabled.Checked&&!cpuUploadBatch.Checked;stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked&&!cpuUploadBatch.Checked;};
-            diagnosticsEnabled.CheckedChanged+=delegate {UpdateBenchmarkNotice();renderProfiling.Enabled=diagnosticsEnabled.Checked;stereoDrawAudit.Enabled=diagnosticsEnabled.Checked&&!cpuUploadBatch.Checked;stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked&&!cpuUploadBatch.Checked;profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;};
-            stereoDrawAudit.CheckedChanged+=delegate {stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked&&!cpuUploadBatch.Checked;};
-            renderProfiling.CheckedChanged+=delegate {profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;};
+            cpuUploadBatch.CheckedChanged+=delegate {if(cpuUploadBatch.Checked&&!filling){cpuUploadReuse.Checked=false;stereoDrawAudit.Checked=false;}UpdateAdvanced();};
+            diagnosticsEnabled.CheckedChanged+=delegate {UpdateBenchmarkNotice();UpdateAdvanced();};
+            stereoDrawAudit.CheckedChanged+=delegate {UpdateAdvanced();};
+            renderProfiling.CheckedChanged+=delegate {UpdateAdvanced();};
             renderingNav.Click += delegate { ShowPage(false); }; setupNav.Click += delegate { ShowPage(true); }; benchmarkNav.Click += delegate { ShowBenchmarkPage(); };
             save.Click += delegate { SaveSettings(); }; launch.Click += delegate { StartGame(); };
             AcceptButton = launch;
@@ -466,16 +523,18 @@ namespace LmuQuadViewLauncher
         {
             var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 6, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 200)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 280));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 260)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 280));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 250)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 270)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54)); renderingPage.SetContent(grid);
             var provider = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
-            var p = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Margin = new Padding(0) };
+            var p = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7, Margin = new Padding(0) };
             p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             p.RowStyles.Add(new RowStyle(SizeType.Absolute, 25)); p.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
-            p.RowStyles.Add(new RowStyle(SizeType.Absolute, 25)); p.RowStyles.Add(new RowStyle(SizeType.Absolute, 32)); p.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            p.RowStyles.Add(new RowStyle(SizeType.Absolute, 25)); p.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+            p.RowStyles.Add(new RowStyle(SizeType.Absolute,25));p.RowStyles.Add(new RowStyle(SizeType.Absolute,32));p.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             p.Controls.Add(Caption("RENDERING PROVIDER"), 0, 0); p.Controls.Add(Caption("FOVEATION MODE"), 0, 2);
             backend.Margin = mode.Margin = new Padding(0); p.Controls.Add(backend, 0, 1); p.Controls.Add(mode, 0, 3);
-            p.Controls.Add(providerHint, 0, 4); provider.Controls.Add(p); grid.Controls.Add(provider, 0, 0); grid.SetColumnSpan(provider, 2);
+            var rateCaption=Caption("VRS PERIPHERAL SHADING  (hover for help)");rateCaption.Name="VrsRateCaption";p.Controls.Add(rateCaption,0,4);p.Controls.Add(vrsRate,0,5);
+            p.Controls.Add(providerHint, 0, 6); provider.Controls.Add(p); grid.Controls.Add(provider, 0, 0); grid.SetColumnSpan(provider, 2);
             grid.Controls.Add(SettingCard("Resolution", outer, inner, "Linear scale per dimension.", new Padding(0, 0, 7, 14)), 0, 1);
             var focusCard=SettingCard("Focus region", focusWidth, focusHeight, "", new Padding(7, 0, 0, 14));
             var focusContent=(TableLayoutPanel)focusCard.Controls[0];
@@ -511,14 +570,14 @@ namespace LmuQuadViewLauncher
             cropContent.Controls.Add(cropHeader,0,0);cropContent.SetColumnSpan(cropHeader,2);
             cropWidth.Margin=new Padding(0,3,12,0);cropHeight.Margin=new Padding(12,3,0,0);
             cropContent.Controls.Add(cropWidth,0,1);cropContent.Controls.Add(cropHeight,1,1);
-            var cropHint=Caption("100% = full view. Lower values crop the edges with black borders, without zoom. Reduces outer target pixels; focus resolution stays unchanged. Focus may be constrained to the cropped view. Applies to all providers. Restart LMU to apply; headset settings stay unchanged.");cropHint.Name="CropHint";
+            var cropHint=Caption("Quad views only: 100% = full view. Lower values crop edges with black borders, without zoom, reducing outer target pixels. Focus may be constrained to the crop. Disabled for Stereo VRS; native in-game crop remains available. Restart LMU to apply.");cropHint.Name="CropHint";
             cropContent.Controls.Add(cropHint,0,2);cropContent.SetColumnSpan(cropHint,2);crop.Controls.Add(cropContent);grid.Controls.Add(crop,0,3);grid.SetColumnSpan(crop,2);
             var preview = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 12), Padding = new Padding(18, 10, 18, 10) };
             var info = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Margin = new Padding(0) };
             info.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); info.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             info.RowStyles.Add(new RowStyle(SizeType.Absolute, 35)); info.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             outline.Margin = new Padding(0, 0, 12, 0); info.Controls.Add(outline, 0, 0);
-            var outlineHint = Caption("Highlights the focus region. Auto follows available eye tracking."); outlineHint.Margin = new Padding(0, 0, 16, 0); info.Controls.Add(outlineHint, 0, 1);
+            var outlineHint = Caption("Quad views only: highlights the focus region. Disabled for Stereo VRS."); outlineHint.Margin = new Padding(0, 0, 16, 0); info.Controls.Add(outlineHint, 0, 1);
             var blurRow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0) };
             blurRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); blurRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
             blurRow.Controls.Add(Theme.Label("Outer smoothing (pixels)", 10F, Theme.Text), 0, 0);
@@ -559,7 +618,7 @@ namespace LmuQuadViewLauncher
             var stack = Stack(18);
             foreach(int height in new[]{23,30,40,30,45,30,40,30,35,46,30,45,30,45,30,45,30,45})stack.RowStyles.Add(new RowStyle(SizeType.Absolute,height));
             stack.Controls.Add(Caption("ADVANCED"), 0, 0); stack.Controls.Add(nativeOuter, 0, 1);
-            stack.Controls.Add(Caption("Experimental GPU savings. Disable to test full-size outer rendering with resampling."), 0, 2);
+            stack.Controls.Add(Caption("Experimental, quad views only. Smaller outer targets may reduce GPU work. Compare with full-size rendering and resampling."), 0, 2);
             stack.Controls.Add(cpuUploadReuse,0,3);
             stack.Controls.Add(Caption("Focus opaque geometry only. Skips uploads of unchanged constants; needs visual and performance testing."),0,4);
             stack.Controls.Add(diagnosticsEnabled,0,5);
@@ -687,7 +746,7 @@ namespace LmuQuadViewLauncher
             benchmarkNav.BackColor=Theme.AccentDark;benchmarkNav.ForeColor=Theme.Text;RefreshBenchmarkPreview();
         }
         protected override void Dispose(bool disposing) {
-            if(disposing) {benchmarkTimer.Stop();benchmarkTimer.Dispose();if(joystick!=null)joystick.Dispose();if(benchmark!=null)benchmark.Dispose();if(benchmarkPreview.Image!=null) {benchmarkPreview.Image.Dispose();benchmarkPreview.Image=null;}}
+            if(disposing) {help.Dispose();benchmarkTimer.Stop();benchmarkTimer.Dispose();if(joystick!=null)joystick.Dispose();if(benchmark!=null)benchmark.Dispose();if(benchmarkPreview.Image!=null) {benchmarkPreview.Image.Dispose();benchmarkPreview.Image=null;}}
             base.Dispose(disposing);
         }
         Control PathCard(string title, TextBox field, Button browse, string hint, bool link,string address="https://github.com/mbucchia/Quad-Views-Foveated/wiki")
@@ -722,23 +781,55 @@ namespace LmuQuadViewLauncher
         }
         void UpdateProvider()
         {
+            if(filling)return;
             bool qvfr = backend.SelectedIndex == 1;
             bool vector = backend.SelectedIndex == 2;
-            outer.Enabled = inner.Enabled = focusWidth.Enabled = focusHeight.Enabled = qvfr;
+            bool vrs=backend.SelectedIndex==3;
+            if(vrs!=focusDisplayedAsVrs) {
+                decimal w=focusGeometry==null||focusDisplayedAsVrs?focusWidth.Value:focusGeometry.ProviderWidth(focusWidth.Value);
+                decimal h=focusGeometry==null||focusDisplayedAsVrs?focusHeight.Value:focusGeometry.ProviderHeight(focusHeight.Value);
+                SetFocusDisplay(w,h,vrs);
+            }
+            outer.Enabled = inner.Enabled = qvfr;
+            ((TableLayoutPanel)outer.Parent).GetControlFromPosition(0,3).Text=vrs?"Stereo VRS uses full runtime/game resolution. Adjust resolution there.":"Linear scale per dimension.";
+            focusWidth.Enabled = focusHeight.Enabled = qvfr||vrs;
+            vrsRate.Enabled=vrs;cropWidth.Enabled=cropHeight.Enabled=outerBlur.Enabled=nativeOuter.Enabled=outline.Enabled=!vrs;
+            Controls.Find("ResetCrop",true)[0].Enabled=!vrs;
             manifest.Enabled = browseManifest.Enabled = qvfr;
             vectorManifest.Enabled = browseVectorManifest.Enabled = vector;
             refreshFov.Enabled=qvfr;
-            providerHint.Text = vector ? "Uses VectorXR instead of QVFR. Set resolution and focus in VectorXR's LMU Quadviews profile."
+            providerHint.Text = vrs ? "Native stereo with NVIDIA VRS. Auto uses available gaze, with fixed focus fallback. Experimental; compare on your headset."
+                : vector ? "Uses VectorXR instead of QVFR. Set resolution and focus in VectorXR's LMU Quadviews profile."
                 : qvfr ? "Uses Quad-Views-Foveated with your active OpenXR runtime." : "Use your runtime's quad-view settings, for example Pimax EVO.";
-            focusHint.Text=vector?"Set focus size in VectorXR's LMU Quadviews profile."
+            focusHint.Text=vrs?"Percent of each eye's projected span. Inside stays full shading; outside uses the selected VRS rate."
+                :vector?"Set focus size in VectorXR's LMU Quadviews profile."
                 :focusGeometry==null?"Per-axis % until measured: run LMU once, then read FOV below."
                 :"Equal-axis sizes: 50 / 50 is square near the center. Re-read FOV after headset/FOV changes.";
-            resolutionHint.Text = qvfr ? "200% resolution means 2x width and 2x height (4x pixels). Save updates only LMU's QVFR profile and backs up existing settings. Restart LMU after changes."
+            resolutionHint.Text = vrs ? "Stereo VRS: full resolution comes from your runtime/game. Quad crop, smoothing and research options are inactive; saved values remain. Restart LMU after changes."
+                :qvfr ? "200% resolution means 2x width and 2x height (4x pixels). Save updates only LMU's QVFR profile and backs up existing settings. Restart LMU after changes."
                 : vector ? "Resolution, focus size and tracking are configured in VectorXR's LMU profile. QVFR and OpenXR Toolkit are bypassed for this launch. Restart LMU after changes."
                 : "Resolution and focus size are controlled by your native runtime. Switch to Quad-Views-Foveated to adjust them here. Restart LMU after changes.";
+            UpdateAdvanced();
+        }
+        void UpdateAdvanced() {
+            bool quad=backend.SelectedIndex!=3;
+            cpuUploadBatch.Enabled=quad;cpuUploadReuse.Enabled=quad&&!cpuUploadBatch.Checked;
+            renderProfiling.Enabled=diagnosticsEnabled.Checked;
+            profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;
+            stereoDrawAudit.Enabled=quad&&diagnosticsEnabled.Checked&&!cpuUploadBatch.Checked;
+            stereoShaderCapture.Enabled=stereoPairProof.Enabled=stereoDrawAudit.Enabled&&stereoDrawAudit.Checked;
+        }
+        void SetFocusDisplay(decimal width,decimal height,bool vrs) {
+            focusDisplayedAsVrs=vrs;
+            bool calibrated=focusGeometry!=null&&!vrs;
+            focusWidth.SetRange(calibrated?focusGeometry.DisplayWidth(10):10,calibrated?focusGeometry.DisplayWidth(90):90);
+            focusHeight.SetRange(calibrated?focusGeometry.DisplayHeight(10):10,calibrated?focusGeometry.DisplayHeight(90):90);
+            focusWidth.Value=calibrated?focusGeometry.DisplayWidth(width):width;
+            focusHeight.Value=calibrated?focusGeometry.DisplayHeight(height):height;
         }
         void Fill(LauncherSettings s)
         {
+            filling=true;
             focusGeometry=s.FocusAspectRatio==0?null:new FocusGeometry(s.FocusAspectRatio);
             focusWidth.SetRange(focusGeometry==null?10:focusGeometry.DisplayWidth(10),focusGeometry==null?90:focusGeometry.DisplayWidth(90));
             focusHeight.SetRange(focusGeometry==null?10:focusGeometry.DisplayHeight(10),focusGeometry==null?90:focusGeometry.DisplayHeight(90));
@@ -746,7 +837,8 @@ namespace LmuQuadViewLauncher
                 :"Equal-axis sizes: 50 / 50 is square near the center. Re-read FOV after headset/FOV changes.";
             game.Text = s.GameDirectory ?? ""; manifest.Text = s.QuadViewsManifest ?? "";
             vectorManifest.Text=s.VectorXrManifest ?? "";
-            backend.SelectedIndex = s.Backend == "VectorXR" ? 2 : s.Backend == "QVFR" ? 1 : 0; mode.SelectedIndex = s.FoveationMode == "fixed" ? 1 : 0;
+            backend.SelectedIndex = s.Backend=="VRS"?3:s.Backend == "VectorXR" ? 2 : s.Backend == "QVFR" ? 1 : 0; mode.SelectedIndex = s.FoveationMode == "fixed" ? 1 : 0;
+            vrsRate.SelectedIndex=s.VrsPeripheralRate==4?2:s.VrsPeripheralRate==1?0:1;
             outline.Checked = s.DebugFocus; nativeOuter.Checked = s.NativeOuterResolution;
             renderProfiling.Checked=s.RenderProfiling;
             diagnosticsEnabled.Checked=s.DiagnosticsEnabled;
@@ -762,16 +854,16 @@ namespace LmuQuadViewLauncher
             profileDuration.Value=s.RenderProfileSeconds;
             outer.Value = s.OuterPercent; inner.Value = s.InnerPercent;
             cropWidth.Value=s.CropWidthPercent;cropHeight.Value=s.CropHeightPercent;
-            focusWidth.Value = focusGeometry==null?s.FocusWidthPercent:focusGeometry.DisplayWidth(s.FocusWidthPercent);
-            focusHeight.Value = focusGeometry==null?s.FocusHeightPercent:focusGeometry.DisplayHeight(s.FocusHeightPercent);
+            SetFocusDisplay(s.FocusWidthPercent,s.FocusHeightPercent,s.Backend=="VRS");
             focusOffsetX.Value=s.FocusOffsetXPercent;focusOffsetY.Value=s.FocusOffsetYPercent;
             outerBlur.Value = Math.Max(outerBlur.Minimum, Math.Min(outerBlur.Maximum, s.OuterBlur));
-            UpdateProvider();
+            filling=false;UpdateProvider();
         }
         LauncherSettings Values()
         {
             var s = new LauncherSettings { GameDirectory = game.Text.Trim(), QuadViewsManifest = manifest.Text.Trim(),VectorXrManifest=vectorManifest.Text.Trim(),
-                Backend = backend.SelectedIndex == 2 ? "VectorXR" : backend.SelectedIndex == 1 ? "QVFR" : "Native", FoveationMode = mode.SelectedIndex == 1 ? "fixed" : "auto",
+                Backend = backend.SelectedIndex==3?"VRS":backend.SelectedIndex == 2 ? "VectorXR" : backend.SelectedIndex == 1 ? "QVFR" : "Native", FoveationMode = mode.SelectedIndex == 1 ? "fixed" : "auto",
+                VrsPeripheralRate=vrsRate.SelectedIndex==2?4:vrsRate.SelectedIndex==0?1:2,
                 DebugFocus = outline.Checked, RenderProfiling=renderProfiling.Checked, DiagnosticsEnabled=diagnosticsEnabled.Checked,StereoDrawAudit=stereoDrawAudit.Checked,StereoShaderCapture=stereoShaderCapture.Checked,StereoPairProof=stereoPairProof.Checked,CpuUploadReuse=cpuUploadReuse.Checked,CpuUploadBatch=cpuUploadBatch.Checked, RenderProfileSeconds=Decimal.ToInt32(profileDuration.Value), NativeOuterResolution = nativeOuter.Checked,
                 BenchmarkEnabled=benchmarkEnabled.Checked,BenchmarkTemplate=benchmarkTemplate.SelectedIndex,
                 BenchmarkX=benchmarkX.Value,BenchmarkY=benchmarkY.Value,BenchmarkDistance=benchmarkDistance.Value,BenchmarkWidth=benchmarkWidth.Value,
@@ -779,8 +871,8 @@ namespace LmuQuadViewLauncher
                 BenchmarkRecordingDevice=recordingBinding==null?"":recordingBinding.Device.ToString("D"),BenchmarkRecordingName=recordingBinding==null?"":recordingBinding.Name,BenchmarkRecordingButton=recordingBinding==null?-1:recordingBinding.Button,
                 OuterPercent = outer.Value, InnerPercent = inner.Value,
                 CropWidthPercent=cropWidth.Value,CropHeightPercent=cropHeight.Value,
-                FocusWidthPercent = focusGeometry==null?focusWidth.Value:focusGeometry.ProviderWidth(focusWidth.Value),
-                FocusHeightPercent = focusGeometry==null?focusHeight.Value:focusGeometry.ProviderHeight(focusHeight.Value),
+                FocusWidthPercent = focusGeometry==null||focusDisplayedAsVrs?focusWidth.Value:focusGeometry.ProviderWidth(focusWidth.Value),
+                FocusHeightPercent = focusGeometry==null||focusDisplayedAsVrs?focusHeight.Value:focusGeometry.ProviderHeight(focusHeight.Value),
                 FocusOffsetXPercent=focusOffsetX.Value,FocusOffsetYPercent=focusOffsetY.Value,
                 FocusAspectRatio=focusGeometry==null?0:focusGeometry.Aspect, OuterBlur = outerBlur.Value };
             QvfrSettings.Validate(s); return s;
@@ -800,7 +892,8 @@ namespace LmuQuadViewLauncher
         {
             if (busy) return;
             try { var s = Values(); if (s.Backend == "QVFR") QvfrSettings.SaveProfile(s); QvfrSettings.Save(SettingsPath, s);
-                status.Text = s.Backend == "VectorXR" ? "Saved. Enable Quadviews for LMU in VectorXR; its profile controls resolution and focus."
+                status.Text = s.Backend=="VRS"?"Saved. Stereo VRS uses runtime/game resolution and these focus/shading settings. Restart LMU to apply."
+                    :s.Backend == "VectorXR" ? "Saved. Enable Quadviews for LMU in VectorXR; its profile controls resolution and focus."
                     : s.Backend == "QVFR" ? "Saved. LMU's QVFR profile is applied; existing settings are backed up when changed." : "Saved. Native resolution and focus settings stay in your runtime.";
                 status.ForeColor = Theme.Muted; }
             catch (Exception ex) { ShowError(ex.Message); }

@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstring>
+#include <cwchar>
 #include <cmath>
 #include <limits>
 namespace lmuqv { namespace benchmark {
@@ -61,7 +62,7 @@ class Transport {
  HANDLE mapping_=nullptr;Shared* data_=nullptr;
 public:
  ~Transport(){reset();}Transport()=default;Transport(const Transport&)=delete;Transport& operator=(const Transport&)=delete;
- bool open(){reset();wchar_t name[96]{};swprintf_s(name,L"Local\\LMUQuadView.Benchmark.%lu",GetCurrentProcessId());
+ bool open(){reset();wchar_t name[96]{};std::swprintf(name,96,L"Local\\LMUQuadView.Benchmark.%lu",GetCurrentProcessId());
  mapping_=CreateFileMappingW(INVALID_HANDLE_VALUE,nullptr,PAGE_READWRITE,0,sizeof(Shared),name);if(!mapping_)return false;
  data_=static_cast<Shared*>(MapViewOfFile(mapping_,FILE_MAP_ALL_ACCESS,0,0,sizeof(Shared)));if(!data_){reset();return false;}
  LARGE_INTEGER frequency{};QueryPerformanceFrequency(&frequency);initialize(*data_,GetCurrentProcessId(),frequency.QuadPart);return true;}

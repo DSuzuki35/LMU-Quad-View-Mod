@@ -55,6 +55,21 @@ class LaunchServiceTests {
             Check(info.EnvironmentVariables["LMU_QV_VECTORXR_DIRECT_INPUTS"]=="0","QVFR must retain its original input flags");
             Check(info.EnvironmentVariables["LMU_QV_USE_RUNTIME_SETTINGS"]=="1"&&info.EnvironmentVariables["LMU_QV_FOCUS_PIXELS_PERCENT"]=="100","Provider dimensions scaled twice");
             var native=LaunchService.MakeLayerPlan(root,"Native",provider,null);
+            var vrsSettings=new LauncherSettings {Backend="VRS",GameDirectory=settings.GameDirectory,FocusWidthPercent=35.5m,FocusHeightPercent=60,FocusOffsetXPercent=-12.5m,NativeOuterResolution=true,CropWidthPercent=25,OuterBlur=2,DiagnosticsEnabled=true,BenchmarkEnabled=true,RenderProfiling=true,StereoDrawAudit=true,StereoShaderCapture=true,StereoPairProof=true,CpuUploadReuse=true,CpuUploadBatch=true};
+            var vrsInfo=LaunchService.MakeStartInfo(root,vrsSettings,native,Path.Combine(root,"vrs.log"));
+            Check(vrsInfo.EnvironmentVariables["LMU_QV_MODE"]=="vrs","VRS must launch native stereo VRS mode");
+            Check(vrsInfo.EnvironmentVariables["LMU_QV_VRS_EXCLUSIVE"]=="1"&&vrsInfo.EnvironmentVariables["LMU_QV_NATIVE_OUTER"]=="0"&&vrsInfo.EnvironmentVariables["LMU_QV_USE_RUNTIME_SETTINGS"]=="0","Quad rendering settings leaked into VRS");
+            Check(vrsInfo.EnvironmentVariables["LMU_QV_FOCUS_WIDTH_PERCENT"]=="35.5"&&vrsInfo.EnvironmentVariables["LMU_QV_FOCUS_HEIGHT_PERCENT"]=="60"&&vrsInfo.EnvironmentVariables["LMU_QV_FOCUS_OFFSET_X_PERCENT"]=="-12.5","VRS focus geometry ignored");
+            Check(vrsInfo.EnvironmentVariables["LMU_QV_CROP_WIDTH_PERCENT"]=="100"&&vrsInfo.EnvironmentVariables["LMU_QV_OUTER_BLUR"]=="0","Quad crop/blur leaked into VRS");
+            foreach(var feature in new[]{"STEREO_AUDIT","STEREO_SHADER_CAPTURE","STEREO_DRAW_PROOF","CPU_UPLOAD_REUSE","CPU_UPLOAD_BATCH"})Check(vrsInfo.EnvironmentVariables["LMU_QV_"+feature]=="0","Research feature leaked into VRS: "+feature);
+            Check(vrsInfo.EnvironmentVariables["LMU_QV_BENCHMARK"]=="1"&&vrsInfo.EnvironmentVariables["LMU_QV_PROFILE"]=="1","VRS lost benchmark/profiling");
+            foreach(var rate in new[]{1,2,4}) {
+                vrsSettings.VrsPeripheralRate=rate;
+                var rateInfo=LaunchService.MakeStartInfo(root,vrsSettings,native,Path.Combine(root,"vrs-rate.log"));
+                Check(rateInfo.EnvironmentVariables["LMU_QV_OUTER_SHADING_RATE"]==rate.ToString(System.Globalization.CultureInfo.InvariantCulture),"Selected VRS rate did not reach child");
+            }
+            var vrsPlan=LaunchService.MakeLayerPlan(root,"VRS",null,null);
+            Check(vrsPlan.Layers=="XR_APILAYER_LMU_quadview"&&vrsPlan.ExplicitManifest==null,"VRS must use runtime stereo without quad providers");
             var benchmarkSettings=new LauncherSettings {BenchmarkEnabled=true};
             Check(LaunchService.MakeStartInfo(root,benchmarkSettings,native,Path.Combine(root,"benchmark.log")).EnvironmentVariables["LMU_QV_BENCHMARK"]=="1","Benchmark opt-in missing");
             benchmarkSettings.DiagnosticsEnabled=false;
@@ -97,6 +112,8 @@ class LaunchServiceTests {
             }
             Reject(delegate{LaunchService.ReadProviderManifest(malformedManifest);},"Explicit malformed provider must still be rejected");
             LaunchService.AddImplicitDisables(vectorPlan,new[]{manifest,vectorManifest,toolkit,customQvfr},"VectorXR");
+            LaunchService.AddImplicitDisables(vrsPlan,new[]{manifest,vectorManifest,toolkit,customQvfr},"VRS");
+            Check(vrsPlan.DisableVariables.Contains("DISABLE_VENDOR_QUAD_EMULATION")&&vrsPlan.DisableVariables.Contains("DISABLE_XR_APILAYER_MBUCCHIA_toolkit"),"VRS must isolate quad providers and Toolkit in child");
             foreach(var providerName in new[]{"Native","QVFR","VectorXR"})foreach(var foveation in new[]{"fixed","auto"}) {
                 var position=new LauncherSettings {Backend=providerName,FoveationMode=foveation,FocusOffsetXPercent=50,FocusOffsetYPercent=-50,CropWidthPercent=25,CropHeightPercent=80.5m};
                 var selectedPlan=providerName=="Native"?native:providerName=="QVFR"?plan:vectorPlan;

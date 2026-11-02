@@ -170,6 +170,23 @@ class GuiLayoutTests {
             Directory.CreateDirectory(output);
             using(var form=new Launcher()) {
                 var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+                var vrs=new LauncherSettings {Backend="VRS",VrsPeripheralRate=4,FocusAspectRatio=2,FocusWidthPercent=30,FocusHeightPercent=60,CropWidthPercent=75,NativeOuterResolution=true,StereoDrawAudit=true,CpuUploadReuse=true,RenderProfiling=true,DebugFocus=true};
+                typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{vrs});
+                var vrsValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
+                Check(vrsValues.Backend=="VRS","GUI lost VRS selection");
+                var outline=(CheckBox)typeof(Launcher).GetField("outline",flags).GetValue(form);
+                Check(!outline.Enabled&&outline.Checked&&vrsValues.DebugFocus,"VRS must disable quad outline while preserving its saved preference");
+                Check(vrsValues.VrsPeripheralRate==4,"GUI lost VRS peripheral rate");
+                Check(!Named(form,"CropWidthPercent").Enabled&&!Named(form,"OuterResolution").Enabled&&!Named(form,"CpuUploadReuse").Enabled&&!Named(form,"StereoDrawAudit").Enabled,"VRS enables quad-only controls");
+                Check(vrsValues.CropWidthPercent==75&&vrsValues.NativeOuterResolution&&vrsValues.StereoDrawAudit&&vrsValues.CpuUploadReuse,"Selecting VRS destroys saved quad settings");
+                Check(Named(form,"RenderProfileSeconds").Enabled,"VRS disabled render profiling");
+                var vrsWidth=(PercentSetting)typeof(Launcher).GetField("focusWidth",flags).GetValue(form);
+                Check(vrsWidth.Enabled&&vrsWidth.Value==30,"VRS width must use raw projected eye span percent");
+                ((ComboBox)Named(form,"ProviderSelector")).SelectedIndex=0;
+                Check(outline.Enabled&&outline.Checked,"Returning to quad mode must restore the saved outline control");
+                Check(vrsWidth.Value==60,"Switching from VRS lost calibrated quad display");
+                ((ComboBox)Named(form,"ProviderSelector")).SelectedIndex=3;
+                Check(vrsWidth.Value==30,"Switching back to VRS changed focus geometry");
                 foreach(var providerName in new[]{"Native","QVFR","VectorXR"})foreach(var foveation in new[]{"fixed","auto"}) {
                     var offsets=new LauncherSettings {Backend=providerName,FoveationMode=foveation,FocusOffsetXPercent=-12.5m,FocusOffsetYPercent=50,CropWidthPercent=75.5m,CropHeightPercent=25};
                     typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{offsets});
@@ -253,6 +270,11 @@ class GuiLayoutTests {
                     Page(form,"RenderingPage","RenderingNav",output,stem);
                     Page(form,"SetupPage","SetupNav",output,stem);
                     Page(form,"BenchmarkPage","BenchmarkNav",output,stem);
+                    ((ComboBox)Named(form,"ProviderSelector")).SelectedIndex=3;
+                    ((Button)Named(form,"RenderingNav")).PerformClick();
+                    ((DarkScrollBar)Named(Named(form,"RenderingPage"),"PageScrollBar")).Value=0;Settle(form);
+                    FullyVisible(Named(form,"VrsPeripheralRate"));
+                    Screenshot(form,Path.Combine(output,stem+"-VRS-top.png"));
                     form.Close();
                 }
             }

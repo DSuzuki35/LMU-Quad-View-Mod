@@ -1,5 +1,27 @@
 # Architecture and ownership
 
+## Stereo VRS (0.2.0)
+
+`LMU_QV_MODE=vrs` retains native two-view OpenXR enumeration and submission.
+It neither requests quad views nor repeats the focus scene. The native render
+hook scopes NVAPI only around the existing verified world-sort callers. A
+16-pixel tile map uses 1x1 shading for tiles intersecting the focus rectangle and
+the selected coarse rate elsewhere; unsupported driver/device paths keep ordinary
+stereo. UI and unverified passes are outside the VRS scopes. The map is updated
+per eye and uses the actual native projection, including in-game crop.
+
+`vrs_gaze.hpp` owns optional EXT eye-gaze actions/spaces. Application attachment
+and synchronization are augmented without removing their sets. For LMU without
+actions, the helper attaches privately at first locate. Missing or invalid gaze
+falls back per frame. Gaze spaces are destroyed before session destruction.
+`vrs_foveation.hpp` owns bounded numeric projection and conservative tile mapping.
+NVAPI initialization remains resident for the process lifetime because D3D
+devices can outlive a helper reset; per-helper maps/views are still released.
+
+The benchmark ABI keeps its existing fields: in VRS, outer0/1 contain stereo
+eye dimensions and focus dimensions are zero. The launcher identifies them as
+stereo eyes. No separate focus image or SPS pass is implied.
+
 This is a Windows x64 D3D11 OpenXR API layer plus a .NET Framework launcher.
 The adapter exposes two views to LMU while arranging four views downstream.
 It depends on a verified game executable and renderer hooks; it is not a generic

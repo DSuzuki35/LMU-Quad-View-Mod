@@ -108,7 +108,7 @@ namespace LmuQuadViewLauncher {
         internal static void AddImplicitDisables(LayerPlan plan,IEnumerable<string> manifests,string backend) {
             // Explicit copies ignore activation switches; originals remain disabled
             // only in this child. Never rewrite registry values or installed files.
-            if(backend=="VectorXR")plan.DisableVariables.Add("DISABLE_XR_APILAYER_MBUCCHIA_toolkit");
+            if(backend=="VectorXR"||backend=="VRS")plan.DisableVariables.Add("DISABLE_XR_APILAYER_MBUCCHIA_toolkit");
             foreach(var path in manifests) {
                 if(!File.Exists(path))continue;
                 Dictionary<string,object> layer;
@@ -117,7 +117,7 @@ namespace LmuQuadViewLauncher {
                 } catch(InvalidDataException) { continue; } catch(IOException) { continue; } catch(UnauthorizedAccessException) { continue; }
                 if(layer==null)continue;
                 var name=Value(layer,"name");
-                if(name!=ProviderName&&name!=VectorXrProviderName&&!(backend=="VectorXR"&&name=="XR_APILAYER_MBUCCHIA_toolkit"))continue;
+                if(name!=ProviderName&&name!=VectorXrProviderName&&!((backend=="VectorXR"||backend=="VRS")&&name=="XR_APILAYER_MBUCCHIA_toolkit"))continue;
                 var disable=Value(layer,"disable_environment");
                 if(!ValidDisable(name,disable))throw new InvalidDataException("Cannot isolate installed layer "+name+": missing recognizable disable switch.");
                 if(!plan.DisableVariables.Contains(disable))plan.DisableVariables.Add(disable);
@@ -130,7 +130,7 @@ namespace LmuQuadViewLauncher {
             root=System.IO.Path.GetFullPath(root);CheckSearchPath(root);
             var plan=new LayerPlan {Paths=root,Layers=AdapterName,DisableVariable=provider==null?null:provider.DisableVariable};
             if(provider!=null&&!plan.DisableVariables.Contains(provider.DisableVariable))plan.DisableVariables.Add(provider.DisableVariable);
-            if(backend=="Native") return plan;
+            if(backend=="Native"||backend=="VRS") return plan;
             var expectedName=NameForBackend(backend);
             if(provider==null||provider.Name!=expectedName) throw new InvalidOperationException("Install "+backend+" or select its matching JSON manifest.");
             if(String.IsNullOrWhiteSpace(runDirectory)) throw new ArgumentException("Unique layer run directory is required.");
@@ -156,31 +156,36 @@ namespace LmuQuadViewLauncher {
             environment["XR_API_LAYER_PATH"]=plan.Paths;environment["XR_ENABLE_API_LAYERS"]=plan.Layers;
             if(!String.IsNullOrEmpty(plan.DisableVariable)) environment[plan.DisableVariable]="1";
             foreach(var variable in plan.DisableVariables)environment[variable]="1";
-            if(settings.Backend=="VectorXR")environment["DISABLE_XR_APILAYER_MBUCCHIA_toolkit"]="1";
-            environment["LMU_QV_MODE"]="quad";environment["LMU_QV_USE_RUNTIME_SETTINGS"]="1";
+            bool vrs=settings.Backend=="VRS";
+            if(settings.Backend=="VectorXR"||vrs)environment["DISABLE_XR_APILAYER_MBUCCHIA_toolkit"]="1";
+            environment["LMU_QV_MODE"]=vrs?"vrs":"quad";environment["LMU_QV_USE_RUNTIME_SETTINGS"]=vrs?"0":"1";
             environment["LMU_QV_FOVEATION_MODE"]=settings.FoveationMode;environment["LMU_QV_LOG"]=settings.DiagnosticsEnabled?log:"";
             environment["LMU_QV_DIAGNOSTICS"]=settings.DiagnosticsEnabled?"1":"0";
             environment["LMU_QV_BENCHMARK"]=settings.DiagnosticsEnabled&&settings.BenchmarkEnabled?"1":"0";
-            bool audit=settings.DiagnosticsEnabled&&settings.StereoDrawAudit&&!settings.CpuUploadBatch;
+            bool audit=!vrs&&settings.DiagnosticsEnabled&&settings.StereoDrawAudit&&!settings.CpuUploadBatch;
             environment["LMU_QV_STEREO_AUDIT"]=audit?"1":"0";
             environment["LMU_QV_STEREO_AUDIT_DIR"]=audit?System.IO.Path.GetDirectoryName(log):"";
             environment["LMU_QV_STEREO_SHADER_CAPTURE"]=audit&&settings.StereoShaderCapture?"1":"0";
             environment["LMU_QV_STEREO_DRAW_PROOF"]=audit&&settings.StereoPairProof?"1":"0";
-            environment["LMU_QV_CPU_UPLOAD_REUSE"]=settings.CpuUploadReuse&&!settings.CpuUploadBatch?"1":"0";
-            environment["LMU_QV_CPU_UPLOAD_BATCH"]=settings.CpuUploadBatch?"1":"0";
+            environment["LMU_QV_CPU_UPLOAD_REUSE"]=!vrs&&settings.CpuUploadReuse&&!settings.CpuUploadBatch?"1":"0";
+            environment["LMU_QV_CPU_UPLOAD_BATCH"]=!vrs&&settings.CpuUploadBatch?"1":"0";
             environment["LMU_QV_DEBUG_FOCUS"]=settings.DebugFocus?"1":"0";
             environment["LMU_QV_PROFILE"]=settings.DiagnosticsEnabled&&settings.RenderProfiling?"1":"0";
             environment["LMU_QV_PROFILE_SECONDS"]=settings.RenderProfileSeconds.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_VECTORXR_DIRECT_INPUTS"]=settings.Backend=="VectorXR"?"1":"0";
-            environment["LMU_QV_OUTER_BLUR"]=settings.OuterBlur.ToString(CultureInfo.InvariantCulture);
-            environment["LMU_QV_CROP_WIDTH_PERCENT"]=settings.CropWidthPercent.ToString(CultureInfo.InvariantCulture);
-            environment["LMU_QV_CROP_HEIGHT_PERCENT"]=settings.CropHeightPercent.ToString(CultureInfo.InvariantCulture);
+            environment["LMU_QV_OUTER_BLUR"]=vrs?"0":settings.OuterBlur.ToString(CultureInfo.InvariantCulture);
+            environment["LMU_QV_CROP_WIDTH_PERCENT"]=vrs?"100":settings.CropWidthPercent.ToString(CultureInfo.InvariantCulture);
+            environment["LMU_QV_CROP_HEIGHT_PERCENT"]=vrs?"100":settings.CropHeightPercent.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_FOCUS_OFFSET_X_PERCENT"]=settings.FocusOffsetXPercent.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_FOCUS_OFFSET_Y_PERCENT"]=settings.FocusOffsetYPercent.ToString(CultureInfo.InvariantCulture);
-            environment["LMU_QV_NATIVE_OUTER"]=settings.NativeOuterResolution?"1":"0";
-            environment["LMU_QV_PIXEL_STATS"]="0";environment["LMU_QV_VRS_EXCLUSIVE"]="0";environment["LMU_QV_OUTER_SHADING_RATE"]="2";
+            environment["LMU_QV_NATIVE_OUTER"]=!vrs&&settings.NativeOuterResolution?"1":"0";
+            environment["LMU_QV_PIXEL_STATS"]="0";environment["LMU_QV_VRS_EXCLUSIVE"]=vrs?"1":"0";environment["LMU_QV_OUTER_SHADING_RATE"]=vrs?settings.VrsPeripheralRate.ToString(CultureInfo.InvariantCulture):"2";
             foreach(var key in new[]{"CAPTURE_DIR","CAPTURE_TRIGGER","GPU_TIMING_TRIGGER","BENCH_CONTROL"}) environment["LMU_QV_"+key]="";
             foreach(var key in new[]{"OUTER_PIXELS_PERCENT","FOCUS_PIXELS_PERCENT","FOCUS_BOX_PERCENT","FOCUS_WIDTH_PERCENT","FOCUS_HEIGHT_PERCENT"}) environment["LMU_QV_"+key]="100";
+            if(vrs) {
+                environment["LMU_QV_FOCUS_WIDTH_PERCENT"]=settings.FocusWidthPercent.ToString(CultureInfo.InvariantCulture);
+                environment["LMU_QV_FOCUS_HEIGHT_PERCENT"]=settings.FocusHeightPercent.ToString(CultureInfo.InvariantCulture);
+            }
             return info;
         }
         static string HashFile(string path) {
@@ -207,11 +212,12 @@ namespace LmuQuadViewLauncher {
             var ownLibrary=Value(ownLayer,"library_path");
             if(String.IsNullOrWhiteSpace(ownLibrary)||!String.Equals(System.IO.Path.GetFullPath(System.IO.Path.Combine(root,ownLibrary)),System.IO.Path.Combine(root,@"build\lmu_quadview.dll"),StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("The LMU manifest must reference this package's build/lmu_quadview.dll.");
-            var providerBackend=settings.Backend=="Native"?"QVFR":settings.Backend;
+            bool vrs=settings.Backend=="VRS";
+            var providerBackend=settings.Backend=="Native"||vrs?"QVFR":settings.Backend;
             var custom=settings.Backend=="VectorXR"?settings.VectorXrManifest:settings.QuadViewsManifest;
-            string providerPath=settings.Backend!="Native"&&!String.IsNullOrWhiteSpace(custom)?custom:FindProviderManifest(providerBackend);
+            string providerPath=vrs?null:settings.Backend!="Native"&&!String.IsNullOrWhiteSpace(custom)?custom:FindProviderManifest(providerBackend);
             ProviderManifest provider=String.IsNullOrWhiteSpace(providerPath)?null:ReadProviderManifest(providerPath,settings.Backend!="Native",providerBackend);
-            if(settings.Backend!="Native"&&provider==null) throw new FileNotFoundException(settings.Backend+" is not installed. Install it from the Setup page or select its JSON manifest.");
+            if(settings.Backend!="Native"&&!vrs&&provider==null) throw new FileNotFoundException(settings.Backend+" is not installed. Install it from the Setup page or select its JSON manifest.");
             var logDirectory=System.IO.Path.Combine(root,"logs");
             var stamp=DateTime.Now.ToString("yyyyMMdd-HHmmss",CultureInfo.InvariantCulture)+"-"+Guid.NewGuid().ToString("N").Substring(0,8);
             var runDirectory=System.IO.Path.Combine(root,settings.DiagnosticsEnabled?"logs":"runtime");
@@ -224,12 +230,12 @@ namespace LmuQuadViewLauncher {
             return info;
         }
         internal static object PreparedMetadata(string root,LauncherSettings settings,LayerPlan plan,ProcessStartInfo info,string log) {
-            return new {Status="prepared",Pid=(int?)null,Mode="quad",Backend=settings.Backend,FoveationMode=settings.FoveationMode,
+            return new {Status="prepared",Pid=(int?)null,Mode=settings.Backend=="VRS"?"vrs":"quad",Backend=settings.Backend,FoveationMode=settings.FoveationMode,VrsPeripheralRate=settings.VrsPeripheralRate,
                 Exe=info.FileName,ExeSHA256=SupportedExecutableHash,LayerSHA256=HashFile(System.IO.Path.Combine(root,@"build\lmu_quadview.dll")),
                 ProviderManifest=plan.ProviderPath,ProviderName=plan.ProviderName,ProviderSHA256=plan.Library==null?null:HashFile(plan.Library),
                 ExplicitManifest=plan.ExplicitManifest,EnabledLayers=plan.Layers,DisabledImplicitSwitches=plan.DisableVariables,Log=log,
                 DiagnosticsEnabled=settings.DiagnosticsEnabled,BenchmarkEnabled=settings.DiagnosticsEnabled&&settings.BenchmarkEnabled,BenchmarkRequested=settings.BenchmarkEnabled,BenchmarkTemplate=settings.BenchmarkTemplate,
-                DebugFocus=settings.DebugFocus,RenderProfiling=settings.RenderProfiling,StereoDrawAudit=settings.StereoDrawAudit,StereoShaderCapture=settings.StereoShaderCapture,StereoPairProof=settings.StereoPairProof,CpuUploadReuse=settings.CpuUploadReuse,CpuUploadBatch=settings.CpuUploadBatch,RenderProfileSeconds=settings.RenderProfileSeconds,NativeOuterResolution=settings.NativeOuterResolution,UseRuntimeSettings=true,
+                DebugFocus=settings.DebugFocus,RenderProfiling=settings.RenderProfiling,StereoDrawAudit=info.EnvironmentVariables["LMU_QV_STEREO_AUDIT"]=="1",StereoShaderCapture=info.EnvironmentVariables["LMU_QV_STEREO_SHADER_CAPTURE"]=="1",StereoPairProof=info.EnvironmentVariables["LMU_QV_STEREO_DRAW_PROOF"]=="1",CpuUploadReuse=info.EnvironmentVariables["LMU_QV_CPU_UPLOAD_REUSE"]=="1",CpuUploadBatch=info.EnvironmentVariables["LMU_QV_CPU_UPLOAD_BATCH"]=="1",RenderProfileSeconds=settings.RenderProfileSeconds,NativeOuterResolution=info.EnvironmentVariables["LMU_QV_NATIVE_OUTER"]=="1",UseRuntimeSettings=settings.Backend!="VRS",
                 VectorXrDirectInputs=settings.Backend=="VectorXR",OuterBlur=settings.OuterBlur,
                 CropWidthPercent=settings.CropWidthPercent,CropHeightPercent=settings.CropHeightPercent,
                 FocusOffsetXPercent=settings.FocusOffsetXPercent,FocusOffsetYPercent=settings.FocusOffsetYPercent,

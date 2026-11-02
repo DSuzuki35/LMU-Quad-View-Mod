@@ -13,6 +13,10 @@ static void* testReturnAddress(unsigned){return reinterpret_cast<void*>(syntheti
 namespace lmuqv {
 unsigned originalCalls=0,viewRequests=0;
 bool xr_runtime_sizes(unsigned,uint32_t& ow,uint32_t& oh,uint32_t& w,uint32_t& h){ow=650;oh=642;w=2224;h=2182;return true;}
+bool xr_vrs_active(){return false;}
+bool xr_vrs_focus(unsigned,VrsFocus&){return false;}
+bool xr_vrs_render_focus(unsigned,const float*,VrsFocus&){return false;}
+void xr_vrs_scene_complete(unsigned){}
 bool xr_quad_active(){return true;}
 bool xr_frame_views(XrView (&)[4]){++viewRequests;return false;}
 bool xr_copy_outer(unsigned,ID3D11Texture2D*){return false;}

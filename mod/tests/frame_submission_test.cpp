@@ -213,6 +213,24 @@ void semantics(){
         assert(received.projection.viewCount==2&&releases==0&&auditEnds==0&&!s.frame);
     }
     {
+        Fixture f;s.quad=false;s.vrs=true;
+        s.vrsTracked=true;s.vrsGazePose.orientation={0,std::sin(-.1f),0,std::cos(-.1f)};
+        s.vrsWidth=s.vrsHeight=.1f;
+        float rendered[16]{};rendered[0]=2;rendered[5]=4;rendered[8]=.2f;rendered[9]=-.1f;rendered[11]=1;
+        lmuqv::VrsFocus actual;
+        assert(lmuqv::xr_vrs_render_focus(0,rendered,actual));
+        assert(std::abs((actual.left+actual.right)*.5f-(std::tan(.2f)+.6f))<1e-5f);
+        s.vrsTracked=false;assert(lmuqv::xr_vrs_render_focus(0,rendered,actual));
+        assert(std::abs(actual.left-.45f)<1e-5f); // Per-frame fixed fallback.
+        rendered[11]=0;assert(!lmuqv::xr_vrs_render_focus(0,rendered,actual));
+        f.views[0].pose.position.x=123;f.views[1].pose.position.x=456;
+        f.submit();
+        assert(received.original==&f.info&&received.info.layers==f.layers.data());
+        assert(received.projection.viewCount==2&&releases==0&&auditEnds==0&&!s.frame);
+        assert(received.projection.views[0].pose.position.x==123&&received.projection.views[1].pose.position.x==456);
+        assert(s.vrsWidths[0]>0&&s.vrsHeights[1]>0);
+    }
+    {
         Fixture f;s.outer[0].waited=false;downstreamResult=XR_ERROR_RUNTIME_FAILURE;f.submit();
         assert(waits==1&&releases==2&&!s.frame&&auditEnds==1);
     }

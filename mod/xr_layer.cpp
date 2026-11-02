@@ -11,6 +11,8 @@
 #include "swapchain_sampling.hpp"
 #include "submission_pose.hpp"
 #include "stereo_audit.hpp"
+#include "vrs_gaze.hpp"
+#include "vrs_foveation.hpp"
 #include "benchmark_overlay.hpp"
 #include "benchmark_gpu.hpp"
 #include <algorithm>
@@ -41,6 +43,8 @@ bool quadMode() {
     GetEnvironmentVariableA("LMU_QV_MODE",value,sizeof(value));
     return !std::strcmp(value,"quad");
 }
+bool vrsMode(){char value[32]{};GetEnvironmentVariableA("LMU_QV_MODE",value,sizeof(value));return !std::strcmp(value,"vrs");}
+lmuqv::VrsGaze vrsGaze;
 std::wstring environmentWide(const wchar_t* name) {
     DWORD size=GetEnvironmentVariableW(name,nullptr,0);if(!size||size>32768)return {};
     std::wstring value(size,L'\0');DWORD written=GetEnvironmentVariableW(name,value.data(),size);
@@ -96,7 +100,11 @@ struct State {
     XrInstance instance{};
     XrSession session{};
     XrSystemId system{};
-    bool quad=false, running=false, frame=false, shouldRender=false, located=false;
+    bool quad=false, vrs=false, running=false, frame=false, shouldRender=false, located=false;
+    float vrsWidth=.5f,vrsHeight=.5f;
+    lmuqv::VrsFocus vrsFocus[2];
+    XrPosef vrsGazePose{};bool vrsTracked=false;
+    uint32_t vrsWidths[2]{},vrsHeights[2]{};
     bool captures[2]{};
     bool sceneFocus[2]{};
     bool debugFocus=false;
@@ -164,6 +172,7 @@ void benchmarkPublish(unsigned submitted,int reason,int64_t preSubmit,int64_t po
     benchmarkPreviousSceneQpc=scene&&XR_SUCCEEDED(result)?benchmarkBeginQpc:0;
     h.running=s.running?1:0;h.result=result;h.projections=int32_t(submitted);h.gpuFailures=benchmarkGpu.failures;
     h.outer0Width=s.outer[0].width;h.outer0Height=s.outer[0].height;h.outer1Width=s.outer[1].width;h.outer1Height=s.outer[1].height;h.focusWidth=s.colorInfo.width;h.focusHeight=s.colorInfo.height;
+    if(s.vrs){h.outer0Width=s.vrsWidths[0];h.outer0Height=s.vrsHeights[0];h.outer1Width=s.vrsWidths[1];h.outer1Height=s.vrsHeights[1];h.focusWidth=h.focusHeight=0;}
     const bool overlayFailure=!benchmarkOverlayReady||benchmarkOverlayCapacityFailure||benchmarkOverlay.result()!=XR_SUCCESS;
     h.status=XR_FAILED(result)?4:!s.shouldRender?1:!submitted?2:overlayFailure?3:0;
     h.reason=XR_FAILED(result)?reason:!s.shouldRender?0:reason?reason:overlayFailure?4:0;lmuqv::benchmark::publish(data,sample);
@@ -278,6 +287,7 @@ void destroyOuter() {
     s.colorInfo={};
 }
 void clearSession() {
+    vrsGaze.resetSession();
     benchmarkReset();
     outerResample.reset();
     for(auto& entry:s.appChains)clearFocusRtvs(entry.second);
@@ -494,6 +504,7 @@ XrResult XRAPI_CALL layerCreateSession(XrInstance instance,const XrSessionCreate
     }
     XrResult r=next.CreateSession(instance,info,session);if(XR_FAILED(r))return r;
     s.session=*session;s.system=info->systemId;
+    if(s.vrs&&s.requestEyeTracking)logf("vrs gaze initialized=%d; invalid/unavailable gaze uses fixed focus",vrsGaze.initialize(*session));
     for(auto chain=static_cast<const XrBaseInStructure*>(info->next);chain;chain=chain->next) {
         if(chain->type==XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
             s.device=reinterpret_cast<const XrGraphicsBindingD3D11KHR*>(chain)->device;
@@ -503,9 +514,9 @@ XrResult XRAPI_CALL layerCreateSession(XrInstance instance,const XrSessionCreate
     logf("xrCreateSession result=%d D3D11=%d game=%d",r,s.device!=nullptr,gameProcess());
     if(s.device&&gameProcess()){
         const bool started=lmuqv::engine_start(s.context);logf("engine_start result=%d",started);
-        if(s.runtimeSettings&&!started){
+        if((s.runtimeSettings||s.vrs)&&!started){
             logf("Runtime settings mode requires successful engine hooks; refusing session");
-            lmuqv::engine_stop();next.DestroySession(*session);clearSession();*session=XR_NULL_HANDLE;
+            lmuqv::engine_stop();vrsGaze.resetSession();next.DestroySession(*session);clearSession();*session=XR_NULL_HANDLE;
             return XR_ERROR_INITIALIZATION_FAILED;
         }
     }
@@ -514,7 +525,7 @@ XrResult XRAPI_CALL layerCreateSession(XrInstance instance,const XrSessionCreate
 }
 XrResult XRAPI_CALL layerDestroySession(XrSession session) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    logf("xrDestroySession");lmuqv::engine_stop();benchmarkReset();
+    logf("xrDestroySession");lmuqv::engine_stop();benchmarkReset();vrsGaze.resetSession();
     outerResample.reset();
     for(auto& entry:s.appChains)clearFocusRtvs(entry.second);
     destroyOuter();
@@ -569,6 +580,26 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(!s.quad||info->viewConfigurationType!=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO){
         XrResult r=next.LocateViews(session,info,state,cap,count,out);
+        if(s.vrs&&info->viewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO){
+            s.located=false;
+            const XrViewStateFlags valid=XR_VIEW_STATE_ORIENTATION_VALID_BIT|XR_VIEW_STATE_POSITION_VALID_BIT;
+            if(XR_SUCCEEDED(r)&&cap>=2&&count&&*count==2&&out&&state&&(state->viewStateFlags&valid)==valid){
+                s.locateTime=info->displayTime;s.locateSpace=info->space;
+                s.located=true;
+                XrPosef gaze{};
+                const bool tracked=s.requestEyeTracking&&vrsGaze.ensureAttachedAndSync(session)&&vrsGaze.sample(info->space,info->displayTime,gaze);
+                s.vrsTracked=tracked;s.vrsGazePose=gaze;
+                bool projected[2]{};
+                for(unsigned eye=0;eye<2;++eye){
+                    s.views[eye]=out[eye];float x=.5f,y=.5f;
+                    projected[eye]=tracked&&lmuqv::vrs_gaze_center(out[eye],gaze,x,y);
+                    if(!projected[eye])x=y=.5f;
+                    s.vrsFocus[eye]=lmuqv::vrs_focus(x,y,s.vrsWidth,s.vrsHeight,float(s.focusOffsetX.percent/100),float(s.focusOffsetY.percent/100));
+                }
+                if(s.frames<10||s.frames%120==0)logf("vrs focus source=%s eye0=%.3f,%.3f,%.3f,%.3f; stereo views unchanged",
+                    projected[0]&&projected[1]?"gaze":"fixed",s.vrsFocus[0].left,s.vrsFocus[0].top,s.vrsFocus[0].right,s.vrsFocus[0].bottom);
+            }
+        }
         if(XR_FAILED(r)||s.frames<10||s.frames%120==0)logf("xrLocateViews mode=%s frame=%llu capacity=%u count=%u begun=%d stateFlags=%llu time=%lld result=%d",s.quad?"quad-forward":"trace",static_cast<unsigned long long>(s.frames),cap,count?*count:0,s.frame,static_cast<unsigned long long>(XR_SUCCEEDED(r)&&state?state->viewStateFlags:0),static_cast<long long>(info->displayTime),r);
         return r;
     }
@@ -742,11 +773,33 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(s.focusOwnership&&heldFocusImages()){logf("stereo_pass end-frame refused: unresolved focus image owner; no downstream release/submission");return XR_ERROR_CALL_ORDER_INVALID;}
     if(!s.quad){
-        if(benchmarkEnabled)benchmarkGpu.stop(false);
+        unsigned submitted=0;
+        if(s.vrs&&info&&info->layers)for(uint32_t i=0;i<info->layerCount;++i){
+            const auto* layer=info->layers[i];if(!layer||layer->type!=XR_TYPE_COMPOSITION_LAYER_PROJECTION)continue;
+            const auto* projection=reinterpret_cast<const XrCompositionLayerProjection*>(layer);
+            if(projection->viewCount==2&&projection->views){++submitted;
+                for(unsigned eye=0;eye<2;++eye){const auto& extent=projection->views[eye].subImage.imageRect.extent;
+                    s.vrsWidths[eye]=extent.width>0?unsigned(extent.width):0;s.vrsHeights[eye]=extent.height>0?unsigned(extent.height):0;}}
+        }
+        auto modified=*info;std::vector<const XrCompositionLayerBaseHeader*> layers;
+        if(benchmarkEnabled){
+            benchmarkGpu.stop(s.vrs&&s.sceneFocus[0]&&s.sceneFocus[1]);
+            lmuqv::benchmark::Config config;
+            benchmarkOverlayCapacityFailure=lmuqv::benchmark::read_config(*benchmarkTransport.data(),config)&&config.visible&&s.shouldRender&&info->layerCount>=benchmarkLayerLimit;
+            if(s.vrs&&benchmarkOverlayReady&&info->layerCount<benchmarkLayerLimit){
+                const auto* overlay=benchmarkOverlay.prepare(*benchmarkTransport.data(),s.context,s.frame&&s.shouldRender);
+                if(overlay){if(info->layerCount)layers.assign(info->layers,info->layers+info->layerCount);
+                    layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(overlay));modified.layers=layers.data();modified.layerCount=uint32_t(layers.size());}
+            }
+        }
         const int64_t before=benchmarkEnabled?lmuqv::benchmark::ticks():0;
-        XrResult r=next.EndFrame(session,info);
-        if(benchmarkEnabled)benchmarkPublish(0,0,before,lmuqv::benchmark::ticks(),r);
-        if(XR_FAILED(r)||s.frames<10||s.frames%120==0)logf("xrEndFrame mode=trace frame=%llu appLayers=%u begun=%d shouldRender=%d time=%lld result=%d",static_cast<unsigned long long>(s.frames),info->layerCount,s.frame,s.shouldRender,static_cast<long long>(info->displayTime),r);
+        XrResult r=next.EndFrame(session,layers.empty()?info:&modified);
+        if(benchmarkEnabled)benchmarkPublish(submitted,0,before,lmuqv::benchmark::ticks(),r);
+        if(s.vrs)lmuqv::renderProfile.xr_frame_end(s.context);
+        if(XR_FAILED(r)||s.frames<10||s.frames%120==0){
+            if(s.vrs)logf("xrEndFrame mode=vrs frame=%llu appLayers=%u stereoProjections=%u begun=%d shouldRender=%d time=%lld result=%d",static_cast<unsigned long long>(s.frames),info->layerCount,submitted,s.frame,s.shouldRender,static_cast<long long>(info->displayTime),r);
+            else logf("xrEndFrame mode=trace frame=%llu appLayers=%u begun=%d shouldRender=%d time=%lld result=%d",static_cast<unsigned long long>(s.frames),info->layerCount,s.frame,s.shouldRender,static_cast<long long>(info->displayTime),r);
+        }
         clearFrame();
         return r;
     }
@@ -830,10 +883,17 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
     if(s.frames<10||s.frames%120==0||(!submitted&&s.shouldRender))logf("xrEndFrame frame=%llu quadProjections=%u captures=%d/%d located=%d shouldRender=%d result=%d",static_cast<unsigned long long>(s.frames),submitted,s.captures[0],s.captures[1],s.located,s.shouldRender,r);
     clearFrame();return r;
 }
+XrResult XRAPI_CALL layerAttachSessionActionSets(XrSession session,const XrSessionActionSetsAttachInfo* info){
+    std::lock_guard<std::recursive_mutex> lock(stateMutex);return vrsGaze.attach(session,info);
+}
+XrResult XRAPI_CALL layerSyncActions(XrSession session,const XrActionsSyncInfo* info){
+    std::lock_guard<std::recursive_mutex> lock(stateMutex);return vrsGaze.sync(session,info);
+}
 XrResult XRAPI_CALL layerGetInstanceProcAddr(XrInstance instance,const char* name,PFN_xrVoidFunction* function) {
     if(!name||!function)return XR_ERROR_VALIDATION_FAILURE;
     logf("xrGetInstanceProcAddr %s",name);
 #define INTERCEPT(api) if(!std::strcmp(name,"xr" #api)){*function=reinterpret_cast<PFN_xrVoidFunction>(layer##api);return XR_SUCCESS;}
+    if(s.vrs&&vrsGaze.available()){INTERCEPT(AttachSessionActionSets) INTERCEPT(SyncActions)}
     INTERCEPT(GetInstanceProcAddr) INTERCEPT(DestroyInstance) INTERCEPT(EnumerateViewConfigurations)
     INTERCEPT(GetViewConfigurationProperties) INTERCEPT(EnumerateViewConfigurationViews) INTERCEPT(EnumerateEnvironmentBlendModes)
     INTERCEPT(CreateSession) INTERCEPT(DestroySession) INTERCEPT(BeginSession) INTERCEPT(EndSession)
@@ -853,10 +913,10 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
        chain->structSize!=sizeof(XrApiLayerNextInfo)||std::strcmp(chain->layerName,layerName)||
        !chain->nextGetInstanceProcAddr||!chain->nextCreateApiLayerInstance)return XR_ERROR_INITIALIZATION_FAILED;
     if(s.instance)return XR_ERROR_LIMIT_REACHED;
-    bool quad=quadMode();auto modified=*info;std::vector<const char*> extensions;
+    bool quad=quadMode(),vrs=vrsMode();auto modified=*info;std::vector<const char*> extensions;
     char foveationMode[16]{};
     const DWORD modeLength=GetEnvironmentVariableA("LMU_QV_FOVEATION_MODE",foveationMode,sizeof(foveationMode));
-    if(quad&&(modeLength>=sizeof(foveationMode)||
+    if((quad||vrs)&&(modeLength>=sizeof(foveationMode)||
        (modeLength&&std::strcmp(foveationMode,"auto")&&std::strcmp(foveationMode,"fixed")))){
         logf("Invalid LMU_QV_FOVEATION_MODE; use auto or fixed");return XR_ERROR_VALIDATION_FAILURE;
     }
@@ -870,14 +930,30 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
     if(quad)for(const char* extension:{XR_VARJO_QUAD_VIEWS_EXTENSION_NAME,XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME}){
         if(std::none_of(extensions.begin(),extensions.end(),[&](const char* e){return !std::strcmp(e,extension);}))extensions.push_back(extension);
     }
+    const bool injectGaze=vrs&&requestEyeTracking&&std::none_of(extensions.begin(),extensions.end(),[](const char* e){return !std::strcmp(e,XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);});
+    if(injectGaze)extensions.push_back(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
     modified.enabledExtensionCount=static_cast<uint32_t>(extensions.size());modified.enabledExtensionNames=extensions.data();
     auto downstream=*layer;downstream.nextInfo=chain->next;
     XrResult r=chain->nextCreateApiLayerInstance(&modified,&downstream,instance);
+    bool gazeEnabled=vrs&&requestEyeTracking;
+    if(r==XR_ERROR_EXTENSION_NOT_PRESENT&&injectGaze){
+        extensions.pop_back();modified.enabledExtensionCount=uint32_t(extensions.size());modified.enabledExtensionNames=extensions.data();
+        *instance=XR_NULL_HANDLE;r=chain->nextCreateApiLayerInstance(&modified,&downstream,instance);gazeEnabled=false;
+        logf("vrs gaze extension unavailable; fixed focus fallback");
+    }
     logf("xrCreateApiLayerInstance mode=%s app=%s extensions=%u result=%d",quad?"quad":"trace",info->applicationInfo.applicationName,modified.enabledExtensionCount,r);
     if(XR_FAILED(r))return r;
     next.get=chain->nextGetInstanceProcAddr;
     if(!next.load(*instance)){if(next.DestroyInstance)next.DestroyInstance(*instance);*instance=XR_NULL_HANDLE;return XR_ERROR_INITIALIZATION_FAILED;}
-    s.instance=*instance;s.quad=quad;s.requestEyeTracking=requestEyeTracking;
+    s.instance=*instance;s.quad=quad;s.vrs=vrs;s.requestEyeTracking=requestEyeTracking;
+    if(gazeEnabled)vrsGaze.load(*instance,next.get);
+    else vrsGaze.load(XR_NULL_HANDLE,nullptr);
+    if(vrs){
+        auto dimension=[](const char* name){char text[64]{};const auto n=GetEnvironmentVariableA(name,text,sizeof(text));char* end=nullptr;
+            const float value=std::strtof(text,&end);return n&&n<sizeof(text)&&end==text+n&&std::isfinite(value)&&value>=10&&value<=90?value/100:.5f;};
+        s.vrsWidth=dimension("LMU_QV_FOCUS_WIDTH_PERCENT");s.vrsHeight=dimension("LMU_QV_FOCUS_HEIGHT_PERCENT");
+        logf("vrs mode=stereo peripheral shading experimental; focus=%.1f/%.1f%%; no quad views or extra focus passes",s.vrsWidth*100,s.vrsHeight*100);
+    }
     s.outerBlur=quad?outerBlur:0;
     if(quad)logf("Outer smoothing radius=%g output pixels; focus source untouched",s.outerBlur);
     if(quad)logf("Foveation request mode=%s; actual eye-tracking availability is determined by the downstream provider",requestEyeTracking?"auto":"fixed");
@@ -994,6 +1070,19 @@ bool xr_runtime_sizes(unsigned eye,uint32_t& outerWidth,uint32_t& outerHeight,ui
     outerWidth=s.runtimeOuterWidth[eye];outerHeight=s.runtimeOuterHeight[eye];focusWidth=s.runtimeFocusWidth;focusHeight=s.runtimeFocusHeight;return true;
 }
 bool xr_quad_active(){std::lock_guard<std::recursive_mutex> lock(stateMutex);return s.quad&&s.session&&s.running;}
+bool xr_vrs_active(){std::lock_guard<std::recursive_mutex> lock(stateMutex);return s.vrs&&s.session&&s.running;}
+bool xr_vrs_focus(unsigned eye,VrsFocus& focus){std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    if(eye>1||!s.vrs||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
+    focus=s.vrsFocus[eye];return true;}
+bool xr_vrs_render_focus(unsigned eye,const float* projection,VrsFocus& focus){std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    if(!xr_vrs_focus(eye,focus))return false;
+    auto rendered=s.views[eye];if(!vrs_projection_fov(projection,rendered.fov))return false;
+    float x=.5f,y=.5f;
+    if(!s.vrsTracked||!vrs_gaze_center(rendered,s.vrsGazePose,x,y))x=y=.5f;
+    focus=vrs_focus(x,y,s.vrsWidth,s.vrsHeight,float(s.focusOffsetX.percent/100),float(s.focusOffsetY.percent/100));return true;
+}
+void xr_vrs_scene_complete(unsigned eye){std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    if(eye<2&&s.vrs&&s.frame&&s.shouldRender)s.sceneFocus[eye]=true;}
 bool xr_frame_views(XrView (&views)[4]) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(!s.quad||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;

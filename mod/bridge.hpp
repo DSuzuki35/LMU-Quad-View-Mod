@@ -5,10 +5,15 @@
 #include <windows.h>
 #include <d3d11.h>
 #include "openxr/openxr.h"
+#include "vrs_foveation.hpp"
 
 namespace lmuqv {
 // XR side: frame cache valid only from successful locate to end-frame on rendering thread.
 bool xr_quad_active();
+bool xr_vrs_active();
+bool xr_vrs_focus(unsigned eye,VrsFocus& focus);
+bool xr_vrs_render_focus(unsigned eye,const float* projection,VrsFocus& focus);
+void xr_vrs_scene_complete(unsigned eye);
 // Runtime-only selected dimensions. Available before hooks start; exact per eye.
 // False in legacy mode or before validated runtime recommendations are available.
 bool xr_runtime_sizes(unsigned eye,uint32_t& outerWidth,uint32_t& outerHeight,uint32_t& focusWidth,uint32_t& focusHeight);

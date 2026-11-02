@@ -36,6 +36,7 @@ bool fixedFoveation=false;
 bool noEyeTracking=false;
 bool failCapabilities=false;
 bool failInstanceCreation=false;
+bool rejectGazeExtension=false;
 unsigned instanceCreateCalls=0;
 const void* expectedLocateNext=nullptr;
 bool runtimeShouldRender=true;
@@ -453,6 +454,7 @@ XrResult XRAPI_CALL create(const XrInstanceCreateInfo* info, const XrApiLayerCre
     chained = layer->nextInfo == expectedNext;
     bool quad=false, foveated=false;
     for (uint32_t i=0;i<info->enabledExtensionCount;++i) {
+        if(rejectGazeExtension&&!std::strcmp(info->enabledExtensionNames[i],XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME))return XR_ERROR_EXTENSION_NOT_PRESENT;
         quad |= !std::strcmp(info->enabledExtensionNames[i], XR_VARJO_QUAD_VIEWS_EXTENSION_NAME);
         foveated |= !std::strcmp(info->enabledExtensionNames[i], XR_VARJO_FOVEATED_RENDERING_EXTENSION_NAME);
     }
@@ -1135,6 +1137,33 @@ int main(int argc,char** argv) {
         assert(logText.find("xrEndFrame mode=trace frame=1")!=std::string::npos);
     }else assert(logText.empty()&&GetFileAttributesW(logPath.c_str())==INVALID_FILE_ATTRIBUTES);
     assert(reinterpret_cast<PFN_xrDestroyInstance>(load("xrDestroyInstance"))(instance)==XR_SUCCESS);
+    // VRS requests ordinary stereo, leaves runtime views untouched and falls
+    // back when the optional gaze extension is absent. No quad provider needed.
+    SetEnvironmentVariableA("LMU_QV_MODE","vrs");
+    SetEnvironmentVariableA("LMU_QV_FOCUS_WIDTH_PERCENT","40");
+    SetEnvironmentVariableA("LMU_QV_FOCUS_HEIGHT_PERCENT","60");
+    SetEnvironmentVariableA("LMU_QV_FOCUS_OFFSET_X_PERCENT","0");
+    SetEnvironmentVariableA("LMU_QV_FOCUS_OFFSET_Y_PERCENT","0");
+    rejectGazeExtension=true;
+    for(bool fixed:{true,false}){
+        SetEnvironmentVariableA("LMU_QV_FOVEATION_MODE",fixed?"fixed":"auto");
+        const auto before=instanceCreateCalls;
+        assert(req.createApiLayerInstance(&info,&chain,&instance)==XR_SUCCESS&&!extensions);
+        assert(instanceCreateCalls==before+(fixed?1:2));
+        assert(enumerate(instance,1,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,2,&count,bounded.views)==XR_SUCCESS&&count==2);
+        assert(reinterpret_cast<PFN_xrWaitFrame>(load("xrWaitFrame"))(session,nullptr,&traceFrame)==XR_SUCCESS);
+        assert(reinterpret_cast<PFN_xrBeginFrame>(load("xrBeginFrame"))(session,nullptr)==XR_SUCCESS);
+        li.displayTime=runtimeTime;
+        assert(locateViews(session,&li,&state,2,&count,located.views)==XR_SUCCESS&&count==2);
+        assert(located.views[0].pose.position.x==10&&located.views[1].pose.position.x==11);
+        lmuqv::VrsFocus focus;
+        assert(lmuqv::xr_vrs_focus(0,focus)&&std::abs(focus.left-.3f)<1e-5&&std::abs(focus.top-.2f)<1e-5);
+        assert(!lmuqv::xr_vrs_focus(2,focus));
+        assert(reinterpret_cast<PFN_xrEndFrame>(load("xrEndFrame"))(session,&traceEnd)==XR_SUCCESS);
+        assert(!lmuqv::xr_vrs_focus(0,focus));
+        assert(reinterpret_cast<PFN_xrDestroyInstance>(load("xrDestroyInstance"))(instance)==XR_SUCCESS);
+    }
+    rejectGazeExtension=false;
     // Switching modes after destruction must not retain a previous instance's request.
     traceRuntime=false;SetEnvironmentVariableA("LMU_QV_MODE","quad");
     for(bool fixed:{true,false}){

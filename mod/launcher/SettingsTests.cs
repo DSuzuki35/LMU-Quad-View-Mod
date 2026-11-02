@@ -100,6 +100,15 @@ class SettingsTests
         Require(loaded.Backend=="VectorXR"&&loaded.VectorXrManifest==s.VectorXrManifest&&loaded.QuadViewsManifest==s.QuadViewsManifest,"Separate provider settings roundtrip");
         string unchangedProfile=File.ReadAllText(path);QvfrSettings.SaveProfile(path,s);
         Require(File.ReadAllText(path)==unchangedProfile,"VectorXR overwrote the mbucchia profile");
-        Console.WriteLine("C# settings tests passed: independent dimensions, invariant culture, backups, preservation, validation, migration.");
+        File.WriteAllText(xml,"<QuadView><Backend>VRS</Backend><VrsPeripheralRate>4</VrsPeripheralRate></QuadView>");
+        loaded=QvfrSettings.Load(xml);QvfrSettings.Validate(loaded);
+        Require(loaded.Backend=="VRS","VRS selection lost");QvfrSettings.Save(xml,loaded);
+        Require(File.ReadAllText(xml).Contains("<VrsPeripheralRate>4</VrsPeripheralRate>"),"VRS rate must roundtrip");
+        QvfrSettings.SaveProfile(path,loaded);Require(File.ReadAllText(path)==unchangedProfile,"VRS changed quad provider profile");
+        foreach(var invalidRate in new[]{0,3,8}) {
+            File.WriteAllText(xml,"<QuadView><Backend>VRS</Backend><VrsPeripheralRate>"+invalidRate+"</VrsPeripheralRate></QuadView>");
+            Rejected(delegate{QvfrSettings.Validate(QvfrSettings.Load(xml));});
+        }
+        Console.WriteLine("C# settings tests passed: independent dimensions, invariant culture, backups, preservation, validation, migration, VRS.");
     }
 }
