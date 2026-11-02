@@ -1,0 +1,24 @@
+CERTUM OPEN SOURCE CODE SIGNING CERTIFICATE VERIFICATION MANIFEST
+
+========================================================================
+ORDER DETAILS
+
+Order Number: ZoZE/025832/EU/02/11/2026
+Application Date: November 2, 2026
+
+========================================================================
+OWNERSHIP DECLARATION
+
+I hereby declare and confirm that I am the sole owner, primary maintainer, and authorized subscriber of this open-source repository. This file has been published in the root directory of this public repository to provide unambiguous, verifiable proof of my relationship with the project to the Certum verification team.
+
+========================================================================
+SUBSCRIBER IDENTITY
+
+Legal Full Name: Daniel Sosulski
+Contact Email: danielsosulski@gmail.com
+Project License: PolyForm Noncommercial License 1.0.0
+
+========================================================================
+VERIFICATION LINKAGE
+
+The identity details provided above match the government-issued identification and utility statements submitted in the Certum data security products dashboard for verification.
