@@ -160,6 +160,7 @@ namespace LmuQuadViewLauncher {
             environment["LMU_QV_MODE"]="quad";environment["LMU_QV_USE_RUNTIME_SETTINGS"]="1";
             environment["LMU_QV_FOVEATION_MODE"]=settings.FoveationMode;environment["LMU_QV_LOG"]=settings.DiagnosticsEnabled?log:"";
             environment["LMU_QV_DIAGNOSTICS"]=settings.DiagnosticsEnabled?"1":"0";
+            environment["LMU_QV_BENCHMARK"]=settings.DiagnosticsEnabled&&settings.BenchmarkEnabled?"1":"0";
             bool audit=settings.DiagnosticsEnabled&&settings.StereoDrawAudit&&!settings.CpuUploadBatch;
             environment["LMU_QV_STEREO_AUDIT"]=audit?"1":"0";
             environment["LMU_QV_STEREO_AUDIT_DIR"]=audit?System.IO.Path.GetDirectoryName(log):"";
@@ -227,6 +228,7 @@ namespace LmuQuadViewLauncher {
                 Exe=info.FileName,ExeSHA256=SupportedExecutableHash,LayerSHA256=HashFile(System.IO.Path.Combine(root,@"build\lmu_quadview.dll")),
                 ProviderManifest=plan.ProviderPath,ProviderName=plan.ProviderName,ProviderSHA256=plan.Library==null?null:HashFile(plan.Library),
                 ExplicitManifest=plan.ExplicitManifest,EnabledLayers=plan.Layers,DisabledImplicitSwitches=plan.DisableVariables,Log=log,
+                DiagnosticsEnabled=settings.DiagnosticsEnabled,BenchmarkEnabled=settings.DiagnosticsEnabled&&settings.BenchmarkEnabled,BenchmarkRequested=settings.BenchmarkEnabled,BenchmarkTemplate=settings.BenchmarkTemplate,
                 DebugFocus=settings.DebugFocus,RenderProfiling=settings.RenderProfiling,StereoDrawAudit=settings.StereoDrawAudit,StereoShaderCapture=settings.StereoShaderCapture,StereoPairProof=settings.StereoPairProof,CpuUploadReuse=settings.CpuUploadReuse,CpuUploadBatch=settings.CpuUploadBatch,RenderProfileSeconds=settings.RenderProfileSeconds,NativeOuterResolution=settings.NativeOuterResolution,UseRuntimeSettings=true,
                 VectorXrDirectInputs=settings.Backend=="VectorXR",OuterBlur=settings.OuterBlur,
                 CropWidthPercent=settings.CropWidthPercent,CropHeightPercent=settings.CropHeightPercent,

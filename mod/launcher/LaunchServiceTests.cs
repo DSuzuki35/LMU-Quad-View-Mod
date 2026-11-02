@@ -55,6 +55,12 @@ class LaunchServiceTests {
             Check(info.EnvironmentVariables["LMU_QV_VECTORXR_DIRECT_INPUTS"]=="0","QVFR must retain its original input flags");
             Check(info.EnvironmentVariables["LMU_QV_USE_RUNTIME_SETTINGS"]=="1"&&info.EnvironmentVariables["LMU_QV_FOCUS_PIXELS_PERCENT"]=="100","Provider dimensions scaled twice");
             var native=LaunchService.MakeLayerPlan(root,"Native",provider,null);
+            var benchmarkSettings=new LauncherSettings {BenchmarkEnabled=true};
+            Check(LaunchService.MakeStartInfo(root,benchmarkSettings,native,Path.Combine(root,"benchmark.log")).EnvironmentVariables["LMU_QV_BENCHMARK"]=="1","Benchmark opt-in missing");
+            benchmarkSettings.DiagnosticsEnabled=false;
+            var quietBenchmark=LaunchService.MakeStartInfo(root,benchmarkSettings,native,Path.Combine(root,"benchmark.log"));
+            Check(quietBenchmark.EnvironmentVariables["LMU_QV_BENCHMARK"]=="0"&&quietBenchmark.EnvironmentVariables["LMU_QV_DIAGNOSTICS"]=="0","Benchmark silently enabled timing with diagnostics off");
+            Check(LaunchService.MakeStartInfo(root,new LauncherSettings(),native,Path.Combine(root,"benchmark.log")).EnvironmentVariables["LMU_QV_BENCHMARK"]=="0","Benchmark default must be off");
             var fullView=LaunchService.MakeStartInfo(root,new LauncherSettings(),native,Path.Combine(root,"zero.log"));
             Check(fullView.EnvironmentVariables["LMU_QV_CROP_WIDTH_PERCENT"]=="100"&&fullView.EnvironmentVariables["LMU_QV_CROP_HEIGHT_PERCENT"]=="100","Stale inherited crop survived defaults");
             Check(LaunchService.MakeStartInfo(root,new LauncherSettings(),native,Path.Combine(root,"zero.log")).EnvironmentVariables["LMU_QV_FOCUS_OFFSET_X_PERCENT"]=="0","Stale inherited offset survived defaults");

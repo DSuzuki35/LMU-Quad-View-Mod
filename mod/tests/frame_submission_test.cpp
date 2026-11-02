@@ -363,4 +363,5 @@ int main(int argc,char** argv){
     bool allocationFree=true;for(unsigned count:{1u,4u,16u})allocationFree=(allocationTest(count)==0)&&allocationFree;
     std::cout.flush();assert(allocationFree&&"Common EndFrame submission must not allocate");
     std::cout<<"EndFrame common submission zero-allocation PASS\n";
+    return 0;
 }

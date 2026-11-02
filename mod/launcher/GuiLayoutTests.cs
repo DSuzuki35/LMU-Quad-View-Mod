@@ -118,6 +118,11 @@ class GuiLayoutTests {
             var provider=(ComboBox)Named(form,"ProviderSelector");
             foreach(var item in provider.Items)Check(TextRenderer.MeasureText(item.ToString(),provider.Font).Width+SystemInformation.VerticalScrollBarWidth<provider.Width,"Provider name is clipped");
         }
+        if(pageName=="BenchmarkPage") {
+            foreach(var name in new[]{"BenchmarkEnabled","BenchmarkTemplate","BenchmarkVisibilityButton","BenchmarkRecordButton"})FullyVisible(Named(form,name));
+            foreach(var name in new[]{"BenchmarkVisibilityButton","BenchmarkRecordButton","AssignVisibility","AssignRecording","ClearVisibility","ClearRecording","BenchmarkReportButton","BenchmarkDiagnoseButton"})TextFits(Named(form,name));
+            var preview=(PictureBox)Named(form,"BenchmarkPreview");Check(preview.Image!=null,"Benchmark preview bitmap missing");
+        }
         NumericSpacing(page);BrandAlignment(form);
         NoNativeScrollBars(form);
         var freeNotice=Named(form,"FreeNotice");
@@ -184,6 +189,13 @@ class GuiLayoutTests {
                     saved=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
                     Check(saved.FocusOffsetXPercent==0&&saved.FocusOffsetYPercent==0,"Reset did not clear both offsets");
                 }
+                var benchmarkSettings=new LauncherSettings {BenchmarkEnabled=true,BenchmarkTemplate=1,BenchmarkX=-0.5m,BenchmarkY=0.2m,BenchmarkDistance=1.5m,BenchmarkWidth=0.9m,DiagnosticsEnabled=false};
+                typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{benchmarkSettings});
+                var benchmarkValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
+                Check(benchmarkValues.BenchmarkEnabled&&!benchmarkValues.DiagnosticsEnabled&&benchmarkValues.BenchmarkTemplate==1,"Benchmark opt-in silently enabled diagnostics or lost preference");
+                var controller=(BenchmarkController)typeof(Launcher).GetField("benchmark",flags).GetValue(form);
+                Check(controller.Template==1&&Math.Abs(controller.OverlayX+0.5f)<0.001f&&Math.Abs(controller.OverlayWidth-0.9f)<0.001f,"Benchmark live placement did not reach controller");
+                ((NumericUpDown)Named(form,"BenchmarkDistance")).Value=2.25m;Check(controller.OverlayDistance==2.25f,"Live distance edit did not reach controller");
                 var original=new LauncherSettings {Backend="QVFR",OuterPercent=10,InnerPercent=208,FocusWidthPercent=23,FocusHeightPercent=50,FocusAspectRatio=2.19283709218806m};
                 typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{original});
                 var width=(PercentSetting)typeof(Launcher).GetField("focusWidth",flags).GetValue(form);
@@ -240,6 +252,7 @@ class GuiLayoutTests {
                     string stem="SIMULATED-"+(int)(scale*100)+"pct-"+(minimum?"minimum":"default");
                     Page(form,"RenderingPage","RenderingNav",output,stem);
                     Page(form,"SetupPage","SetupNav",output,stem);
+                    Page(form,"BenchmarkPage","BenchmarkNav",output,stem);
                     form.Close();
                 }
             }

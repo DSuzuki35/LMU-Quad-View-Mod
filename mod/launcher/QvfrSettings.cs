@@ -18,6 +18,18 @@ namespace LmuQuadViewLauncher
         public bool DebugFocus { get; set; }
         public bool RenderProfiling { get; set; }
         public bool DiagnosticsEnabled { get; set; }
+        public bool BenchmarkEnabled { get; set; }
+        public int BenchmarkTemplate { get; set; }
+        public decimal BenchmarkX { get; set; }
+        public decimal BenchmarkY { get; set; }
+        public decimal BenchmarkDistance { get; set; }
+        public decimal BenchmarkWidth { get; set; }
+        public string BenchmarkVisibilityDevice { get; set; }
+        public string BenchmarkVisibilityName { get; set; }
+        public int BenchmarkVisibilityButton { get; set; }
+        public string BenchmarkRecordingDevice { get; set; }
+        public string BenchmarkRecordingName { get; set; }
+        public int BenchmarkRecordingButton { get; set; }
         public bool StereoDrawAudit { get; set; }
         public bool StereoShaderCapture { get; set; }
         public bool StereoPairProof { get; set; }
@@ -43,6 +55,10 @@ namespace LmuQuadViewLauncher
             NativeOuterResolution = true; OuterPercent = 25; InnerPercent = 100;
             RenderProfileSeconds=120;
             DiagnosticsEnabled=true;
+            BenchmarkY=-0.25m;BenchmarkDistance=1.2m;BenchmarkWidth=0.65m;
+            BenchmarkVisibilityDevice=BenchmarkRecordingDevice="";
+            BenchmarkVisibilityName=BenchmarkRecordingName="";
+            BenchmarkVisibilityButton=BenchmarkRecordingButton=-1;
             FocusWidthPercent = FocusHeightPercent = 50;
             CropWidthPercent = CropHeightPercent = 100;
         }
@@ -54,6 +70,11 @@ namespace LmuQuadViewLauncher
         public static void Validate(LauncherSettings s)
         {
             if (s == null) throw new ArgumentNullException("settings");
+            if(s.BenchmarkTemplate<0||s.BenchmarkTemplate>1)throw new ArgumentException("Select Minimal or Detailed benchmark template.");
+            if(s.BenchmarkX < -2 || s.BenchmarkX > 2 || s.BenchmarkY < -2 || s.BenchmarkY > 2 || s.BenchmarkDistance < 0.3m || s.BenchmarkDistance > 5 || s.BenchmarkWidth < 0.2m || s.BenchmarkWidth > 2)throw new ArgumentException("Benchmark placement is outside the supported range.");
+            ValidateBinding(s.BenchmarkVisibilityDevice,s.BenchmarkVisibilityButton);
+            ValidateBinding(s.BenchmarkRecordingDevice,s.BenchmarkRecordingButton);
+            if(!String.IsNullOrEmpty(s.BenchmarkVisibilityDevice)&&!String.IsNullOrEmpty(s.BenchmarkRecordingDevice)&&new Guid(s.BenchmarkVisibilityDevice)==new Guid(s.BenchmarkRecordingDevice)&&s.BenchmarkVisibilityButton==s.BenchmarkRecordingButton)throw new ArgumentException("Choose different joystick buttons for visibility and recording.");
             if(s.CropWidthPercent<25||s.CropWidthPercent>100||s.CropHeightPercent<25||s.CropHeightPercent>100)
                 throw new ArgumentException("Rendered FOV width and height must be between 25 and 100 percent.");
             if(s.FocusOffsetXPercent < -50 || s.FocusOffsetXPercent > 50 || s.FocusOffsetYPercent < -50 || s.FocusOffsetYPercent > 50) throw new ArgumentException("Focus offsets must be between -50 and +50 percent.");
@@ -68,6 +89,11 @@ namespace LmuQuadViewLauncher
                 throw new ArgumentException("Resolution or focus size is outside the supported range.");
             if (s.Backend == "QVFR" && s.OuterPercent > s.InnerPercent * Math.Min(s.FocusWidthPercent, s.FocusHeightPercent) / 100m)
                 throw new ArgumentException("The outer image must fit within the focus buffer. Reduce outer resolution, or increase inner resolution / focus width and height.");
+        }
+        static void ValidateBinding(string device,int button) {
+            Guid id;
+            if(String.IsNullOrEmpty(device)) { if(button != -1)throw new ArgumentException("An unassigned joystick binding must have button -1."); }
+            else if(!Guid.TryParse(device,out id)||id==Guid.Empty||button<0||button>127)throw new ArgumentException("Joystick binding needs an instance GUID and button 0-127.");
         }
         static string Value(XElement root, string name, string fallback) { return (string)root.Element(name) ?? fallback; }
         public static LauncherSettings Load(string path)
@@ -85,6 +111,18 @@ namespace LmuQuadViewLauncher
             s.DebugFocus = Boolean.Parse(Value(x, "DebugFocus", "false"));
             s.RenderProfiling = Boolean.Parse(Value(x, "RenderProfiling", "false"));
             s.DiagnosticsEnabled=Boolean.Parse(Value(x,"DiagnosticsEnabled","true"));
+            s.BenchmarkEnabled=Boolean.Parse(Value(x,"BenchmarkEnabled","false"));
+            s.BenchmarkTemplate=Int32.Parse(Value(x,"BenchmarkTemplate","0"),CultureInfo.InvariantCulture);
+            s.BenchmarkX=Decimal.Parse(Value(x,"BenchmarkX","0"),CultureInfo.InvariantCulture);
+            s.BenchmarkY=Decimal.Parse(Value(x,"BenchmarkY","-0.25"),CultureInfo.InvariantCulture);
+            s.BenchmarkDistance=Decimal.Parse(Value(x,"BenchmarkDistance","1.2"),CultureInfo.InvariantCulture);
+            s.BenchmarkWidth=Decimal.Parse(Value(x,"BenchmarkWidth","0.65"),CultureInfo.InvariantCulture);
+            s.BenchmarkVisibilityDevice=Value(x,"BenchmarkVisibilityDevice","");
+            s.BenchmarkVisibilityName=Value(x,"BenchmarkVisibilityName","");
+            s.BenchmarkVisibilityButton=Int32.Parse(Value(x,"BenchmarkVisibilityButton","-1"),CultureInfo.InvariantCulture);
+            s.BenchmarkRecordingDevice=Value(x,"BenchmarkRecordingDevice","");
+            s.BenchmarkRecordingName=Value(x,"BenchmarkRecordingName","");
+            s.BenchmarkRecordingButton=Int32.Parse(Value(x,"BenchmarkRecordingButton","-1"),CultureInfo.InvariantCulture);
             s.StereoDrawAudit=Boolean.Parse(Value(x,"StereoDrawAudit","false"));
             s.StereoShaderCapture=Boolean.Parse(Value(x,"StereoShaderCapture","false"));
             s.StereoPairProof=Boolean.Parse(Value(x,"StereoPairProof","false"));
@@ -112,6 +150,18 @@ namespace LmuQuadViewLauncher
                 new XElement("QuadViewsManifest", s.QuadViewsManifest ?? ""), new XElement("VectorXrManifest", s.VectorXrManifest ?? ""), new XElement("DebugFocus", s.DebugFocus),
                 new XElement("RenderProfiling", s.RenderProfiling),
                 new XElement("DiagnosticsEnabled",s.DiagnosticsEnabled),
+                new XElement("BenchmarkEnabled",s.BenchmarkEnabled),
+                new XElement("BenchmarkTemplate",s.BenchmarkTemplate),
+                new XElement("BenchmarkX",s.BenchmarkX),
+                new XElement("BenchmarkY",s.BenchmarkY),
+                new XElement("BenchmarkDistance",s.BenchmarkDistance),
+                new XElement("BenchmarkWidth",s.BenchmarkWidth),
+                new XElement("BenchmarkVisibilityDevice",s.BenchmarkVisibilityDevice),
+                new XElement("BenchmarkVisibilityName",s.BenchmarkVisibilityName),
+                new XElement("BenchmarkVisibilityButton",s.BenchmarkVisibilityButton),
+                new XElement("BenchmarkRecordingDevice",s.BenchmarkRecordingDevice),
+                new XElement("BenchmarkRecordingName",s.BenchmarkRecordingName),
+                new XElement("BenchmarkRecordingButton",s.BenchmarkRecordingButton),
                 new XElement("StereoDrawAudit",s.StereoDrawAudit),
                 new XElement("StereoShaderCapture",s.StereoShaderCapture),
                 new XElement("StereoPairProof",s.StereoPairProof),

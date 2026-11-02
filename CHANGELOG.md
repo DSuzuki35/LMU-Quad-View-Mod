@@ -4,7 +4,18 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
-## Unreleased - motion compensation / rendered crop candidate
+## Unreleased - benchmark / motion compensation / rendered crop candidate
+
+- Add opt-in head-locked Minimal/Detailed benchmark overlays, Dan Suzuki UI-kit
+  styling, live placement, separate DirectInput joystick bindings, and manual
+  lap-length captures. Hiding the overlay does not stop recording.
+- Save bounded local CSV checkpoints and HTML/JSON reports with frame-time
+  percentiles, sparse app GPU spans, actual resolutions, data-loss counts and
+  explicit measurement limits. No hardware-utilization or compositor FPS claims.
+- Add live and latest-run diagnosis, including missing logs, invalid resources,
+  invalid poses, recovered projection errors and overlay-only failures.
+- Add native/managed ABI, ownership, sparse GPU, report, input-state and layout
+  tests. Real headset/joystick testing remains required.
 
 - Preserve submitted stereo pose corrections in all four views instead of rejecting
   changed reference spaces or overwriting upper-layer compensation.

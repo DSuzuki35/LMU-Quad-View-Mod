@@ -18,6 +18,11 @@ class SettingsTests
         }
         Require(typeof(LauncherSettings).GetProperty("FocusOffsetXPercent")!=null,"Horizontal offset setting missing");
         Require(typeof(LauncherSettings).GetProperty("FocusOffsetYPercent")!=null,"Vertical offset setting missing");
+        Require(!new LauncherSettings().BenchmarkEnabled,"Benchmark must default off");
+        Require(new LauncherSettings().BenchmarkVisibilityButton==-1&&new LauncherSettings().BenchmarkRecordingButton==-1,"Default joystick bindings must be unassigned");
+        s.BenchmarkEnabled=true;s.BenchmarkTemplate=1;s.BenchmarkX=-1.25m;s.BenchmarkY=0.5m;s.BenchmarkDistance=2.5m;s.BenchmarkWidth=0.8m;
+        s.BenchmarkVisibilityDevice=Guid.NewGuid().ToString("D");s.BenchmarkVisibilityName="Wheel <left>";s.BenchmarkVisibilityButton=127;
+        s.BenchmarkRecordingDevice=Guid.NewGuid().ToString("D");s.BenchmarkRecordingName="Wheel right";s.BenchmarkRecordingButton=0;
         string old="# custom\n[exe:DCS.exe]\nfocus_multiplier=1.7\n";
         Thread.CurrentThread.CurrentCulture=CultureInfo.GetCultureInfo("de-DE");
         string text=QvfrSettings.ProfileText(old,s);
@@ -44,6 +49,13 @@ class SettingsTests
         s.FocusOffsetXPercent=-50;s.FocusOffsetYPercent=12.5m;
         s.CropWidthPercent=75.5m;s.CropHeightPercent=42.25m;
         string xml=Path.Combine(folder,"launcher-settings.xml"); QvfrSettings.Save(xml,s); var loaded=QvfrSettings.Load(xml);
+        Require(loaded.BenchmarkEnabled&&loaded.BenchmarkTemplate==1&&loaded.BenchmarkX==-1.25m&&loaded.BenchmarkY==0.5m&&loaded.BenchmarkDistance==2.5m&&loaded.BenchmarkWidth==0.8m,"Benchmark placement/template did not roundtrip");
+        Require(loaded.BenchmarkVisibilityDevice==s.BenchmarkVisibilityDevice&&loaded.BenchmarkVisibilityName==s.BenchmarkVisibilityName&&loaded.BenchmarkVisibilityButton==127&&loaded.BenchmarkRecordingDevice==s.BenchmarkRecordingDevice&&loaded.BenchmarkRecordingButton==0,"Distinct joystick bindings did not roundtrip");
+        s.BenchmarkVisibilityButton=128;Rejected(delegate {QvfrSettings.Validate(s);});s.BenchmarkVisibilityButton=127;
+        s.BenchmarkTemplate=2;Rejected(delegate {QvfrSettings.Validate(s);});s.BenchmarkTemplate=1;
+        s.BenchmarkDistance=0;Rejected(delegate {QvfrSettings.Validate(s);});s.BenchmarkDistance=2.5m;
+        string separateDevice=s.BenchmarkRecordingDevice;int separateButton=s.BenchmarkRecordingButton;s.BenchmarkRecordingDevice=s.BenchmarkVisibilityDevice;s.BenchmarkRecordingButton=s.BenchmarkVisibilityButton;Rejected(delegate {QvfrSettings.Validate(s);});s.BenchmarkRecordingDevice=separateDevice;s.BenchmarkRecordingButton=separateButton;
+        string device=s.BenchmarkRecordingDevice;s.BenchmarkRecordingDevice="invalid";Rejected(delegate {QvfrSettings.Validate(s);});s.BenchmarkRecordingDevice=device;
         Require(loaded.CropWidthPercent==75.5m&&loaded.CropHeightPercent==42.25m,"Independent crop values did not roundtrip invariantly");
         Require(File.ReadAllText(xml).Contains("<CropWidthPercent>75.5</CropWidthPercent>"),"Crop XML used local decimal separator");
         foreach(var invalid in new[]{24.9m,100.1m}) {

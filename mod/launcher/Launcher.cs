@@ -79,6 +79,19 @@ namespace LmuQuadViewLauncher
         }
     }
 
+    sealed class BenchmarkSurface : Panel
+    {
+        public BenchmarkSurface() {BackColor=Color.FromArgb(26,27,31);DoubleBuffered=true;}
+        protected override void OnPaint(PaintEventArgs e) {
+            base.OnPaint(e);e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+            float r=12F*DeviceDpi/96F,w=Width-1,h=Height-1;
+            if(w<r||h<r)return;
+            using(var path=new GraphicsPath())using(var pen=new Pen(Color.FromArgb(50,52,60))) {
+                path.AddArc(0,0,r,r,180,90);path.AddArc(w-r,0,r,r,270,90);path.AddArc(w-r,h-r,r,r,0,90);path.AddArc(0,h-r,r,r,90,90);path.CloseFigure();e.Graphics.DrawPath(pen,path);
+            }
+        }
+    }
+
     // A real scrollable viewport without the OS's bright non-client scroll bars.
     sealed class DarkScrollBar : Control
     {
@@ -314,6 +327,28 @@ namespace LmuQuadViewLauncher
         readonly Button save = Theme.Button("Save settings", false);
         readonly Button renderingNav = Theme.Button("  Rendering", false);
         readonly Button setupNav = Theme.Button("  Setup", false);
+        readonly Button benchmarkNav = Theme.Button("  Benchmark", false);
+        readonly DarkScrollPage benchmarkPage = new DarkScrollPage { Name = "BenchmarkPage" };
+        readonly CheckBox benchmarkEnabled = Toggle("Enable benchmark on next launch");
+        readonly ComboBox benchmarkTemplate = Choice(new[] { "Minimal", "Detailed" });
+        readonly Button benchmarkVisible = Theme.Button("Hide overlay", false);
+        readonly Button benchmarkRecord = Theme.Button("Start recording", true);
+        readonly Button benchmarkReport = Theme.Button("Open last report", false);
+        readonly Label benchmarkStatus = Caption("");
+        readonly Label benchmarkNotice = Caption("");
+        readonly Label visibilityBindingText = Caption("Unassigned");
+        readonly Label recordingBindingText = Caption("Unassigned");
+        readonly Label bindingStatus = Caption("Assign separate joystick buttons for visibility and manual recording.");
+        readonly PictureBox benchmarkPreview = new PictureBox { Name="BenchmarkPreview", Dock=DockStyle.Fill, SizeMode=PictureBoxSizeMode.Zoom, BackColor=Color.FromArgb(15,15,18) };
+        readonly NumericUpDown benchmarkX = BenchmarkNumber("BenchmarkX", -2, 2, 0);
+        readonly NumericUpDown benchmarkY = BenchmarkNumber("BenchmarkY", -2, 2, -0.25m);
+        readonly NumericUpDown benchmarkDistance = BenchmarkNumber("BenchmarkDistance", 0.3m, 5, 1.2m);
+        readonly NumericUpDown benchmarkWidth = BenchmarkNumber("BenchmarkWidth", 0.2m, 2, 0.65m);
+        readonly Timer benchmarkTimer = new Timer { Interval=50 };
+        BenchmarkController benchmark;
+        JoystickInput joystick;
+        JoystickBinding visibilityBinding, recordingBinding;
+        int previewTicks;
         readonly Button browseManifest = Theme.Button("Browse", false);
         readonly Button browseVectorManifest = Theme.Button("Browse", false);
         readonly DarkScrollPage renderingPage = new DarkScrollPage { Name = "RenderingPage" };
@@ -350,6 +385,7 @@ namespace LmuQuadViewLauncher
         public Launcher()
         {
             SuspendLayout();
+            benchmark=new BenchmarkController(root);
             Text = "LMU Quad View - " + Application.ProductVersion; BackColor = Theme.Background; ForeColor = Theme.Text;
             Font = new Font("Segoe UI", 10F); AutoScaleDimensions = new SizeF(96F, 96F); AutoScaleMode = AutoScaleMode.Dpi;
             try {
@@ -358,7 +394,7 @@ namespace LmuQuadViewLauncher
                     else Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
                 }
             } catch (ArgumentException) { }
-            renderingNav.Name = "RenderingNav"; setupNav.Name = "SetupNav";
+            renderingNav.Name = "RenderingNav"; setupNav.Name = "SetupNav"; benchmarkNav.Name="BenchmarkNav";
             save.Name = "SaveButton"; launch.Name = "LaunchButton";
             backend.Name = "ProviderSelector";
             manifest.Name="QvfrManifest";vectorManifest.Name="VectorXrManifest";
@@ -376,18 +412,18 @@ namespace LmuQuadViewLauncher
             var heading = Stack(2); heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
             heading.Controls.Add(header, 0, 0); heading.Controls.Add(subheader, 0, 1); main.Controls.Add(heading, 0, 0);
             var pages = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0) };
-            pages.Controls.Add(setupPage); pages.Controls.Add(renderingPage); main.Controls.Add(pages, 0, 1);
-            BuildRendering(); BuildSetup(); main.Controls.Add(BuildFooter(), 0, 2);
+            pages.Controls.Add(benchmarkPage); pages.Controls.Add(setupPage); pages.Controls.Add(renderingPage); main.Controls.Add(pages, 0, 1);
+            BuildRendering(); BuildSetup(); BuildBenchmark(); main.Controls.Add(BuildFooter(), 0, 2);
             backend.SelectedIndexChanged += delegate { UpdateProvider(); };
             diagnosticsEnabled.Name="DiagnosticsEnabled";
             stereoDrawAudit.Name="StereoDrawAudit";
             stereoShaderCapture.Name="StereoShaderCapture";
             stereoPairProof.Name="StereoPairProof";cpuUploadReuse.Name="CpuUploadReuse";cpuUploadBatch.Name="CpuUploadBatch";
             cpuUploadBatch.CheckedChanged+=delegate {if(cpuUploadBatch.Checked){cpuUploadReuse.Checked=false;stereoDrawAudit.Checked=false;}cpuUploadReuse.Enabled=!cpuUploadBatch.Checked;stereoDrawAudit.Enabled=diagnosticsEnabled.Checked&&!cpuUploadBatch.Checked;stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked&&!cpuUploadBatch.Checked;};
-            diagnosticsEnabled.CheckedChanged+=delegate {renderProfiling.Enabled=diagnosticsEnabled.Checked;stereoDrawAudit.Enabled=diagnosticsEnabled.Checked&&!cpuUploadBatch.Checked;stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked&&!cpuUploadBatch.Checked;profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;};
+            diagnosticsEnabled.CheckedChanged+=delegate {UpdateBenchmarkNotice();renderProfiling.Enabled=diagnosticsEnabled.Checked;stereoDrawAudit.Enabled=diagnosticsEnabled.Checked&&!cpuUploadBatch.Checked;stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked&&!cpuUploadBatch.Checked;profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;};
             stereoDrawAudit.CheckedChanged+=delegate {stereoShaderCapture.Enabled=stereoPairProof.Enabled=diagnosticsEnabled.Checked&&stereoDrawAudit.Checked&&!cpuUploadBatch.Checked;};
             renderProfiling.CheckedChanged+=delegate {profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;};
-            renderingNav.Click += delegate { ShowPage(false); }; setupNav.Click += delegate { ShowPage(true); };
+            renderingNav.Click += delegate { ShowPage(false); }; setupNav.Click += delegate { ShowPage(true); }; benchmarkNav.Click += delegate { ShowBenchmarkPage(); };
             save.Click += delegate { SaveSettings(); }; launch.Click += delegate { StartGame(); };
             AcceptButton = launch;
             try {
@@ -399,28 +435,32 @@ namespace LmuQuadViewLauncher
             catch (Exception ex) { status.Text = "Settings could not be loaded: " + ex.Message; }
             UpdateProvider(); ShowPage(false);
             ResumeLayout(true);
+            KeyPreview=true;
+            KeyDown+=delegate(object sender,KeyEventArgs e) { if(e.KeyCode==Keys.Escape&&joystick!=null&&joystick.Listening) {joystick.CancelListen();bindingStatus.Text="Button assignment cancelled.";e.Handled=true;} };
+            Shown+=delegate { if(joystick==null) {joystick=new JoystickInput(new DirectInputButtonSource(Handle));UpdateBindings();joystick.VisibilityPressed+=delegate {benchmark.ToggleOverlay();};joystick.RecordingPressed+=delegate {benchmark.ToggleRecording();};benchmarkTimer.Start();} };
+            benchmarkTimer.Tick+=delegate { PollBenchmark(); };
         }
         Control BuildSidebar()
         {
-            var side = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7,
+            var side = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 8,
                 BackColor = Theme.Sidebar, Padding = new Padding(16, 26, 16, 14), Margin = new Padding(0) };
             side.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             side.RowStyles.Add(new RowStyle(SizeType.AutoSize)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 49));
-            side.RowStyles.Add(new RowStyle(SizeType.Absolute, 49)); side.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            side.RowStyles.Add(new RowStyle(SizeType.Absolute, 49)); side.RowStyles.Add(new RowStyle(SizeType.Absolute,49)); side.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             side.RowStyles.Add(new RowStyle(SizeType.Absolute, 26)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 89)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 65));
             var brand = Stack(3); brand.AutoSize = true; brand.Dock = DockStyle.Top; brand.Margin = new Padding(0, 0, 0, 24);
             brand.RowStyles.Add(new RowStyle(SizeType.AutoSize)); brand.RowStyles.Add(new RowStyle(SizeType.AutoSize)); brand.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             var lmu = new BrandLabel("LMU", 25F, Theme.Text); lmu.Name = "BrandTitle"; lmu.Font = new Font("Segoe UI", 25F, FontStyle.Bold);
             brand.Controls.Add(lmu, 0, 0); brand.Controls.Add(new BrandLabel("QUAD VIEW", 12F, Theme.Accent) {Name="BrandSubtitle"}, 0, 1); brand.Controls.Add(new BrandLabel("OPENXR RENDERING", 9F, Theme.Muted) {Name="BrandRenderer"}, 0, 2); side.Controls.Add(brand, 0, 0);
             foreach (Control label in brand.Controls) { ((Label)label).AutoSize = true; label.Dock = DockStyle.Top; label.Margin = new Padding(0, 0, 0, 5); }
-            foreach (var nav in new[] { renderingNav, setupNav }) { nav.Dock = DockStyle.Fill; nav.TextAlign = ContentAlignment.MiddleLeft; nav.Margin = new Padding(0, 3, 0, 5); nav.FlatAppearance.BorderSize = 0; }
-            side.Controls.Add(renderingNav, 0, 1); side.Controls.Add(setupNav, 0, 2);
-            side.Controls.Add(Caption("OPTIONAL SUPPORT"), 0, 4);
+            foreach (var nav in new[] { renderingNav, setupNav, benchmarkNav }) { nav.Dock = DockStyle.Fill; nav.TextAlign = ContentAlignment.MiddleLeft; nav.Margin = new Padding(0, 3, 0, 5); nav.FlatAppearance.BorderSize = 0; }
+            side.Controls.Add(renderingNav, 0, 1); side.Controls.Add(setupNav, 0, 2); side.Controls.Add(benchmarkNav,0,3);
+            side.Controls.Add(Caption("OPTIONAL SUPPORT"), 0, 5);
             var support = Stack(2); support.RowStyles.Add(new RowStyle(SizeType.Absolute, 41)); support.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
             var coffee = Theme.Button("Buy me a coffee", false); coffee.Name = "CoffeeButton"; coffee.Dock = DockStyle.Fill; coffee.Font = new Font("Segoe UI", 9F); coffee.Margin = new Padding(0, 0, 0, 4);
             coffee.Click += delegate { OpenLink("https://buymeacoffee.com/dansuzuki"); }; support.Controls.Add(coffee, 0, 0);
-            Link(support, "Shop via affiliate links", "https://dansuzuki.com/discounts/", 1); side.Controls.Add(support, 0, 5);
-            var tag = Theme.Label("Always free.\nDonations are completely\noptional.", 8F, Theme.Muted); tag.Name="FreeNotice"; side.Controls.Add(tag, 0, 6); return side;
+            Link(support, "Shop via affiliate links", "https://dansuzuki.com/discounts/", 1); side.Controls.Add(support, 0, 6);
+            var tag = Theme.Label("Always free.\nDonations are completely\noptional.", 8F, Theme.Muted); tag.Name="FreeNotice"; side.Controls.Add(tag, 0, 7); return side;
         }
         void BuildRendering()
         {
@@ -540,6 +580,116 @@ namespace LmuQuadViewLauncher
             options.Controls.Add(stack); grid.Controls.Add(options, 0, 3);
             grid.Controls.Add(Caption("Keep your headset's OpenXR runtime active. Configure VectorXR's LMU Quadviews profile when using it; select one quad-view provider."), 0, 4);
         }
+        static NumericUpDown BenchmarkNumber(string name,decimal min,decimal max,decimal value) {
+            return new SpacedNumericUpDown {Name=name,AccessibleName=name,Minimum=min,Maximum=max,Value=value,DecimalPlaces=2,Increment=0.05m,Dock=DockStyle.Fill,BackColor=Theme.Field,ForeColor=Theme.Text,BorderStyle=BorderStyle.FixedSingle,TextAlign=HorizontalAlignment.Right};
+        }
+        static JoystickBinding ReadBinding(string device,string name,int button) {
+            return String.IsNullOrEmpty(device)?null:new JoystickBinding {Device=new Guid(device),Name=name,Button=button};
+        }
+        TableLayoutPanel BenchmarkCard(TableLayoutPanel parent,int row,string title,int[] heights) {
+            var card=new BenchmarkSurface {Dock=DockStyle.Fill,Margin=new Padding(0,0,0,14),Padding=new Padding(18,12,18,12)};
+            var stack=Stack(heights.Length+1);stack.RowStyles.Add(new RowStyle(SizeType.Absolute,30));
+            foreach(int height in heights)stack.RowStyles.Add(new RowStyle(SizeType.Absolute,height));
+            stack.Controls.Add(Theme.Label(title,13F,Theme.Text),0,0);card.Controls.Add(stack);parent.Controls.Add(card,0,row);return stack;
+        }
+        static TableLayoutPanel BenchmarkButtons(params Button[] buttons) {
+            var row=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=buttons.Length,RowCount=1,Margin=new Padding(0)};
+            foreach(var button in buttons) {row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100F/buttons.Length));button.Dock=DockStyle.Fill;button.Margin=new Padding(0,2,8,2);row.Controls.Add(button);}
+            return row;
+        }
+        void BuildBenchmark() {
+            var grid=Stack(5);grid.Dock=DockStyle.Top;grid.AutoSize=true;
+            foreach(int height in new[]{304,294,174,330,180})grid.RowStyles.Add(new RowStyle(SizeType.Absolute,height));
+            benchmarkPage.SetContent(grid);
+            var capture=BenchmarkCard(grid,0,"Manual lap benchmark",new[]{32,46,36,46,62});
+            benchmarkEnabled.Name="BenchmarkEnabled";benchmarkTemplate.Name="BenchmarkTemplate";
+            benchmarkTemplate.DrawMode=DrawMode.OwnerDrawFixed;benchmarkTemplate.ItemHeight=Math.Max(24,benchmarkTemplate.Font.Height+6);
+            benchmarkTemplate.FontChanged+=delegate {benchmarkTemplate.ItemHeight=Math.Max(24,benchmarkTemplate.Font.Height+6);};
+            benchmarkTemplate.DrawItem+=delegate(object sender,DrawItemEventArgs e) {
+                if(e.Index<0)return;
+                using(var background=new SolidBrush((e.State&DrawItemState.Selected)!=0?Theme.AccentDark:Theme.Field))e.Graphics.FillRectangle(background,e.Bounds);
+                TextRenderer.DrawText(e.Graphics,benchmarkTemplate.Items[e.Index].ToString(),e.Font,e.Bounds,Theme.Text,TextFormatFlags.Left|TextFormatFlags.VerticalCenter);
+            };
+            benchmarkVisible.Name="BenchmarkVisibilityButton";benchmarkRecord.Name="BenchmarkRecordButton";
+            capture.Controls.Add(benchmarkEnabled,0,1);capture.Controls.Add(benchmarkNotice,0,2);capture.Controls.Add(benchmarkTemplate,0,3);
+            capture.Controls.Add(BenchmarkButtons(benchmarkVisible,benchmarkRecord),0,4);
+            capture.Controls.Add(Caption("Start before your lap, stop after the finish. Hiding the overlay keeps recording. Keep this launcher open while benchmarking."),0,5);
+            benchmarkEnabled.CheckedChanged+=delegate {UpdateBenchmarkNotice();};
+            benchmarkTemplate.SelectedIndexChanged+=delegate {ApplyBenchmarkPlacement();RefreshBenchmarkPreview();};
+            benchmarkVisible.Click+=delegate {benchmark.ToggleOverlay();RefreshBenchmarkPreview();};
+            benchmarkRecord.Click+=delegate {benchmark.ToggleRecording();};
+            var bindings=BenchmarkCard(grid,1,"Joystick buttons",new[]{42,40,42,40,62});
+            visibilityBindingText.Name="BenchmarkVisibilityBinding";recordingBindingText.Name="BenchmarkRecordingBinding";
+            visibilityBindingText.AutoEllipsis=recordingBindingText.AutoEllipsis=true;
+            bindings.Controls.Add(visibilityBindingText,0,1);bindings.Controls.Add(BindingButtons(true),0,2);
+            bindings.Controls.Add(recordingBindingText,0,3);bindings.Controls.Add(BindingButtons(false),0,4);
+            bindingStatus.Name="BenchmarkBindingStatus";bindings.Controls.Add(bindingStatus,0,5);
+            var placement=BenchmarkCard(grid,2,"Headset placement (metres)",new[]{84});
+            var positions=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=4,RowCount=2,Margin=new Padding(0)};
+            positions.RowStyles.Add(new RowStyle(SizeType.Absolute,30));positions.RowStyles.Add(new RowStyle(SizeType.Absolute,38));
+            var numbers=new[]{benchmarkX,benchmarkY,benchmarkDistance,benchmarkWidth};var names=new[]{"Horizontal","Vertical","Distance","Width"};
+            for(int i=0;i<numbers.Length;++i) {positions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,25));positions.Controls.Add(Caption(names[i]),i,0);numbers[i].Margin=new Padding(0,3,10,0);positions.Controls.Add(numbers[i],i,1);numbers[i].ValueChanged+=delegate {ApplyBenchmarkPlacement();};}
+            placement.Controls.Add(positions,0,1);
+            var preview=BenchmarkCard(grid,3,"Live overlay preview",new[]{254});preview.Controls.Add(benchmarkPreview,0,1);
+            var diagnostics=BenchmarkCard(grid,4,"Connection and reports",new[]{66,42});
+            benchmarkStatus.Name="BenchmarkStatus";diagnostics.Controls.Add(benchmarkStatus,0,1);
+            var diagnose=Theme.Button("Diagnose latest launch",false);diagnose.Name="BenchmarkDiagnoseButton";
+            benchmarkReport.Name="BenchmarkReportButton";diagnostics.Controls.Add(BenchmarkButtons(benchmarkReport,diagnose),0,2);
+            benchmarkReport.Click+=delegate {benchmark.OpenLastReport();};
+            diagnose.Click+=delegate {MessageBox.Show(this,LaunchDiagnostics.ExplainLatest(root),"Latest launch diagnostics",MessageBoxButtons.OK,MessageBoxIcon.Information);};
+            UpdateBenchmarkNotice();RefreshBenchmarkPreview();
+        }
+        Control BindingButtons(bool visibility) {
+            var assign=Theme.Button(visibility?"Assign visibility":"Assign recording",false);
+            var clear=Theme.Button("Clear",false);
+            assign.Name=visibility?"AssignVisibility":"AssignRecording";clear.Name=visibility?"ClearVisibility":"ClearRecording";
+            assign.Click+=delegate {
+                if(joystick==null)return;
+                joystick.Listen(delegate(JoystickBinding binding) {
+                    var other=visibility?recordingBinding:visibilityBinding;
+                    if(other!=null&&other.Device==binding.Device&&other.Button==binding.Button) {bindingStatus.Text="That button already controls the other action. Assign a different button.";return;}
+                    if(visibility)visibilityBinding=binding;else recordingBinding=binding;
+                    UpdateBindings();bindingStatus.Text="Assigned. Save settings to keep this binding.";
+                });
+                bindingStatus.Text=joystick.ListenStatus;
+            };
+            clear.Click+=delegate {if(joystick!=null)joystick.CancelListen();if(visibility)visibilityBinding=null;else recordingBinding=null;UpdateBindings();bindingStatus.Text="Binding cleared. Save settings to keep this change.";};
+            return BenchmarkButtons(assign,clear);
+        }
+        void UpdateBindings() {
+            visibilityBindingText.Text="Visibility: "+(visibilityBinding==null?"Unassigned":visibilityBinding.ToString());
+            recordingBindingText.Text="Recording: "+(recordingBinding==null?"Unassigned":recordingBinding.ToString());
+            if(joystick!=null) {joystick.Visibility=visibilityBinding;joystick.Recording=recordingBinding;}
+        }
+        void UpdateBenchmarkNotice() {
+            benchmarkNotice.Text=!diagnosticsEnabled.Checked?"Diagnostics are off: benchmark timing stays disabled. Enable diagnostics in Setup, then relaunch LMU.":benchmarkEnabled.Checked?"Enabled for the next launch. Current sessions keep their launch settings.":"Disabled for the next launch. Enable here, save, and launch LMU to connect.";
+        }
+        void ApplyBenchmarkPlacement() {
+            if(benchmark==null)return;
+            benchmark.Template=benchmarkTemplate.SelectedIndex;benchmark.OverlayX=(float)benchmarkX.Value;benchmark.OverlayY=(float)benchmarkY.Value;
+            benchmark.OverlayDistance=(float)benchmarkDistance.Value;benchmark.OverlayWidth=(float)benchmarkWidth.Value;
+        }
+        void RefreshBenchmarkPreview() {
+            if(benchmark==null)return;
+            var old=benchmarkPreview.Image;benchmarkPreview.Image=benchmark.RenderPreview();if(old!=null)old.Dispose();
+        }
+        void PollBenchmark() {
+            benchmark.Tick();if(joystick!=null) {joystick.Tick();if(joystick.Listening)bindingStatus.Text=joystick.ListenStatus;}
+            benchmarkStatus.Text=benchmark.Status;benchmarkVisible.Text=benchmark.OverlayVisible?"Hide overlay":"Show overlay";
+            benchmarkRecord.Text=benchmark.Recording?"Stop recording":"Start recording";benchmarkRecord.Enabled=benchmark.Connected||benchmark.Recording;
+            benchmarkReport.Enabled=!String.IsNullOrEmpty(benchmark.LastReportPath);
+            if(++previewTicks>=4) {previewTicks=0;if(benchmarkPage.Visible)RefreshBenchmarkPreview();}
+        }
+        void ShowBenchmarkPage() {
+            renderingPage.Visible=setupPage.Visible=false;benchmarkPage.Visible=true;
+            header.Text="Benchmark";subheader.Text="Measure a lap. Compare the result. See what changed.";
+            renderingNav.BackColor=setupNav.BackColor=Theme.Sidebar;renderingNav.ForeColor=setupNav.ForeColor=Theme.Muted;
+            benchmarkNav.BackColor=Theme.AccentDark;benchmarkNav.ForeColor=Theme.Text;RefreshBenchmarkPreview();
+        }
+        protected override void Dispose(bool disposing) {
+            if(disposing) {benchmarkTimer.Stop();benchmarkTimer.Dispose();if(joystick!=null)joystick.Dispose();if(benchmark!=null)benchmark.Dispose();if(benchmarkPreview.Image!=null) {benchmarkPreview.Image.Dispose();benchmarkPreview.Image=null;}}
+            base.Dispose(disposing);
+        }
         Control PathCard(string title, TextBox field, Button browse, string hint, bool link,string address="https://github.com/mbucchia/Quad-Views-Foveated/wiki")
         {
             var card = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14), Padding = new Padding(17, 12, 17, 12) };
@@ -563,6 +713,7 @@ namespace LmuQuadViewLauncher
         }
         void ShowPage(bool setup)
         {
+            benchmarkPage.Visible=false; benchmarkNav.BackColor=Theme.Sidebar;benchmarkNav.ForeColor=Theme.Muted;
             setupPage.Visible = setup; renderingPage.Visible = !setup;
             header.Text = setup ? "Setup" : "Rendering";
             subheader.Text = setup ? "Connect the game, the provider, and your headset." : "Fine-tune image quality where it matters.";
@@ -599,6 +750,11 @@ namespace LmuQuadViewLauncher
             outline.Checked = s.DebugFocus; nativeOuter.Checked = s.NativeOuterResolution;
             renderProfiling.Checked=s.RenderProfiling;
             diagnosticsEnabled.Checked=s.DiagnosticsEnabled;
+            benchmarkEnabled.Checked=s.BenchmarkEnabled;benchmarkTemplate.SelectedIndex=s.BenchmarkTemplate;
+            benchmarkX.Value=s.BenchmarkX;benchmarkY.Value=s.BenchmarkY;benchmarkDistance.Value=s.BenchmarkDistance;benchmarkWidth.Value=s.BenchmarkWidth;
+            visibilityBinding=ReadBinding(s.BenchmarkVisibilityDevice,s.BenchmarkVisibilityName,s.BenchmarkVisibilityButton);
+            recordingBinding=ReadBinding(s.BenchmarkRecordingDevice,s.BenchmarkRecordingName,s.BenchmarkRecordingButton);
+            UpdateBindings();ApplyBenchmarkPlacement();UpdateBenchmarkNotice();
             stereoDrawAudit.Checked=s.StereoDrawAudit;
             stereoShaderCapture.Checked=s.StereoShaderCapture;stereoShaderCapture.Enabled=s.DiagnosticsEnabled&&s.StereoDrawAudit;
             stereoPairProof.Checked=s.StereoPairProof;stereoPairProof.Enabled=s.DiagnosticsEnabled&&s.StereoDrawAudit;cpuUploadReuse.Checked=s.CpuUploadReuse;
@@ -617,6 +773,10 @@ namespace LmuQuadViewLauncher
             var s = new LauncherSettings { GameDirectory = game.Text.Trim(), QuadViewsManifest = manifest.Text.Trim(),VectorXrManifest=vectorManifest.Text.Trim(),
                 Backend = backend.SelectedIndex == 2 ? "VectorXR" : backend.SelectedIndex == 1 ? "QVFR" : "Native", FoveationMode = mode.SelectedIndex == 1 ? "fixed" : "auto",
                 DebugFocus = outline.Checked, RenderProfiling=renderProfiling.Checked, DiagnosticsEnabled=diagnosticsEnabled.Checked,StereoDrawAudit=stereoDrawAudit.Checked,StereoShaderCapture=stereoShaderCapture.Checked,StereoPairProof=stereoPairProof.Checked,CpuUploadReuse=cpuUploadReuse.Checked,CpuUploadBatch=cpuUploadBatch.Checked, RenderProfileSeconds=Decimal.ToInt32(profileDuration.Value), NativeOuterResolution = nativeOuter.Checked,
+                BenchmarkEnabled=benchmarkEnabled.Checked,BenchmarkTemplate=benchmarkTemplate.SelectedIndex,
+                BenchmarkX=benchmarkX.Value,BenchmarkY=benchmarkY.Value,BenchmarkDistance=benchmarkDistance.Value,BenchmarkWidth=benchmarkWidth.Value,
+                BenchmarkVisibilityDevice=visibilityBinding==null?"":visibilityBinding.Device.ToString("D"),BenchmarkVisibilityName=visibilityBinding==null?"":visibilityBinding.Name,BenchmarkVisibilityButton=visibilityBinding==null?-1:visibilityBinding.Button,
+                BenchmarkRecordingDevice=recordingBinding==null?"":recordingBinding.Device.ToString("D"),BenchmarkRecordingName=recordingBinding==null?"":recordingBinding.Name,BenchmarkRecordingButton=recordingBinding==null?-1:recordingBinding.Button,
                 OuterPercent = outer.Value, InnerPercent = inner.Value,
                 CropWidthPercent=cropWidth.Value,CropHeightPercent=cropHeight.Value,
                 FocusWidthPercent = focusGeometry==null?focusWidth.Value:focusGeometry.ProviderWidth(focusWidth.Value),

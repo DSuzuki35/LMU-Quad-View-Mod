@@ -11,6 +11,8 @@
 #include "swapchain_sampling.hpp"
 #include "submission_pose.hpp"
 #include "stereo_audit.hpp"
+#include "benchmark_overlay.hpp"
+#include "benchmark_gpu.hpp"
 #include <algorithm>
 #include <array>
 #include <cstdarg>
@@ -131,6 +133,41 @@ struct State {
     unsigned captureMask=0;
     uint64_t frames=0;
 } s;
+lmuqv::benchmark::Transport benchmarkTransport;
+lmuqv::benchmark::Overlay benchmarkOverlay;
+lmuqv::benchmark::GpuSpan<> benchmarkGpu;
+bool benchmarkEnabled=false,benchmarkOverlayReady=false,benchmarkOverlayCapacityFailure=false;
+uint32_t benchmarkLayerLimit=0;
+int64_t benchmarkBeginQpc=0,benchmarkPreviousSceneQpc=0;
+void benchmarkReset(){benchmarkGpu.reset();benchmarkOverlay.reset();benchmarkTransport.reset();benchmarkEnabled=benchmarkOverlayReady=benchmarkOverlayCapacityFailure=false;benchmarkBeginQpc=benchmarkPreviousSceneQpc=0;benchmarkLayerLimit=0;}
+void benchmarkInitialize(){
+    benchmarkReset();char setting[8]{};
+    if(!lmuqv::diagnostics_enabled()||GetEnvironmentVariableA("LMU_QV_BENCHMARK",setting,sizeof(setting))!=1||setting[0]!='1')return;
+    benchmarkEnabled=benchmarkTransport.open();if(!benchmarkEnabled){logf("benchmark unavailable reason=mapping_failed error=%lu",GetLastError());return;}
+    auto systemProperties=structure<XrSystemProperties>(XR_TYPE_SYSTEM_PROPERTIES);
+    if(next.GetSystemProperties&&XR_SUCCEEDED(next.GetSystemProperties(s.instance,s.system,&systemProperties)))benchmarkLayerLimit=systemProperties.graphicsProperties.maxLayerCount;
+    benchmarkOverlayReady=benchmarkOverlay.initialize(next.get,s.instance,s.session);
+    if(!benchmarkOverlayReady){benchmarkTransport.data()->header.status=3;benchmarkTransport.data()->header.reason=4;logf("benchmark overlay unavailable reason=overlay_creation result=%d (sampling active)",benchmarkOverlay.result());}
+}
+void benchmarkRuntimeResult(XrResult result){
+    if(!benchmarkEnabled)return;auto& h=benchmarkTransport.data()->header;h.result=result;h.running=s.running?1:0;
+    if(XR_FAILED(result)){h.status=4;h.reason=0;}
+}
+void benchmarkPublish(unsigned submitted,int reason,int64_t preSubmit,int64_t postSubmit,XrResult result){
+    if(!benchmarkEnabled)return;auto& data=*benchmarkTransport.data();auto& h=data.header;
+    lmuqv::benchmark::Sample sample{};sample.qpc=postSubmit;sample.frame=s.frames;
+    const bool scene=s.sceneFocus[0]&&s.sceneFocus[1];double scale=1000.0/double(h.frequency);
+    sample.intervalMs=scene&&benchmarkPreviousSceneQpc?double(benchmarkBeginQpc-benchmarkPreviousSceneQpc)*scale:lmuqv::benchmark::missing();
+    sample.appMs=benchmarkBeginQpc?double(preSubmit-benchmarkBeginQpc)*scale:lmuqv::benchmark::missing();sample.providerMs=double(postSubmit-preSubmit)*scale;
+    sample.gpuMs=lmuqv::benchmark::missing();bool gpu=benchmarkGpu.poll(sample.gpuMs,sample.gpuFrame);
+    sample.flags=(scene?1u:0u)|(s.shouldRender?2u:0u)|(submitted?4u:0u)|(gpu?8u:0u);sample.result=result;
+    benchmarkPreviousSceneQpc=scene&&XR_SUCCEEDED(result)?benchmarkBeginQpc:0;
+    h.running=s.running?1:0;h.result=result;h.projections=int32_t(submitted);h.gpuFailures=benchmarkGpu.failures;
+    h.outer0Width=s.outer[0].width;h.outer0Height=s.outer[0].height;h.outer1Width=s.outer[1].width;h.outer1Height=s.outer[1].height;h.focusWidth=s.colorInfo.width;h.focusHeight=s.colorInfo.height;
+    const bool overlayFailure=!benchmarkOverlayReady||benchmarkOverlayCapacityFailure||benchmarkOverlay.result()!=XR_SUCCESS;
+    h.status=XR_FAILED(result)?4:!s.shouldRender?1:!submitted?2:overlayFailure?3:0;
+    h.reason=XR_FAILED(result)?reason:!s.shouldRender?0:reason?reason:overlayFailure?4:0;lmuqv::benchmark::publish(data,sample);
+}
 uint64_t focusLeaseSerial=0; // Never reset with session/frame state.
 bool trackAppImages(){return s.pixelEnabled||s.debugFocus||s.focusOwnership;}
 bool heldFocusImages(){for(const auto& pair:s.appChains)if(pair.second.focusLease)return true;return false;}
@@ -241,6 +278,7 @@ void destroyOuter() {
     s.colorInfo={};
 }
 void clearSession() {
+    benchmarkReset();
     outerResample.reset();
     for(auto& entry:s.appChains)clearFocusRtvs(entry.second);
     destroyOuter();
@@ -471,11 +509,12 @@ XrResult XRAPI_CALL layerCreateSession(XrInstance instance,const XrSessionCreate
             return XR_ERROR_INITIALIZATION_FAILED;
         }
     }
+    benchmarkInitialize();
     return r;
 }
 XrResult XRAPI_CALL layerDestroySession(XrSession session) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    logf("xrDestroySession");lmuqv::engine_stop();
+    logf("xrDestroySession");lmuqv::engine_stop();benchmarkReset();
     outerResample.reset();
     for(auto& entry:s.appChains)clearFocusRtvs(entry.second);
     destroyOuter();
@@ -486,19 +525,20 @@ XrResult XRAPI_CALL layerDestroySession(XrSession session) {
 XrResult XRAPI_CALL layerBeginSession(XrSession session,const XrSessionBeginInfo* info) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     auto modified=*info;if(s.quad)modified.primaryViewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO;
-    XrResult r=next.BeginSession(session,&modified);s.running=XR_SUCCEEDED(r);
+    XrResult r=next.BeginSession(session,&modified);s.running=XR_SUCCEEDED(r);benchmarkRuntimeResult(r);
     logf("xrBeginSession app=%d runtime=%d result=%d",info->primaryViewConfigurationType,modified.primaryViewConfigurationType,r);return r;
 }
 XrResult XRAPI_CALL layerEndSession(XrSession session) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(s.focusOwnership&&heldFocusImages()){logf("stereo_pass end-session refused: focus lease must be resolved or session destroyed");return XR_ERROR_CALL_ORDER_INVALID;}
-    XrResult r=next.EndSession(session);
-    if(XR_SUCCEEDED(r)){s.running=false;clearFrame();}logf("xrEndSession result=%d",r);return r;
+    XrResult r=next.EndSession(session);benchmarkRuntimeResult(r);
+    if(XR_SUCCEEDED(r)){s.running=false;clearFrame();if(benchmarkEnabled){benchmarkGpu.stop(false);benchmarkPreviousSceneQpc=0;benchmarkTransport.data()->header.running=0;benchmarkTransport.data()->header.status=1;benchmarkTransport.data()->header.reason=0;}}logf("xrEndSession result=%d",r);return r;
 }
 XrResult XRAPI_CALL layerWaitFrame(XrSession session,const XrFrameWaitInfo* info,XrFrameState* state) {
     // A pipelined WaitFrame must not hold the lock needed by the previous EndFrame.
     XrResult r=next.WaitFrame(session,info,state);
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    benchmarkRuntimeResult(r);
     if(XR_SUCCEEDED(r)){s.pendingTime=state->predictedDisplayTime;s.waitShouldRender=state->shouldRender==XR_TRUE;s.waitPending=true;}
     if(XR_FAILED(r)||s.frames<10||s.frames%120==0)logf("xrWaitFrame mode=%s completedBegins=%llu result=%d shouldRender=%d time=%lld",s.quad?"quad":"trace",static_cast<unsigned long long>(s.frames),r,s.waitShouldRender,static_cast<long long>(s.pendingTime));
     return r;
@@ -507,9 +547,10 @@ XrResult XRAPI_CALL layerBeginFrame(XrSession session,const XrFrameBeginInfo* in
     {std::lock_guard<std::recursive_mutex> lock(stateMutex);
         if(s.focusOwnership){if(heldFocusImages()){logf("stereo_pass begin-frame refused: prior focus lease unresolved");return XR_ERROR_CALL_ORDER_INVALID;}s.focusBeginInFlight=true;}}
     XrResult r=next.BeginFrame(session,info);
+    const int64_t benchmarkStart=benchmarkEnabled?lmuqv::benchmark::ticks():0;
     lmuqv::renderProfile.xr_frame_begin();
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    s.focusBeginInFlight=false;
+    s.focusBeginInFlight=false;benchmarkRuntimeResult(r);
     // Flush an abandoned/discarded frame before accepting new engine captures.
     bool released=releaseOuters();
     bool hadWait=s.waitPending;
@@ -518,6 +559,7 @@ XrResult XRAPI_CALL layerBeginFrame(XrSession session,const XrFrameBeginInfo* in
     s.located=s.located&&s.locateTime==s.predictedTime;
     s.captures[0]=s.captures[1]=false;++s.frames;
     s.sceneFocus[0]=s.sceneFocus[1]=false;
+    if(benchmarkEnabled){benchmarkBeginQpc=benchmarkStart;benchmarkGpu.stop(false);if(XR_SUCCEEDED(r))benchmarkGpu.start(s.context,s.frames);}
     std::fill(std::begin(s.debugDrawn),std::end(s.debugDrawn),false);
     if(XR_FAILED(r))s.located=false;
     if(XR_FAILED(r)||!s.frame||s.frames<10||s.frames%120==0)logf("xrBeginFrame mode=%s frame=%llu pendingWait=%d renderable=%d shouldRender=%d result=%d",s.quad?"quad":"trace",static_cast<unsigned long long>(s.frames),hadWait,s.frame,s.shouldRender,r);
@@ -700,7 +742,10 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(s.focusOwnership&&heldFocusImages()){logf("stereo_pass end-frame refused: unresolved focus image owner; no downstream release/submission");return XR_ERROR_CALL_ORDER_INVALID;}
     if(!s.quad){
+        if(benchmarkEnabled)benchmarkGpu.stop(false);
+        const int64_t before=benchmarkEnabled?lmuqv::benchmark::ticks():0;
         XrResult r=next.EndFrame(session,info);
+        if(benchmarkEnabled)benchmarkPublish(0,0,before,lmuqv::benchmark::ticks(),r);
         if(XR_FAILED(r)||s.frames<10||s.frames%120==0)logf("xrEndFrame mode=trace frame=%llu appLayers=%u begun=%d shouldRender=%d time=%lld result=%d",static_cast<unsigned long long>(s.frames),info->layerCount,s.frame,s.shouldRender,static_cast<long long>(info->displayTime),r);
         clearFrame();
         return r;
@@ -708,10 +753,10 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
     // UI drawing uses the acquired RTVs. Runtime ownership resumes before submission.
     bool released=releaseOuters();
     constexpr size_t inlineLayerCapacity = 16;
-    std::array<const XrCompositionLayerBaseHeader*, inlineLayerCapacity> stackLayers;
+    std::array<const XrCompositionLayerBaseHeader*, inlineLayerCapacity+1> stackLayers;
     std::vector<const XrCompositionLayerBaseHeader*> largeLayers;
-    if (info->layerCount > stackLayers.size()) {
-        largeLayers.resize(info->layerCount);
+    if (info->layerCount > inlineLayerCapacity) {
+        largeLayers.resize(size_t(info->layerCount)+1);
     }
     auto** layers = largeLayers.empty() ? stackLayers.data() : largeLayers.data();
     uint32_t layerCount = 0;
@@ -719,7 +764,7 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
     XrCompositionLayerProjection convertedProjection{};
     std::array<XrCompositionLayerProjectionView,4> convertedViews;
     bool captured=released&&s.frame&&s.shouldRender&&s.located&&s.captures[0]&&s.captures[1]&&s.locateTime==info->displayTime;
-    unsigned submitted=0;
+    unsigned submitted=0;int benchmarkReason=captured?0:1;
     for(uint32_t i=0;i<info->layerCount;++i){
         const auto* layer=info->layers[i];
         if(!layer||layer->type!=XR_TYPE_COMPOSITION_LAYER_PROJECTION){if(layer)layers[layerCount++]=layer;continue;}
@@ -730,11 +775,13 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
         }
         if(projection->viewCount!=2||!projection->views||
            !validInner(projection->views[0].subImage,0)||!validInner(projection->views[1].subImage,1)){
+            benchmarkReason=2;
             if(s.runtimeSettings&&(s.frames<10||s.frames%120==0))
                 logf("Projection refused: native eye identity, format, or subImage bounds invalid; required focus=%ux%u. If native handles are wrapped by another layer, disable that layer's resolution override/upscaler for diagnosis",s.runtimeFocusWidth,s.runtimeFocusHeight);
             continue;
         }
         if(!captured||projection->space==XR_NULL_HANDLE){
+            if(projection->space==XR_NULL_HANDLE)benchmarkReason=3;
             if(s.frames<10||s.frames%120==0)logf("Projection refused: released=%d begun=%d shouldRender=%d located=%d captures=%d/%d timeMatch=%d spaceMatch=%d",released,s.frame,s.shouldRender,s.located,s.captures[0],s.captures[1],s.locateTime==info->displayTime,projection->space==s.locateSpace);
             continue;
         }
@@ -743,6 +790,7 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
         std::array<XrPosef,2> focusPoses;
         if(!lmuqv::submission_focus_pose(projection->views[0].pose,s.views[0].pose,s.views[2].pose,focusPoses[0])||
            !lmuqv::submission_focus_pose(projection->views[1].pose,s.views[1].pose,s.views[3].pose,focusPoses[1])){
+            benchmarkReason=3;
             if(s.frames<10||s.frames%120==0)logf("Projection refused: invalid submitted or cached pose");
             continue;
         }
@@ -760,11 +808,20 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
         layers[layerCount++] = reinterpret_cast<const XrCompositionLayerBaseHeader*>(&convertedProjection);
         ++submitted;
     }
+    if(submitted)benchmarkReason=0;
+    if(benchmarkEnabled){
+        benchmarkGpu.stop(s.sceneFocus[0]&&s.sceneFocus[1]);
+        lmuqv::benchmark::Config overlayConfig;
+        benchmarkOverlayCapacityFailure=lmuqv::benchmark::read_config(*benchmarkTransport.data(),overlayConfig)&&overlayConfig.visible&&s.shouldRender&&layerCount>=benchmarkLayerLimit;
+        if(benchmarkOverlayReady&&layerCount<benchmarkLayerLimit){const auto* overlay=benchmarkOverlay.prepare(*benchmarkTransport.data(),s.context,s.frame&&s.shouldRender);if(overlay)layers[layerCount++]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(overlay);}
+    }
     auto modified = *info;
     modified.layerCount = layerCount;
     modified.layers = layerCount ? layers : nullptr;
     XrResult r;
+    const int64_t benchmarkPreSubmit=benchmarkEnabled?lmuqv::benchmark::ticks():0;
     {lmuqv::ProfileScope submitProfile(lmuqv::ProfileSlot::provider_submit);r=next.EndFrame(session,&modified);}
+    if(benchmarkEnabled)benchmarkPublish(submitted,benchmarkReason,benchmarkPreSubmit,lmuqv::benchmark::ticks(),r);
     lmuqv::renderProfile.xr_frame_end(s.context);
     lmuqv::stereo_audit_frame_end();
     if(s.pixelEnabled&&!s.pixelDone&&s.pixelFrame==s.frames&&s.pixelFrame){

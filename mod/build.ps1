@@ -23,6 +23,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'View crop tests compilation failed' }
     & .\build\view_crop_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'View crop tests failed' }
+    foreach ($test in @('benchmark_native','benchmark_overlay','benchmark_frame','benchmark_gpu')) {
+        & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" -ld3d11 -ld3dcompiler -ldxguid -luser32 -o "build/${test}_test.exe"
+        if ($LASTEXITCODE -ne 0) { throw "$test compilation failed" }
+        & ".\build\${test}_test.exe"
+        if ($LASTEXITCODE -ne 0) { throw "$test failed" }
+    }
+    & .\build\benchmark_frame_test.exe --diagnostics-off
+    if ($LASTEXITCODE -ne 0) { throw 'Benchmark diagnostics-off test failed' }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/native_xr_views_test.cpp -o build/native_xr_views_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native XR view tests compilation failed' }
     & .\build\native_xr_views_test.exe

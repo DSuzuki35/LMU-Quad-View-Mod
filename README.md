@@ -8,6 +8,14 @@ stereo runtime.
 **v0.1.1 is an experimental offline release.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
+The current test candidate also includes a **Benchmark** page with Minimal and
+Detailed in-headset overlays, separate joystick bindings for visibility and
+manual recording, local HTML/CSV/JSON reports, and latest-launch diagnostics.
+Enable Benchmark before launching and leave the launcher open. See
+[benchmark instructions and measurement limits](BENCHMARK.md). This candidate
+also includes the motion-compensation and mod-owned crop changes below; real
+headset and joystick compatibility still needs tester validation.
+
 ## About this project
 
 I built this project in my spare time with substantial help from AI. I'm an

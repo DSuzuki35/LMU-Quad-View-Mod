@@ -38,3 +38,5 @@ stereo-audit-*.json
 .ssh/
 .codex/
 .agents/
+/test-artifacts/
+/benchmarks/

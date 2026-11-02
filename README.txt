@@ -4,6 +4,14 @@ Free experimental Windows x64 / D3D11 quad-view integration for Le Mans Ultimate
 Always free; donations are completely optional. Use offline. No Studio397
 endorsement or anti-cheat approval is claimed.
 
+BENCHMARK TEST CANDIDATE
+Open Benchmark, enable it before launch, and leave this launcher running.
+Minimal/Detailed overlays, live placement, separate joystick show/hide and record
+bindings, and manual start/stop captures are available. HTML/CSV/JSON reports
+are saved under benchmarks/. See BENCHMARK.md for setup and measurement limits.
+Diagnose latest launch explains common log failures without exposing raw paths.
+No live headset/physical joystick validation has been performed for this candidate.
+
 ABOUT THIS PROJECT
 I built this in my spare time with substantial help from AI. I'm an engineer
 with a good understanding of technology, but I'm not a software engineer and
