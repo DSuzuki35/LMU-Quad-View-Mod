@@ -70,6 +70,29 @@ class LaunchServiceTests {
             }
             var vrsPlan=LaunchService.MakeLayerPlan(root,"VRS",null,null);
             Check(vrsPlan.Layers=="XR_APILAYER_LMU_quadview"&&vrsPlan.ExplicitManifest==null,"VRS must use runtime stereo without quad providers");
+            var experiments=new LauncherSettings {Backend="Native",CpuOuterReuse=true,OuterSsr=true,NativeOuterResolution=true,DiagnosticsEnabled=false};
+            var experimentInfo=LaunchService.MakeStartInfo(root,experiments,native,Path.Combine(root,"experiments.log"));
+            Check(experimentInfo.EnvironmentVariables["LMU_QV_CPU_OUTER_REUSE"]=="1"&&experimentInfo.EnvironmentVariables["LMU_QV_CPU_UPLOAD_REUSE"]=="1","Outer CPU reuse must imply upload reuse even without diagnostics");
+            Check(experimentInfo.EnvironmentVariables["LMU_QV_OUTER_SSR"]=="1","Outer SSR must work without diagnostics");
+            experiments.DiagnosticsEnabled=true;experiments.StereoDrawAudit=true;experiments.StereoShaderCapture=true;experiments.StereoPairProof=true;
+            experimentInfo=LaunchService.MakeStartInfo(root,experiments,native,Path.Combine(root,"experiments.log"));
+            foreach(var disabled in new[]{"STEREO_AUDIT","STEREO_SHADER_CAPTURE","STEREO_DRAW_PROOF","CPU_UPLOAD_BATCH"})Check(experimentInfo.EnvironmentVariables["LMU_QV_"+disabled]=="0","Outer reuse conflicts with "+disabled);
+            experiments.CpuUploadBatch=true;experiments.NativeOuterResolution=false;
+            experimentInfo=LaunchService.MakeStartInfo(root,experiments,native,Path.Combine(root,"experiments.log"));
+            Check(experimentInfo.EnvironmentVariables["LMU_QV_CPU_OUTER_REUSE"]=="0"&&experimentInfo.EnvironmentVariables["LMU_QV_CPU_UPLOAD_REUSE"]=="0"&&experimentInfo.EnvironmentVariables["LMU_QV_CPU_UPLOAD_BATCH"]=="1","Batch must win conflicting saved CPU experiment preferences");
+            Check(experimentInfo.EnvironmentVariables["LMU_QV_OUTER_SSR"]=="0","Outer SSR requires native outer targets");
+            var experimentMetadata=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(new JavaScriptSerializer().Serialize(metadataFactory.Invoke(null,new object[]{root,experiments,native,experimentInfo,Path.Combine(root,"experiments.log")})));
+            Check(!(bool)experimentMetadata["OuterSsr"]&&(bool)experimentMetadata["OuterSsrRequested"]&&!(bool)experimentMetadata["CpuOuterReuse"]&&(bool)experimentMetadata["CpuOuterReuseRequested"],"Run metadata must distinguish inactive experiments from retained requests");
+            experiments.Backend="VRS";experiments.CpuUploadBatch=false;experiments.NativeOuterResolution=true;
+            experimentInfo=LaunchService.MakeStartInfo(root,experiments,vrsPlan,Path.Combine(root,"experiments.log"));
+            Check(experimentInfo.EnvironmentVariables["LMU_QV_CPU_OUTER_REUSE"]=="0"&&experimentInfo.EnvironmentVariables["LMU_QV_OUTER_SSR"]=="0"&&experimentInfo.EnvironmentVariables["LMU_QV_CPU_UPLOAD_REUSE"]=="0","VRS must disable quad performance experiments");
+            var originalOuterReuse=Environment.GetEnvironmentVariable("LMU_QV_CPU_OUTER_REUSE");var originalSsr=Environment.GetEnvironmentVariable("LMU_QV_OUTER_SSR");
+            try {
+                Environment.SetEnvironmentVariable("LMU_QV_CPU_OUTER_REUSE","1");Environment.SetEnvironmentVariable("LMU_QV_OUTER_SSR","1");
+                experimentInfo=LaunchService.MakeStartInfo(root,new LauncherSettings(),native,Path.Combine(root,"experiments.log"));
+                Check(experimentInfo.EnvironmentVariables["LMU_QV_CPU_OUTER_REUSE"]=="0"&&experimentInfo.EnvironmentVariables["LMU_QV_OUTER_SSR"]=="0","Inherited performance experiment switches leaked into defaults");
+                Check(Environment.GetEnvironmentVariable("LMU_QV_CPU_OUTER_REUSE")=="1"&&Environment.GetEnvironmentVariable("LMU_QV_OUTER_SSR")=="1","Performance controls modified host environment");
+            } finally {Environment.SetEnvironmentVariable("LMU_QV_CPU_OUTER_REUSE",originalOuterReuse);Environment.SetEnvironmentVariable("LMU_QV_OUTER_SSR",originalSsr);}
             var benchmarkSettings=new LauncherSettings {BenchmarkEnabled=true};
             Check(LaunchService.MakeStartInfo(root,benchmarkSettings,native,Path.Combine(root,"benchmark.log")).EnvironmentVariables["LMU_QV_BENCHMARK"]=="1","Benchmark opt-in missing");
             benchmarkSettings.DiagnosticsEnabled=false;

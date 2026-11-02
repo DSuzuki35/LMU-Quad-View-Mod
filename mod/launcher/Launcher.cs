@@ -303,6 +303,8 @@ namespace LmuQuadViewLauncher
         readonly CheckBox stereoPairProof=Toggle("Experimental paired rendering proof");
         readonly CheckBox cpuUploadReuse=Toggle("Experimental CPU upload reuse");
         readonly CheckBox cpuUploadBatch=Toggle("Experimental CPU upload fast path");
+        readonly CheckBox cpuOuterReuse=Toggle("Experimental CPU outer upload reuse");
+        readonly CheckBox outerSsr=Toggle("Experimental smaller outer SSR resources");
         readonly NumericUpDown profileDuration=new SpacedNumericUpDown {Minimum=30,Maximum=300,Increment=30,Value=120,
             BackColor=Theme.Field,ForeColor=Theme.Text,BorderStyle=BorderStyle.FixedSingle,Dock=DockStyle.Fill,
             TextAlign=HorizontalAlignment.Right,Name="RenderProfileSeconds",AccessibleName="RenderProfileSeconds",Enabled=false};
@@ -414,6 +416,8 @@ namespace LmuQuadViewLauncher
             Help(stereoPairProof,"Experimental quad-only proof, not single-pass stereo. Samples one object in private targets while original game draws remain enabled. Adds CPU and GPU work and may hitch; use with profiling off. Disabled for Stereo VRS.");
             Help(cpuUploadReuse,"Experimental quad-only upload reuse for focus opaque geometry. May avoid redundant CPU constant-buffer uploads; GPU geometry draw work remains. Visual correctness and performance depend on the scene. Disabled in Stereo VRS and when upload fast path is selected.");
             Help(cpuUploadBatch,"Experimental quad-only unchanged-upload filtering and small-buffer batching for outer/focus geometry. May reduce CPU upload work; does not merge stereo draws or guarantee GPU savings. Disables draw audit and upload reuse. Compare equivalent on/off runs; disabled in Stereo VRS.");
+            Help(cpuOuterReuse,"Experimental, quad views only. Extends unchanged constant-upload filtering to outer and focus opaque group 31 and caches buffer aliases while identities remain unchanged. Implies CPU upload reuse; preparation, bindings, changed uploads and draws still execute. May reduce CPU upload work, with no guaranteed GPU gain. Excludes audit/proof and upload fast path; if saved together, fast path wins. Works with diagnostics off. Compare images and timings.");
+            Help(outerSsr,"Experimental, quad views only; requires smaller native outer render targets. Requests smaller outer screen-space reflection resources, never below 40% of either original axis. Unsupported layouts keep native resources. Reflections may look softer; focus resolution is unchanged. May reduce GPU work; no CPU savings or measured gain is promised. Works with diagnostics off. Disabled states preserve the saved preference.");
             Help(benchmarkEnabled,"Opt in to benchmark timing and headset overlay for the next launch. Requires diagnostics. CPU sampling/overlay updates and GPU timing/compositing add overhead. Works with quad views and Stereo VRS; compare equivalent settings.");
             Help(benchmarkTemplate,"Choose Minimal or Detailed overlay presentation. More displayed metrics can add CPU text/bitmap update work; overlay compositing adds GPU work. Timing data is unchanged.");
             Help(benchmarkVisible,"Show or hide the headset overlay during the connected session. Hidden overlay reduces overlay drawing/compositing work; benchmark sampling can remain active. This does not change the next-launch benchmark preference.");
@@ -424,7 +428,7 @@ namespace LmuQuadViewLauncher
             Help(launch,"Validate the supported game build and launch LMU with the selected settings. Quad providers/Toolkit conflicts are isolated only in the child process. Rendering CPU/GPU effects depend on your chosen options.");
             foreach(var name in new[]{"AssignVisibility","AssignRecording","ClearVisibility","ClearRecording"})Help(Controls.Find(name,true)[0],"Assign or clear a joystick button for overlay visibility or manual recording. Use separate buttons; Escape cancels assignment. CPU button polling adds a small amount of work; the binding itself has no GPU effect. Save to keep the assignment.");
             Help(((TableLayoutPanel)outer.Parent).GetControlFromPosition(0,0),help.GetToolTip(outer)+" "+help.GetToolTip(inner));
-            foreach(var option in new[]{nativeOuter,cpuUploadReuse,diagnosticsEnabled,stereoDrawAudit,stereoShaderCapture,stereoPairProof,cpuUploadBatch}) {
+            foreach(var option in new[]{nativeOuter,cpuUploadReuse,diagnosticsEnabled,stereoDrawAudit,stereoShaderCapture,stereoPairProof,cpuUploadBatch,cpuOuterReuse,outerSsr}) {
                 var table=option.Parent as TableLayoutPanel;
                 if(table!=null) {var caption=table.GetControlFromPosition(0,table.GetRow(option)+1);if(caption!=null)Help(caption,help.GetToolTip(option));}
             }
@@ -476,7 +480,10 @@ namespace LmuQuadViewLauncher
             stereoDrawAudit.Name="StereoDrawAudit";
             stereoShaderCapture.Name="StereoShaderCapture";
             stereoPairProof.Name="StereoPairProof";cpuUploadReuse.Name="CpuUploadReuse";cpuUploadBatch.Name="CpuUploadBatch";
+            cpuOuterReuse.Name="CpuOuterReuse";outerSsr.Name="OuterSsr";
             cpuUploadBatch.CheckedChanged+=delegate {if(cpuUploadBatch.Checked&&!filling){cpuUploadReuse.Checked=false;stereoDrawAudit.Checked=false;}UpdateAdvanced();};
+            cpuOuterReuse.CheckedChanged+=delegate {UpdateAdvanced();};
+            nativeOuter.CheckedChanged+=delegate {UpdateAdvanced();};
             diagnosticsEnabled.CheckedChanged+=delegate {UpdateBenchmarkNotice();UpdateAdvanced();};
             stereoDrawAudit.CheckedChanged+=delegate {UpdateAdvanced();};
             renderProfiling.CheckedChanged+=delegate {UpdateAdvanced();};
@@ -601,7 +608,7 @@ namespace LmuQuadViewLauncher
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 153)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 720)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 900)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
             var browseGame = Theme.Button("Browse", false); browseGame.Click += delegate {
                 using (var d = new FolderBrowserDialog { Description = "Select the folder containing Le Mans Ultimate.exe", ShowNewFolderButton = false }) {
                     if (Directory.Exists(game.Text)) d.SelectedPath = game.Text;
@@ -615,8 +622,8 @@ namespace LmuQuadViewLauncher
                 "Manifest JSON: leave blank to detect VectorXR. Enable an LMU Quadviews profile in its app.",true,
                 "https://github.com/DienerTech/vectorxr#installation"),0,2);
             var options = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
-            var stack = Stack(18);
-            foreach(int height in new[]{23,30,40,30,45,30,40,30,35,46,30,45,30,45,30,45,30,45})stack.RowStyles.Add(new RowStyle(SizeType.Absolute,height));
+            var stack = Stack(22);
+            foreach(int height in new[]{23,30,40,30,45,30,40,30,35,46,30,45,30,45,30,45,30,45,30,60,30,60})stack.RowStyles.Add(new RowStyle(SizeType.Absolute,height));
             stack.Controls.Add(Caption("ADVANCED"), 0, 0); stack.Controls.Add(nativeOuter, 0, 1);
             stack.Controls.Add(Caption("Experimental, quad views only. Smaller outer targets may reduce GPU work. Compare with full-size rendering and resampling."), 0, 2);
             stack.Controls.Add(cpuUploadReuse,0,3);
@@ -636,6 +643,10 @@ namespace LmuQuadViewLauncher
             stack.Controls.Add(Caption("One sampled object in private targets. Leave render profiling off; diagnostic hitch expected. Game draws remain enabled."),0,15);
             stack.Controls.Add(cpuUploadBatch,0,16);
             stack.Controls.Add(Caption("Combines unchanged-upload filtering and small-buffer batching for outer and focus geometry. Compare on/off runs; draw audit is disabled."),0,17);
+            stack.Controls.Add(cpuOuterReuse,0,18);
+            stack.Controls.Add(Caption("Extends upload filtering to outer and focus geometry; preparation and draws still run. Implies upload reuse. Excludes audit/proof and upload fast path; no measured gain yet."),0,19);
+            stack.Controls.Add(outerSsr,0,20);
+            stack.Controls.Add(Caption("Requires smaller native outer targets. Reduces outer reflection resources with a 40% per-axis floor; reflections may soften, focus stays unchanged. Unsupported layouts keep native resources."),0,21);
             options.Controls.Add(stack); grid.Controls.Add(options, 0, 3);
             grid.Controls.Add(Caption("Keep your headset's OpenXR runtime active. Configure VectorXR's LMU Quadviews profile when using it; select one quad-view provider."), 0, 4);
         }
@@ -813,10 +824,14 @@ namespace LmuQuadViewLauncher
         }
         void UpdateAdvanced() {
             bool quad=backend.SelectedIndex!=3;
-            cpuUploadBatch.Enabled=quad;cpuUploadReuse.Enabled=quad&&!cpuUploadBatch.Checked;
+            bool outerReuse=cpuOuterReuse.Checked&&!cpuUploadBatch.Checked;
+            cpuUploadBatch.Enabled=quad&&(!outerReuse||cpuUploadBatch.Checked);
+            cpuOuterReuse.Enabled=quad&&!cpuUploadBatch.Checked;
+            cpuUploadReuse.Enabled=quad&&!cpuUploadBatch.Checked&&!outerReuse;
+            outerSsr.Enabled=quad&&nativeOuter.Checked;
             renderProfiling.Enabled=diagnosticsEnabled.Checked;
             profileDuration.Enabled=diagnosticsEnabled.Checked&&renderProfiling.Checked;
-            stereoDrawAudit.Enabled=quad&&diagnosticsEnabled.Checked&&!cpuUploadBatch.Checked;
+            stereoDrawAudit.Enabled=quad&&diagnosticsEnabled.Checked&&!cpuUploadBatch.Checked&&!outerReuse;
             stereoShaderCapture.Enabled=stereoPairProof.Enabled=stereoDrawAudit.Enabled&&stereoDrawAudit.Checked;
         }
         void SetFocusDisplay(decimal width,decimal height,bool vrs) {
@@ -851,6 +866,7 @@ namespace LmuQuadViewLauncher
             stereoShaderCapture.Checked=s.StereoShaderCapture;stereoShaderCapture.Enabled=s.DiagnosticsEnabled&&s.StereoDrawAudit;
             stereoPairProof.Checked=s.StereoPairProof;stereoPairProof.Enabled=s.DiagnosticsEnabled&&s.StereoDrawAudit;cpuUploadReuse.Checked=s.CpuUploadReuse;
             cpuUploadBatch.Checked=s.CpuUploadBatch;
+            cpuOuterReuse.Checked=s.CpuOuterReuse;outerSsr.Checked=s.OuterSsr;
             profileDuration.Value=s.RenderProfileSeconds;
             outer.Value = s.OuterPercent; inner.Value = s.InnerPercent;
             cropWidth.Value=s.CropWidthPercent;cropHeight.Value=s.CropHeightPercent;
@@ -864,6 +880,7 @@ namespace LmuQuadViewLauncher
             var s = new LauncherSettings { GameDirectory = game.Text.Trim(), QuadViewsManifest = manifest.Text.Trim(),VectorXrManifest=vectorManifest.Text.Trim(),
                 Backend = backend.SelectedIndex==3?"VRS":backend.SelectedIndex == 2 ? "VectorXR" : backend.SelectedIndex == 1 ? "QVFR" : "Native", FoveationMode = mode.SelectedIndex == 1 ? "fixed" : "auto",
                 VrsPeripheralRate=vrsRate.SelectedIndex==2?4:vrsRate.SelectedIndex==0?1:2,
+                CpuOuterReuse=cpuOuterReuse.Checked,OuterSsr=outerSsr.Checked,
                 DebugFocus = outline.Checked, RenderProfiling=renderProfiling.Checked, DiagnosticsEnabled=diagnosticsEnabled.Checked,StereoDrawAudit=stereoDrawAudit.Checked,StereoShaderCapture=stereoShaderCapture.Checked,StereoPairProof=stereoPairProof.Checked,CpuUploadReuse=cpuUploadReuse.Checked,CpuUploadBatch=cpuUploadBatch.Checked, RenderProfileSeconds=Decimal.ToInt32(profileDuration.Value), NativeOuterResolution = nativeOuter.Checked,
                 BenchmarkEnabled=benchmarkEnabled.Checked,BenchmarkTemplate=benchmarkTemplate.SelectedIndex,
                 BenchmarkX=benchmarkX.Value,BenchmarkY=benchmarkY.Value,BenchmarkDistance=benchmarkDistance.Value,BenchmarkWidth=benchmarkWidth.Value,

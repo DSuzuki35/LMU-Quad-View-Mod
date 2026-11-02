@@ -145,6 +145,11 @@ class GuiLayoutTests {
         Check(content.Bottom<=viewport.ClientSize.Height+1,pageName+" last content is unreachable at scroll bottom");
         foreach(var name in new[]{"SaveButton","LaunchButton","CoffeeButton"})FullyVisible(Named(form,name));
         NoNativeScrollBars(form);
+        if(pageName=="SetupPage") {
+            foreach(var name in new[]{"CpuOuterReuse","OuterSsr"}) {
+                var control=Named(form,name);control.Focus();Settle(form);FullyVisible(control);TextFits(control);
+            }
+        }
         if(pageName=="RenderingPage") {
             var reset=Named(form,"ResetFocusOffsets");reset.Focus();Settle(form);FullyVisible(reset);TextFits(reset);
             foreach(var name in new[]{"FocusOffsetXPercent","FocusOffsetYPercent"}) {
@@ -170,6 +175,22 @@ class GuiLayoutTests {
             Directory.CreateDirectory(output);
             using(var form=new Launcher()) {
                 var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+                var experiments=new LauncherSettings {CpuOuterReuse=true,OuterSsr=true,DiagnosticsEnabled=false,StereoDrawAudit=true,StereoShaderCapture=true,StereoPairProof=true};
+                typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{experiments});
+                var experimentValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
+                Check(experimentValues.CpuOuterReuse&&experimentValues.OuterSsr,"GUI lost performance experiment preferences");
+                Check(Named(form,"CpuOuterReuse").Enabled&&Named(form,"OuterSsr").Enabled&&!Named(form,"CpuUploadBatch").Enabled&&!Named(form,"CpuUploadReuse").Enabled,"Performance dependencies wrong with diagnostics off");
+                ((CheckBox)Named(form,"DiagnosticsEnabled")).Checked=true;
+                Check(!Named(form,"StereoDrawAudit").Enabled&&!Named(form,"StereoShaderCapture").Enabled&&!Named(form,"StereoPairProof").Enabled,"Outer reuse enables incompatible audit/proof");
+                var nativeOuter=(CheckBox)typeof(Launcher).GetField("nativeOuter",flags).GetValue(form);nativeOuter.Checked=false;
+                Check(!Named(form,"OuterSsr").Enabled&&((CheckBox)Named(form,"OuterSsr")).Checked,"Native outer off must preserve but disable SSR preference");
+                ((ComboBox)Named(form,"ProviderSelector")).SelectedIndex=3;
+                Check(!Named(form,"CpuOuterReuse").Enabled&&!Named(form,"OuterSsr").Enabled,"VRS enables quad performance experiments");
+                ((ComboBox)Named(form,"ProviderSelector")).SelectedIndex=0;nativeOuter.Checked=true;
+                experimentValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
+                Check(experimentValues.CpuOuterReuse&&experimentValues.OuterSsr&&experimentValues.StereoDrawAudit&&experimentValues.StereoPairProof,"Mode switching destroys experiment or diagnostic preferences");
+                experiments.CpuUploadBatch=true;typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{experiments});
+                Check(Named(form,"CpuUploadBatch").Enabled&&!Named(form,"CpuOuterReuse").Enabled,"Saved conflicting CPU options must allow turning off the winning batch option");
                 var vrs=new LauncherSettings {Backend="VRS",VrsPeripheralRate=4,FocusAspectRatio=2,FocusWidthPercent=30,FocusHeightPercent=60,CropWidthPercent=75,NativeOuterResolution=true,StereoDrawAudit=true,CpuUploadReuse=true,RenderProfiling=true,DebugFocus=true};
                 typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{vrs});
                 var vrsValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);

@@ -32,3 +32,13 @@ one attachment per session. No stored gaze history is written.
 
 All 0.1.2 features remain available in their applicable modes. Native single-pass
 stereo is unfinished and is not a 0.2.0 feature. Restart LMU to change render mode.
+
+VALIDATION SCOPE
+Native/WARP, fake OpenXR, gaze/projection and launcher/DPI suites pass with the
+LLVM-MinGW build. A real NVIDIA D3D11 probe verified moving full-rate focus,
+2x2/4x4 peripheral shading, the 1x1 control and state restoration. Ten consecutive
+final-production probe processes exited cleanly after dynamic-map updates.
+LMU/Pimax logs confirmed gaze input and VRS initialization in an earlier live
+run. These checks establish implementation behavior, not a measured LMU speedup
+or broad headset/image-quality compatibility. A matched awake-headset A/B
+benchmark is still required before making performance claims.

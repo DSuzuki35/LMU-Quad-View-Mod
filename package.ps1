@@ -29,6 +29,7 @@ $files = @{
     'PORTABLE-STEREO-RESEARCH.txt' = 'PORTABLE-STEREO-RESEARCH.txt'
     'CPU-UPLOAD-REUSE.md' = 'CPU-UPLOAD-REUSE.md'
     'CPU-UPLOAD-FASTPATH.md' = 'CPU-UPLOAD-FASTPATH.md'
+    'PERFORMANCE-EXPERIMENT.md' = 'PERFORMANCE-EXPERIMENT.md'
     'tools/analyze_stereo_audit.py' = 'tools/analyze_stereo_audit.py'
     'tools/check-hardware-stereo.cmd' = 'tools/check-hardware-stereo.cmd'
     'TODO.md' = 'TODO.md'

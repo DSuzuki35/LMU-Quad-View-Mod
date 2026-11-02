@@ -5,6 +5,8 @@ Choose Stereo VRS for two native eye views with reduced peripheral shading.
 Auto eye tracking falls back to a fixed region when unavailable. See
 PORTABLE-VRS.txt. All 0.1.2 features remain; unfinished native SPS is excluded.
 Hover over launcher options for explanations and performance tradeoffs.
+Setup also includes Experimental CPU outer reuse and smaller outer SSR toggles,
+off by default and Quad Views-only. See PERFORMANCE-EXPERIMENT.md.
 
 Free experimental Windows x64 / D3D11 quad-view integration for Le Mans Ultimate.
 Always free; donations are completely optional. Use offline. No Studio397
@@ -34,7 +36,8 @@ Requires .NET Framework 4.8. No PowerShell installation or script unblocking is
 needed to run the distributed launcher. The EXE is unsigned.
 
 In Setup select the LMU folder. Ensure the headset's OpenXR runtime is active.
-In Rendering select Native OpenXR, Quad-Views-Foveated (QVFR), or VectorXR.
+In Rendering select Native OpenXR, Quad-Views-Foveated (QVFR), VectorXR, or
+Stereo VRS (NVIDIA, experimental).
 Select Auto or Fixed, save, then launch LMU offline. Restart after settings changes.
 
 PROVIDERS

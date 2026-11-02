@@ -18,6 +18,9 @@ Versions before 1.0 remain experimental and may change compatibility or settings
 - Add explanatory hover help, an explicit experimental VRS selector and shading
   rate control. Existing experimental CPU upload reuse/fast-path switches remain
   available in Quad Views mode.
+- Integrate `experiment/performance`: optional outer CPU upload reuse and smaller
+  outer SSR resources, with dependency-aware Experimental toggles and hover help.
+  Both are off by default and Quad Views-only; SSR can soften reflections.
 - Full native SPS remains unfinished and is not included as a 0.2.0 feature.
   VRS can reduce shading work; removing extra quad traversals may reduce CPU work.
   No measured LMU FPS or frametime improvement is claimed.

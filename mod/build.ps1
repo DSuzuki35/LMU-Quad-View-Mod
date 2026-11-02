@@ -116,7 +116,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'D3D11 state tests compilation failed' }
     & .\build\ui_d3d_state_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'D3D11 state tests failed' }
-    foreach ($test in @('focus_overlay','outer_resample','native_outer_texture','native_outer_bindings','stereo_instancing')) {
+    foreach ($test in @('focus_overlay','outer_resample','native_outer_texture','native_outer_bindings','stereo_instancing','native_outer_bank')) {
         & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static "tests/${test}_test.cpp" -ld3d11 -ld3dcompiler -ldxguid -o "build/${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests compilation failed" }
         & ".\build\${test}_test.exe"

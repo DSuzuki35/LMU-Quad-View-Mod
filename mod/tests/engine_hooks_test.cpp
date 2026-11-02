@@ -40,9 +40,72 @@ void derive(void* ptr,unsigned flags,bool suppress) {
 }
 void mask(void*,void*) {++masks;}
 
+bool expectedUploadScope=false,enterNestedUploadScope=false;
+unsigned uploadSortCalls=0;
+void uploadSort(void* renderer,void* scene,void* view,std::int32_t group,
+                std::uint32_t flags,bool lastMainPass,void* material){
+    using namespace lmuqv;
+    ++uploadSortCalls;
+    auto* cache=static_cast<std::byte*>(renderer)+0x77fc8;
+    const auto token=nativeUploadReuse.before(cache,selectedUploadContext);
+    require(token.valid==expectedUploadScope,"upload reuse scope eligibility changed");
+    if(expectedUploadScope)require(selectedUploadCache==cache,"wrong native upload cache selected");
+    if(enterNestedUploadScope){
+        enterNestedUploadScope=false;expectedUploadScope=false;
+        worldSortHook(renderer,scene,view,group,flags,lastMainPass,material);
+        require(!nativeUploadReuse.before(cache,selectedUploadContext).valid,
+                "nested group incorrectly resumed parent reuse assumptions");
+    }
+}
+void outerUploadScopeTest(){
+    using namespace lmuqv;
+    // Only readability and pointer identity are needed; no D3D methods are called
+    // by this fixture. All seven native buffer fields remain null.
+    std::vector<std::byte> renderer(0x7b000);
+    std::uintptr_t contextStorage=0;
+    auto* context=reinterpret_cast<ID3D11DeviceContext*>(&contextStorage);
+    std::memcpy(renderer.data()+0x76f68,&context,sizeof(context));
+    ViewSnapshot outer{},other{};
+    worldSortOriginal=uploadSort;nativeUploadHooked=true;nativeUploadOptIn=true;
+    nativeUploadOuterOptIn=true;nativeUploadBatchOptIn=false;nativeOuterExpected=&outer;
+    auto run=[&](void* view,int group,bool eligible){
+        expectedUploadScope=eligible;
+        worldSortHook(renderer.data(),nullptr,view,group,0,false,nullptr);
+        require(!selectedUploadCache&&!selectedUploadContext,"upload scope escaped world sort");
+        require(!nativeUploadReuse.before(renderer.data()+0x77fc8,context).valid,
+                "GPU content assumptions survived a completed render group");
+    };
+    run(&outer,31,true);run(&other,31,false);run(&outer,30,false);run(nullptr,31,false);
+    nativeUploadOuterOptIn=false;run(&outer,31,false);
+    focusView=&outer;run(&outer,31,true);focusView=nullptr;
+    nativeUploadOuterOptIn=true;nativeUploadHooked=false;run(&outer,31,false);nativeUploadHooked=true;
+    enterNestedUploadScope=true;run(&outer,31,true);
+    require(uploadSortCalls==9,"native world sort calls changed");
+    nativeUploadOptIn=false;nativeUploadOuterOptIn=false;nativeUploadHooked=false;
+    nativeOuterExpected=nullptr;worldSortOriginal=nullptr;nativeUploadReuse.reset();
+}
+void outerUploadSettingsTest(){
+    using namespace lmuqv;
+    const char* names[]{"LMU_QV_MODE","LMU_QV_CPU_UPLOAD_REUSE","LMU_QV_CPU_OUTER_REUSE","LMU_QV_CPU_UPLOAD_BATCH"};
+    std::array<std::string,4> prior{};
+    for(size_t i=0;i<prior.size();++i){char value[32768]{};GetEnvironmentVariableA(names[i],value,sizeof(value));prior[i]=value;SetEnvironmentVariableA(names[i],nullptr);}
+    SetEnvironmentVariableA(names[0],"trace");
+    require(engine_start(nullptr)&&!nativeUploadOptIn&&!nativeUploadOuterOptIn,"CPU experiment enabled by default");
+    SetEnvironmentVariableA(names[2],"1");
+    require(engine_start(nullptr)&&nativeUploadOptIn&&nativeUploadOuterOptIn,"outer reuse did not enable upload hook prerequisite");
+    SetEnvironmentVariableA(names[3],"1");
+    require(engine_start(nullptr)&&nativeUploadBatchOptIn&&!nativeUploadOptIn&&!nativeUploadOuterOptIn,"batch mode did not supersede outer reuse");
+    SetEnvironmentVariableA(names[3],nullptr);SetEnvironmentVariableA(names[2],"01");
+    require(engine_start(nullptr)&&!nativeUploadOptIn&&!nativeUploadOuterOptIn,"malformed CPU opt-in accepted");
+    SetEnvironmentVariableA(names[2],"1");engine_start(nullptr);engine_stop();
+    require(!nativeUploadOptIn&&!nativeUploadOuterOptIn,"CPU outer reuse opt-in survived teardown");
+    for(size_t i=0;i<prior.size();++i)SetEnvironmentVariableA(names[i],prior[i].empty()?nullptr:prior[i].c_str());
+}
+
 }
 int main() {
     using namespace lmuqv;
+    outerUploadScopeTest();outerUploadSettingsTest();
     unsigned nativeWidth=0,nativeHeight=0;
     nativeRuntimeSettings=true;
     nativeOuterSizes=parse_output_sizes("10","200");

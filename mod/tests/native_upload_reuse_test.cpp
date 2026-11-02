@@ -25,8 +25,42 @@ struct Fixture {
     void verify(unsigned i){const auto& r=lmuqv::native_upload_ranges[i];ID3D11Buffer* b=nullptr;std::memcpy(&b,cache.data()+r.buffer,8);D3D11_BUFFER_DESC desc{};b->GetDesc(&desc);desc.BindFlags=0;desc.Usage=D3D11_USAGE_STAGING;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;ID3D11Buffer* copy=nullptr;assert(SUCCEEDED(device->CreateBuffer(&desc,nullptr,&copy)));context->CopyResource(copy,b);D3D11_MAPPED_SUBRESOURCE map{};assert(SUCCEEDED(context->Map(copy,0,D3D11_MAP_READ,0,&map)));assert(!std::memcmp(map.pData,cache.data()+r.data,r.bytes));context->Unmap(copy,0);drop(copy);}
     ~Fixture(){reuse.reset();context->ClearState();for(auto*& b:buffers)drop(b);drop(context);drop(device);}
 };
+void topology_cache_test(bool hardware){
+    Fixture f(hardware);
+    const auto& second=lmuqv::native_upload_ranges[1];
+    const auto& third=lmuqv::native_upload_ranges[2];
+    f.reuse.begin(f.cache.data(),f.context,true);f.dirty();f.run();
+    assert(f.uploads==7&&f.reuse.counters().topologyChecks==1);
+    for(unsigned i=0;i<16;++i){f.dirty();f.run();}
+    assert(f.uploads==7&&f.reuse.counters().topologyChecks==1);
+    // A payload edit does not change resource ownership or need another scan.
+    f.cache[second.data]^=std::byte(1);f.dirty();f.run();f.verify(1);
+    assert(f.uploads==8&&f.reuse.counters().topologyChecks==1);
+    // Introduce an alias after both independent resources were already learned.
+    std::memcpy(f.cache.data()+third.buffer,&f.buffers[1],sizeof(void*));
+    f.dirty();f.run();assert(f.uploads==10&&f.reuse.counters().topologyChecks==2);f.verify(2);
+    f.dirty();f.run();assert(f.uploads==12&&f.reuse.counters().topologyChecks==2);f.verify(2);
+    // Removing the alias must not revive stale GPU-content assumptions. The
+    // unchanged formerly aliased resource stays conservative until scope reset.
+    std::memcpy(f.cache.data()+third.buffer,&f.buffers[2],sizeof(void*));
+    f.dirty();f.run();assert(f.uploads==14&&f.reuse.counters().topologyChecks==3);
+    f.verify(1);f.verify(2);
+    f.dirty();f.run();assert(f.uploads==15&&f.reuse.counters().topologyChecks==3);
+    f.reuse.end();f.reuse.begin(f.cache.data(),f.context,true);f.dirty();f.run();
+    assert(f.uploads==22&&f.reuse.counters().topologyChecks==4);
+    f.dirty();f.run();assert(f.uploads==22&&f.reuse.counters().topologyChecks==4);
+    // begin() must scan an unchanged identity layout again after clearing aliases.
+    std::memcpy(f.cache.data()+third.buffer,&f.buffers[1],sizeof(void*));
+    f.dirty();f.run();assert(f.reuse.counters().topologyChecks==5);
+    f.reuse.end();f.reuse.begin(f.cache.data(),f.context,true);f.dirty();f.run();
+    const auto uploads=f.uploads;f.dirty();f.run();
+    assert(f.uploads==uploads+2&&f.reuse.counters().topologyChecks==6);f.verify(2);
+    f.reuse.reset();f.reuse.begin(f.cache.data(),f.context,false);f.dirty();f.run();
+    f.dirty();f.run();assert(f.reuse.counters().topologyChecks==0);
+}
 }
 int main(int argc,char** argv){
+    topology_cache_test(argc>1&&!std::strcmp(argv[1],"--hardware"));
     bool hardware=argc>1&&!std::strcmp(argv[1],"--hardware");Fixture f(hardware);f.reuse.begin(f.cache.data(),f.context,true);f.dirty();f.run();assert(f.uploads==7);f.dirty();f.run();assert(f.uploads==7&&f.bindings==14&&f.reuse.counters().skipped==7);for(unsigned i=0;i<7;++i)f.verify(i);
     // A changed byte anywhere in the payload forces the real upload.
     const auto& first=lmuqv::native_upload_ranges[0];f.cache[first.data+first.bytes-1]^=std::byte(1);f.dirty();f.run();assert(f.uploads==8);f.verify(0);

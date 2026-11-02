@@ -10,11 +10,13 @@ param(
     [switch]$StereoShaderCapture,
     [switch]$StereoPairProof,
     [switch]$CpuUploadReuse,
+    [switch]$CpuOuterReuse,
     [ValidateRange(30,300)][int]$RenderProfileSeconds=120,
     [switch]$DebugFocus,
     [switch]$Benchmark,
     [switch]$EnableOuterVrs,
     [switch]$NativeOuterResolution,
+    [switch]$OuterSsr,
     [switch]$UseRuntimeSettings,
     [ValidateSet('Native','QVFR','VectorXR')][string]$Backend='Native',
     [ValidateSet('auto','fixed')][string]$FoveationMode='auto',
@@ -45,6 +47,9 @@ if($RenderProfiling -and ($Mode -ne 'quad' -or $GpuTiming -or $Benchmark)){throw
 if ($DebugFocus -and $Mode -ne 'quad') { throw 'Focus debug border requires quad mode' }
 if (($Benchmark -or $EnableOuterVrs) -and $Mode -ne 'quad') { throw 'Outer VRS experiments and A/B benchmarking require quad mode' }
 if ($NativeOuterResolution -and ($Mode -ne 'quad' -or $EnableOuterVrs)) { throw 'Initial native outer resolution experiment requires quad mode with VRS disabled' }
+if ($OuterSsr -and ($Mode -ne 'quad' -or !$NativeOuterResolution)) { throw 'OuterSsr requires quad mode with NativeOuterResolution.' }
+if ($CpuOuterReuse -and ($Mode -ne 'quad' -or $StereoDrawAudit -or $StereoShaderCapture -or $StereoPairProof)) { throw 'CpuOuterReuse requires quad mode without stereo audit, shader capture or pair proof.' }
+if ($CpuOuterReuse) { $CpuUploadReuse = $true }
 if ($Mode -ne 'quad' -and ($OuterPixelsPercent -ne 100 -or $FocusPixelsPercent -ne 100)) { throw 'Separate view sizes require quad mode' }
 if ($OuterPixelsPercent -gt $FocusPixelsPercent) { throw 'Outer output must not exceed the common focus render size' }
 if (!$UseRuntimeSettings -and $NativeOuterResolution -and $OuterPixelsPercent -ge $FocusPixelsPercent) { throw 'Native outer resolution requires outer pixels below focus pixels' }
@@ -107,6 +112,7 @@ $info.Environment['LMU_QV_STEREO_AUDIT_DIR'] = $(if ($StereoDrawAudit) { $logDir
 $info.Environment['LMU_QV_STEREO_SHADER_CAPTURE'] = $(if ($StereoDrawAudit -and $StereoShaderCapture) { '1' } else { '0' })
 $info.Environment['LMU_QV_STEREO_DRAW_PROOF'] = $(if ($StereoDrawAudit -and $StereoPairProof) { '1' } else { '0' })
 $info.Environment['LMU_QV_CPU_UPLOAD_REUSE'] = $(if ($CpuUploadReuse) { '1' } else { '0' })
+$info.Environment['LMU_QV_CPU_OUTER_REUSE'] = $(if ($CpuOuterReuse) { '1' } else { '0' })
 $info.Environment['LMU_QV_PROFILE_SECONDS'] = $RenderProfileSeconds.ToString([Globalization.CultureInfo]::InvariantCulture)
 $info.Environment['LMU_QV_USE_RUNTIME_SETTINGS'] = $(if ($UseRuntimeSettings) { '1' } else { '0' })
 $info.Environment['LMU_QV_LOG'] = $(if($DisableDiagnostics){''}else{$logPath})
@@ -118,6 +124,7 @@ $info.Environment['LMU_QV_DEBUG_FOCUS'] = $(if ($DebugFocus) { '1' } else { '0' 
 $info.Environment['LMU_QV_BENCH_CONTROL'] = $(if ($Benchmark) { $benchmarkControl } else { '' })
 $info.Environment['LMU_QV_VRS_EXCLUSIVE'] = $(if ($EnableOuterVrs) { '1' } else { '0' })
 $info.Environment['LMU_QV_NATIVE_OUTER'] = $(if ($NativeOuterResolution) { '1' } else { '0' })
+$info.Environment['LMU_QV_OUTER_SSR'] = $(if ($OuterSsr) { '1' } else { '0' })
 $info.Environment['LMU_QV_OUTER_SHADING_RATE'] = $OuterShadingRate.ToString([Globalization.CultureInfo]::InvariantCulture)
 $info.Environment['LMU_QV_OUTER_PIXELS_PERCENT'] = $OuterPixelsPercent.ToString([Globalization.CultureInfo]::InvariantCulture)
 $info.Environment['LMU_QV_FOCUS_PIXELS_PERCENT'] = $FocusPixelsPercent.ToString([Globalization.CultureInfo]::InvariantCulture)
@@ -139,9 +146,11 @@ $run = [pscustomobject]@{
     StereoShaderCapture=[bool]($StereoDrawAudit -and $StereoShaderCapture)
     StereoPairProof=[bool]($StereoDrawAudit -and $StereoPairProof)
     CpuUploadReuse=[bool]$CpuUploadReuse
+    CpuOuterReuse=[bool]$CpuOuterReuse
     DebugFocus=[bool]$DebugFocus
     Benchmark=[bool]$Benchmark;BenchmarkControl=$benchmarkControl;EnableOuterVrs=[bool]$EnableOuterVrs
     NativeOuterResolution=[bool]$NativeOuterResolution
+    OuterSsr=[bool]$OuterSsr
     UseRuntimeSettings=[bool]$UseRuntimeSettings
     Backend=$Backend;FoveationMode=$FoveationMode;ProviderManifest=$layerPlan.ProviderManifest;ProviderName=$layerPlan.ProviderName;ExplicitManifest=$layerPlan.ExplicitManifest
     DisabledImplicitSwitches=$layerPlan.DisableVariables

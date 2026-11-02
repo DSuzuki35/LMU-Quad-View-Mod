@@ -162,13 +162,16 @@ namespace LmuQuadViewLauncher {
             environment["LMU_QV_FOVEATION_MODE"]=settings.FoveationMode;environment["LMU_QV_LOG"]=settings.DiagnosticsEnabled?log:"";
             environment["LMU_QV_DIAGNOSTICS"]=settings.DiagnosticsEnabled?"1":"0";
             environment["LMU_QV_BENCHMARK"]=settings.DiagnosticsEnabled&&settings.BenchmarkEnabled?"1":"0";
-            bool audit=!vrs&&settings.DiagnosticsEnabled&&settings.StereoDrawAudit&&!settings.CpuUploadBatch;
+            bool outerReuse=!vrs&&settings.CpuOuterReuse&&!settings.CpuUploadBatch;
+            bool audit=!vrs&&settings.DiagnosticsEnabled&&settings.StereoDrawAudit&&!settings.CpuUploadBatch&&!outerReuse;
             environment["LMU_QV_STEREO_AUDIT"]=audit?"1":"0";
             environment["LMU_QV_STEREO_AUDIT_DIR"]=audit?System.IO.Path.GetDirectoryName(log):"";
             environment["LMU_QV_STEREO_SHADER_CAPTURE"]=audit&&settings.StereoShaderCapture?"1":"0";
             environment["LMU_QV_STEREO_DRAW_PROOF"]=audit&&settings.StereoPairProof?"1":"0";
-            environment["LMU_QV_CPU_UPLOAD_REUSE"]=!vrs&&settings.CpuUploadReuse&&!settings.CpuUploadBatch?"1":"0";
+            environment["LMU_QV_CPU_UPLOAD_REUSE"]=!vrs&&(settings.CpuUploadReuse||outerReuse)&&!settings.CpuUploadBatch?"1":"0";
             environment["LMU_QV_CPU_UPLOAD_BATCH"]=!vrs&&settings.CpuUploadBatch?"1":"0";
+            environment["LMU_QV_CPU_OUTER_REUSE"]=outerReuse?"1":"0";
+            environment["LMU_QV_OUTER_SSR"]=!vrs&&settings.NativeOuterResolution&&settings.OuterSsr?"1":"0";
             environment["LMU_QV_DEBUG_FOCUS"]=settings.DebugFocus?"1":"0";
             environment["LMU_QV_PROFILE"]=settings.DiagnosticsEnabled&&settings.RenderProfiling?"1":"0";
             environment["LMU_QV_PROFILE_SECONDS"]=settings.RenderProfileSeconds.ToString(CultureInfo.InvariantCulture);
@@ -236,6 +239,7 @@ namespace LmuQuadViewLauncher {
                 ExplicitManifest=plan.ExplicitManifest,EnabledLayers=plan.Layers,DisabledImplicitSwitches=plan.DisableVariables,Log=log,
                 DiagnosticsEnabled=settings.DiagnosticsEnabled,BenchmarkEnabled=settings.DiagnosticsEnabled&&settings.BenchmarkEnabled,BenchmarkRequested=settings.BenchmarkEnabled,BenchmarkTemplate=settings.BenchmarkTemplate,
                 DebugFocus=settings.DebugFocus,RenderProfiling=settings.RenderProfiling,StereoDrawAudit=info.EnvironmentVariables["LMU_QV_STEREO_AUDIT"]=="1",StereoShaderCapture=info.EnvironmentVariables["LMU_QV_STEREO_SHADER_CAPTURE"]=="1",StereoPairProof=info.EnvironmentVariables["LMU_QV_STEREO_DRAW_PROOF"]=="1",CpuUploadReuse=info.EnvironmentVariables["LMU_QV_CPU_UPLOAD_REUSE"]=="1",CpuUploadBatch=info.EnvironmentVariables["LMU_QV_CPU_UPLOAD_BATCH"]=="1",RenderProfileSeconds=settings.RenderProfileSeconds,NativeOuterResolution=info.EnvironmentVariables["LMU_QV_NATIVE_OUTER"]=="1",UseRuntimeSettings=settings.Backend!="VRS",
+                CpuOuterReuse=info.EnvironmentVariables["LMU_QV_CPU_OUTER_REUSE"]=="1",OuterSsr=info.EnvironmentVariables["LMU_QV_OUTER_SSR"]=="1",CpuOuterReuseRequested=settings.CpuOuterReuse,OuterSsrRequested=settings.OuterSsr,
                 VectorXrDirectInputs=settings.Backend=="VectorXR",OuterBlur=settings.OuterBlur,
                 CropWidthPercent=settings.CropWidthPercent,CropHeightPercent=settings.CropHeightPercent,
                 FocusOffsetXPercent=settings.FocusOffsetXPercent,FocusOffsetYPercent=settings.FocusOffsetYPercent,

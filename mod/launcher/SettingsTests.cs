@@ -109,6 +109,11 @@ class SettingsTests
             File.WriteAllText(xml,"<QuadView><Backend>VRS</Backend><VrsPeripheralRate>"+invalidRate+"</VrsPeripheralRate></QuadView>");
             Rejected(delegate{QvfrSettings.Validate(QvfrSettings.Load(xml));});
         }
+        File.WriteAllText(xml,"<QuadView><CpuOuterReuse>true</CpuOuterReuse><OuterSsr>true</OuterSsr></QuadView>");
+        loaded=QvfrSettings.Load(xml);QvfrSettings.Save(xml,loaded);
+        Require(File.ReadAllText(xml).Contains("<CpuOuterReuse>true</CpuOuterReuse>")&&File.ReadAllText(xml).Contains("<OuterSsr>true</OuterSsr>"),"Performance experiment preferences must roundtrip");
+        File.WriteAllText(xml,"<QuadView />");loaded=QvfrSettings.Load(xml);QvfrSettings.Save(xml,loaded);
+        Require(File.ReadAllText(xml).Contains("<CpuOuterReuse>false</CpuOuterReuse>")&&File.ReadAllText(xml).Contains("<OuterSsr>false</OuterSsr>"),"Existing settings must not enable new performance experiments");
         Console.WriteLine("C# settings tests passed: independent dimensions, invariant culture, backups, preservation, validation, migration, VRS.");
     }
 }

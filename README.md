@@ -30,6 +30,12 @@ VRS reduces pixel-shader work and avoids the extra quad focus traversals, but
 image quality and performance depend on the workload. No LMU speedup is claimed.
 See [setup, compatibility and measurement limits](PORTABLE-VRS.txt).
 
+The merged performance experiments add optional **CPU outer reuse** and
+**smaller outer SSR** controls in Setup, off by default. They reduce redundant
+constant uploads or outer reflection resolution in Quad Views. Hover help
+explains dependencies and quality tradeoffs; see
+[performance experiment details](PERFORMANCE-EXPERIMENT.md).
+
 ## About this project
 
 I built this project in my spare time with substantial help from AI. I'm an

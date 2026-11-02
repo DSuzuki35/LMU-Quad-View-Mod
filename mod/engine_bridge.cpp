@@ -50,7 +50,7 @@ NativePrepareFn nativePrepareOriginal{};bool nativePrepareHooked=false;
 constexpr std::uintptr_t nativePrepareRva=0x5629e0;
 constexpr std::array<std::uint8_t,20> nativePrepareAnchor{0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x30};
 using NativeUploadFn=void(*)(void*,void*,ID3D11DeviceContext*,void*);
-NativeUploadFn nativeUploadOriginal{};std::atomic<bool> nativeUploadHooked{false},nativeUploadOptIn{false};
+NativeUploadFn nativeUploadOriginal{};std::atomic<bool> nativeUploadHooked{false},nativeUploadOptIn{false},nativeUploadOuterOptIn{false};
 constexpr std::uintptr_t nativeUploadRva=0x5cac50;
 constexpr std::array<std::uint8_t,20> nativeUploadAnchor{0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x40};
 NativeUploadReuse nativeUploadReuse;
@@ -87,7 +87,7 @@ constexpr std::array<std::uintptr_t,3> fovScaleCallers{0x5bd63c,0x5bd652,0x5baaf
 constexpr std::array<std::uint8_t,6> fovScaleCallAnchor{0xff,0x90,0x78,0x0c,0x00,0x00};
 bool fovScaleLogged=false;
 NativeOuterBank nativeOuterBanks[2];
-bool nativeOuterOptIn=false,nativeOuterFailed=false;
+bool nativeOuterOptIn=false,nativeOuterFailed=false,nativeOuterSsrOptIn=false;
 // Failure to allocate an optional small bank is recoverable. A size mismatch
 // or failed restoration is not: keep those separate from the performance path.
 bool nativeQuadSubmissionBlocked=false;
@@ -521,7 +521,10 @@ void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
     bool uploadScope=false;
     if(selectedUploadCache){nativeUploadBatch.end();nativeUploadReuse.end();} // Nested groups invalidate exclusive scope assumptions.
     const bool batchEligible=nativeUploadBatchOptIn&&view&&(view==focusView||view==nativeOuterExpected);
-    const bool reuseEligible=nativeUploadOptIn&&view==focusView&&focusView;
+    // Outer reuse has the same per-group lifetime as focus reuse. It does not
+    // retain constants or skip preparation between outer and focus traversals.
+    const bool reuseEligible=nativeUploadOptIn&&view&&
+        (view==focusView||(nativeUploadOuterOptIn&&view==nativeOuterExpected));
     if((batchEligible||reuseEligible)&&nativeUploadHooked&&group==31&&!selectedUploadCache){
         const auto object=reinterpret_cast<std::uintptr_t>(renderer);
         if(readable(reinterpret_cast<void*>(object+0x77fc8),0x2660)&&readable(reinterpret_cast<void*>(object+0x77940),0x200)&&readable(reinterpret_cast<void*>(object+0x76f68),sizeof(void*))){
@@ -671,9 +674,13 @@ void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool late
         passes.end-passes.begin==0x94&&readable(reinterpret_cast<void*>(passes.begin),passes.end-passes.begin);
     if(valid)for(auto p=passes.begin;p<passes.end;p+=0x94)valid=valid&&!*reinterpret_cast<bool*>(p);
     const float clearDepth=*reinterpret_cast<unsigned*>(reinterpret_cast<std::byte*>(view)+0x3e8)==1?0.f:1.f;
-    if(!valid||!nativeOuterBank.prepare(base,renderer,width,height,clearDepth,readable,log_line)){
+    if(!valid||!nativeOuterBank.prepare(base,renderer,width,height,clearDepth,readable,log_line,nativeOuterSsrOptIn)){
         nativeOuterFailed=true;log_line("native_outer refused unsupported view/resource bank; live quad fallback: full-resolution outer render resampled to runtime output; outer render savings unavailable");
         prepareProfile.end();nativeViewOriginal(pointer,objects,lights,main,later);return;
+    }
+    if(nativeOuterSsrOptIn&&!nativeOuterBank.ssrActive()){
+        nativeOuterSsrOptIn=false;
+        log_line("native_outer SSR unavailable for this session; primary small bank retained with original SSR resources");
     }
     NativeOuterBindings bindings;
     void* target=nullptr;void* second=nullptr;
@@ -779,8 +786,11 @@ void renderHook(void* unknown, bool laterPass) {
     auto* savedNativeExpected=nativeOuterExpected;
     auto* savedNativeSource=nativeOuterSource;
     nativeOuterExpected=nullptr;nativeOuterSource=nullptr;
-    if(((nativeOuterOptIn&&!nativeOuterFailed)||nativeUploadBatchOptIn)&&!insideHook&&installed.load()&&xr_quad_active()&&caller==base+0xcd1763)
-        nativeOuterExpected=*address<ViewSnapshot*>(0x1a51370);
+    if(((nativeOuterOptIn&&!nativeOuterFailed)||nativeUploadBatchOptIn||nativeUploadOuterOptIn)&&!insideHook&&installed.load()&&xr_quad_active()&&caller==base+0xcd1763){
+        auto* expected=*address<ViewSnapshot*>(0x1a51370);
+        if(readable(expected,sizeof(*expected))&&expected->eye_index>=0&&expected->eye_index<=1)
+            nativeOuterExpected=expected;
+    }
     const bool profileOuterGpu=profileContext&&renderProfile.gpu_start(profileContext,profileEye);
     ProfileScope outerProfile(profile_eye(ProfileSlot::outer0,profileEye),profileContext!=nullptr);
     StereoAuditScope outerAudit(profileContext?stereo_audit_eye(false,profileEye):StereoAuditPass::none);
@@ -1014,10 +1024,13 @@ bool engine_start(ID3D11DeviceContext* context) {
     wchar_t auditDirectory[32768]{};const auto auditDirectoryLength=GetEnvironmentVariableW(L"LMU_QV_STEREO_AUDIT_DIR",auditDirectory,32768);
     bool auditRequested=diagnostics_enabled()&&!stereoTiming&&auditLength==1&&auditSetting[0]=='1'&&auditDirectoryLength&&auditDirectoryLength<32768;
     char uploadSetting[8]{};nativeUploadOptIn=!stereoTiming&&GetEnvironmentVariableA("LMU_QV_CPU_UPLOAD_REUSE",uploadSetting,sizeof(uploadSetting))==1&&uploadSetting[0]=='1';nativeUploadReuse.reset();
+    char outerUploadSetting[8]{};nativeUploadOuterOptIn=!stereoTiming&&GetEnvironmentVariableA("LMU_QV_CPU_OUTER_REUSE",outerUploadSetting,sizeof(outerUploadSetting))==1&&outerUploadSetting[0]=='1';
+    if(nativeUploadOuterOptIn)nativeUploadOptIn=true;
+    if(nativeUploadOuterOptIn&&auditRequested){auditRequested=false;log_line("cpu_outer_reuse: stereo audit/proof disabled; ordinary render profiling remains available");}
     char batchSetting[8]{};nativeUploadBatchOptIn=!stereoTiming&&GetEnvironmentVariableA("LMU_QV_CPU_UPLOAD_BATCH",batchSetting,sizeof(batchSetting))==1&&batchSetting[0]=='1';
     batchFailureLogged=0;batchFailureMessages=0;
-    if(nativeUploadBatchOptIn){nativeUploadOptIn=false;if(auditRequested){auditRequested=false;log_line("cpu_upload_batch: draw audit/proof disabled for this run; ordinary render profiling remains available");}}
-    if(stereoVrsMode){auditRequested=false;nativeUploadOptIn=false;nativeUploadBatchOptIn=false;}
+    if(nativeUploadBatchOptIn){nativeUploadOptIn=false;nativeUploadOuterOptIn=false;if(auditRequested){auditRequested=false;log_line("cpu_upload_batch: draw audit/proof disabled for this run; ordinary render profiling remains available");}}
+    if(stereoVrsMode){auditRequested=false;nativeUploadOptIn=false;nativeUploadBatchOptIn=false;nativeUploadOuterOptIn=false;}
     if(std::strcmp(mode,"quad") && !stereoTiming && !stereoVrsMode) {log_line("engine: trace mode; no native hooks");return true;}
     base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
     if(!correctDiskBuild() || !matches(0xd58a70,render_anchor) ||
@@ -1032,6 +1045,14 @@ bool engine_start(ID3D11DeviceContext* context) {
     char nativeOptIn[8]{};
     const auto nativeLength=GetEnvironmentVariableA("LMU_QV_NATIVE_OUTER",nativeOptIn,sizeof(nativeOptIn));
     nativeOuterOptIn=!stereoVrsMode&&!stereoTiming&&nativeLength==1&&nativeOptIn[0]=='1';nativeOuterFailed=false;
+    char ssrOptIn[8]{};
+    nativeOuterSsrOptIn=nativeOuterOptIn&&GetEnvironmentVariableA("LMU_QV_OUTER_SSR",ssrOptIn,sizeof(ssrOptIn))==1&&ssrOptIn[0]=='1';
+    if(nativeOuterSsrOptIn)for(const auto& anchor:native_outer_ssr_anchors)if(!matches(anchor.rva,anchor.bytes)){
+        nativeOuterSsrOptIn=false;
+        log_line("engine: SSR code anchor mismatch; original SSR retained with primary outer reduction");
+        break;
+    }
+    if(nativeOuterSsrOptIn)log_line("engine: experimental outer SSR reduction requested; guarded resource bank; focus and PPFX retained");
     nativeQuadSubmissionBlocked=false;
     char runtimeSetting[8]{};GetEnvironmentVariableA("LMU_QV_USE_RUNTIME_SETTINGS",runtimeSetting,sizeof(runtimeSetting));
     nativeRuntimeSettings=!stereoVrsMode&&!stereoTiming&&!std::strcmp(runtimeSetting,"1");nativeOuterSeparateBanks=false;
@@ -1138,11 +1159,13 @@ bool engine_start(ID3D11DeviceContext* context) {
     if((nativeUploadOptIn||nativeUploadBatchOptIn)&&matches(nativeUploadRva,nativeUploadAnchor)&&matches(0x5b602f,uploadCall)&&matches(0x5c3f20,uploadBindAnchor)){
         if(MH_CreateHook(address<void>(nativeUploadRva),reinterpret_cast<void*>(&nativeUploadHook),reinterpret_cast<void**>(&nativeUploadOriginal))==MH_OK){
             if(MH_EnableHook(address<void>(nativeUploadRva))==MH_OK){nativeUploadHooked=true;
-                log_line(nativeUploadBatchOptIn?"cpu_upload_batch enabled: outer/focus opaque group 31; unchanged-upload filtering + adaptive small-CB batching; large CBs stay native; native shaders/draws retained; experimental":"cpu_upload_reuse enabled: focus opaque group 31; byte-identical native VS constants only; all draws/bindings retained; experimental");}
+                log_line(nativeUploadBatchOptIn?"cpu_upload_batch enabled: outer/focus opaque group 31; unchanged-upload filtering + adaptive small-CB batching; large CBs stay native; native shaders/draws retained; experimental":
+                    nativeUploadOuterOptIn?"cpu_upload_reuse enabled: outer/focus opaque group 31; reuse within each group only; native preparation/draws/bindings retained; experimental":
+                    "cpu_upload_reuse enabled: focus opaque group 31; byte-identical native VS constants only; all draws/bindings retained; experimental");}
             else MH_RemoveHook(address<void>(nativeUploadRva));
         }
     }
-    if(nativeUploadOptIn&&!nativeUploadHooked){nativeUploadOptIn=false;log_line("cpu_upload_reuse unavailable: native code anchor/hook mismatch; ordinary rendering retained");}
+    if(nativeUploadOptIn&&!nativeUploadHooked){nativeUploadOptIn=false;nativeUploadOuterOptIn=false;log_line("cpu_upload_reuse unavailable: native code anchor/hook mismatch; ordinary rendering retained");}
     if(nativeUploadBatchOptIn&&!nativeUploadHooked){nativeUploadBatchOptIn=false;nativeUploadBatch.reset();log_line("cpu_upload_batch unavailable: native code anchor/hook mismatch; native uploads retained");}
     char profileSetting[8]{};GetEnvironmentVariableA("LMU_QV_PROFILE",profileSetting,sizeof(profileSetting));
     const bool profiling=diagnostics_enabled()&&!stereoTiming&&!std::strcmp(profileSetting,"1")&&benchmarkPath.empty()&&timingTrigger.empty();
@@ -1164,12 +1187,13 @@ void engine_stop() {
     if(nativePrepareHooked){MH_DisableHook(address<void>(nativePrepareRva));MH_RemoveHook(address<void>(nativePrepareRva));nativePrepareHooked=false;}
     {std::lock_guard<std::recursive_mutex> uploadLock(nativeUploadMutex);
     const bool uploadWasEnabled=nativeUploadOptIn.exchange(false),batchWasEnabled=nativeUploadBatchOptIn.exchange(false);
+    nativeUploadOuterOptIn=false;
     nativeUploadBatch.end(); // An active scope restores on its owner before trampoline removal.
     if(nativeUploadHooked){MH_DisableHook(address<void>(nativeUploadRva));MH_RemoveHook(address<void>(nativeUploadRva));nativeUploadHooked=false;}
-    if(uploadWasEnabled&&diagnostics_enabled()){const auto& c=nativeUploadReuse.counters();char line[384]{};std::snprintf(line,sizeof(line),"cpu_upload_reuse summary examined=%llu skipped=%llu bytes_skipped=%llu learned=%llu aliases=%llu invalidated=%llu; counters are not a frametime benchmark",static_cast<unsigned long long>(c.examined),static_cast<unsigned long long>(c.skipped),static_cast<unsigned long long>(c.bytesSkipped),static_cast<unsigned long long>(c.learned),static_cast<unsigned long long>(c.aliased),static_cast<unsigned long long>(c.invalidated));log_line(line);}
+    if(uploadWasEnabled&&diagnostics_enabled()){const auto& c=nativeUploadReuse.counters();char line[448]{};std::snprintf(line,sizeof(line),"cpu_upload_reuse summary examined=%llu skipped=%llu bytes_skipped=%llu learned=%llu aliases=%llu invalidated=%llu topology_checks=%llu; native preparation retained; counters are not a frametime benchmark",static_cast<unsigned long long>(c.examined),static_cast<unsigned long long>(c.skipped),static_cast<unsigned long long>(c.bytesSkipped),static_cast<unsigned long long>(c.learned),static_cast<unsigned long long>(c.aliased),static_cast<unsigned long long>(c.invalidated),static_cast<unsigned long long>(c.topologyChecks));log_line(line);}
     if(batchWasEnabled)logUploadBatchStats("summary");
     selectedUploadCache=nullptr;selectedUploadContext=nullptr;nativeUploadReuse.reset();nativeUploadBatch.reset();}
-    nativeOuterOptIn=false;
+    nativeOuterOptIn=false;nativeOuterSsrOptIn=false;
     for(auto& bank:nativeOuterBanks)if(!bank.reset())log_line("native_outer teardown on different thread; native bank retained until process exit");
     if(!installed.exchange(false)) {
         renderProfile.shutdown();

@@ -14,7 +14,7 @@ Use Windows PowerShell with either:
   including the Windows SDK and x64 MSVC tools. `build-msvc.cmd` finds Visual
   Studio through `vswhere` and initializes the x64 compiler environment.
 - A Windows x64 MinGW-w64 toolchain with `gcc.exe`, `g++.exe` and `windres.exe`
-  on `PATH`. Release 0.1.1 was built with LLVM-MinGW 20260826 UCRT x64;
+  on `PATH`. Release 0.2.0 was built with LLVM-MinGW 20260826 UCRT x64;
   the MSVC build path is maintained but was not executed for this release.
 
 The launcher also needs the .NET Framework x64 C# compiler at
@@ -51,7 +51,7 @@ service and GUI layout tests, writes layout artifacts under `mod/build/gui-qa`,
 and produces `mod/build/LMU-QuadView-Launcher.exe` plus its `.exe.config`.
 Packaging requires both builds and the native stereo-check executable; it does
 not compile missing outputs. The default ZIP name is derived from `VERSION`
-(`dist/LMU-Quad-View-Mod-0.1.1.zip` for this release). Packaging refuses to overwrite
+(`dist/LMU-Quad-View-Mod-0.2.0.zip` for this release). Packaging refuses to overwrite
 an existing archive; use a new destination for a repeat verification:
 
 ```powershell
@@ -74,6 +74,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Focus-offset CLI tests failed' }
 ```
 
 ## Find the relevant code
+
+For the opt-in performance branch controls, also run
+`powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\mod\tests\performance_launch_test.ps1`.
+This checks launch configuration without starting the game. See
+[PERFORMANCE-EXPERIMENT.md](PERFORMANCE-EXPERIMENT.md) for scope, usage and pending
+headset validation.
 
 | Area | Start here |
 | --- | --- |
