@@ -48,6 +48,10 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "$test tests failed" }
     }
     foreach ($optimization in @('O0','O2')) {
+        & g++ -std=c++17 "-$optimization" -ffp-contract=off -Wall -Wextra -Wpedantic -Werror -static tests/native_stereo_transform_test.cpp -o "build/native_stereo_transform_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native transform $optimization compilation failed" }
+        & ".\build\native_stereo_transform_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native transform $optimization tests failed" }
         & g++ -std=c++17 "-$optimization" -Wall -Wextra -Wpedantic -Werror -static tests/native_stereo_owner_plan_test.cpp -o "build/native_stereo_owner_plan_test_${optimization}.exe"
         if ($LASTEXITCODE -ne 0) { throw "Native owner plan $optimization compilation failed" }
         & ".\build\native_stereo_owner_plan_test_${optimization}.exe"
@@ -61,6 +65,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Native classifier capture compilation failed' }
     & .\build\native_stereo_classify_capture_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native classifier capture tests failed' }
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/native_stereo_transform_audit_test.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/native_stereo_transform_audit_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native transform audit compilation failed' }
+    & .\build\native_stereo_transform_audit_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native transform audit tests failed' }
     & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party tests/stereo_audit_test.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/stereo_audit_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Stereo audit tests compilation failed' }
     & .\build\stereo_audit_test.exe

@@ -616,11 +616,23 @@ int nativePrepareHook(void* shader,void* view,void* mesh,std::uint32_t flags,boo
     // original preparation and forwards its exact result; no setup is skipped.
     const bool known=caller==base+0x51f67e||caller==base+0x51f5c4;
     const StereoNativePrepareInfo preparation{shader, flags, reset, readable};
-    const auto token = known
-        ? stereo_audit_native_prepare_begin(mesh, &preparation)
-        : StereoNativePrepareToken{};
-    const int result=nativePrepareOriginal(shader,view,mesh,flags,reset);
-    stereo_audit_native_prepare_end(token);return result;
+    struct Tokens {StereoNativePrepareToken preparation;StereoNativeTransformToken transform;};
+    return invoke_native_stereo_transform(
+        [&](unsigned entry){
+            Tokens tokens;
+            if(known){
+                const StereoNativeTransformInfo info{
+                    {shader,view,mesh,address<void>(0x1b13630),flags,reset},readable};
+                tokens.transform=stereo_audit_native_transform_begin(info,entry);
+                tokens.preparation=stereo_audit_native_prepare_begin(mesh,&preparation);
+            }
+            return tokens;
+        },
+        [&]{return nativePrepareOriginal(shader,view,mesh,flags,reset);},
+        [](const Tokens& tokens,unsigned post){
+            stereo_audit_native_transform_end(tokens.transform,post);
+            stereo_audit_native_prepare_end(tokens.preparation);
+        });
 }
 void nativeUploadHook(void* cache,void* device,ID3D11DeviceContext* context,void* bindings){
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);

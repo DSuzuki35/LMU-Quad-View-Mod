@@ -125,6 +125,18 @@ struct NativePrepareRecord {
 };
 std::vector<NativePassRecord> nativePasses;
 std::vector<NativePrepareRecord> nativePreparations;
+struct NativeTransformRecord {
+  unsigned slot=0,entryMxcsr=0,postMxcsr=0;
+  uint64_t generation=0;
+  bool ended=false;
+  NativeStereoTransformSnapshot pre,post;
+  NativeStereoTransformObserved actual;
+};
+constexpr unsigned maxTransformsPerSlot=128;
+std::array<NativeTransformRecord,framesWanted*4*maxTransformsPerSlot> nativeTransforms;
+std::array<unsigned,framesWanted*4> transformAttempts{};
+unsigned transformCount=0,transformDrops=0,transformExcludedViews=0,transformMissingViews=0;
+uint64_t transformScopeEpoch=0;
 struct NativeClassifyRecord {
   unsigned slot = 0;
   uint64_t generation = 0;
@@ -159,6 +171,7 @@ void reset_native_capture() {
   nativeDiagnosticsFailed = false;
   nativePasses.clear();
   nativePreparations.clear();
+  transformAttempts={};transformCount=transformDrops=transformExcludedViews=transformMissingViews=0;
   nativeObjects.clear();
   nativeMeshes.clear();
   nativeClassifications.clear();
@@ -1051,6 +1064,28 @@ void write_native_classification(std::ostringstream &out) {
   out << "]}";
   out.precision(priorPrecision);
 }
+void write_native_transforms(std::ostringstream& out) {
+  out<<",\"native_transforms\":{\"scheduling_eligible\":false,\"attempts\":"<<transformCount
+     <<",\"dropped\":"<<transformDrops<<",\"excluded_views\":"<<transformExcludedViews
+     <<",\"missing_expected_views\":"<<transformMissingViews
+     <<",\"scope\":\"bounded original-invocation VS c0-c8/c16-c19 bit-exact comparison; not a pass replacement\",\"records\":[";
+  for(unsigned i=0;i<transformCount;++i){
+    if(i)out<<',';
+    const auto& r=nativeTransforms[i];
+    NativeStereoTransformComparison comparison;
+    if(r.ended)comparison=compare_native_stereo_transform(r.pre,r.post,r.actual,r.entryMxcsr,r.postMxcsr);
+    out<<"{\"slot\":"<<r.slot<<",\"ended\":"<<(r.ended?"true":"false")
+       <<",\"available\":"<<(comparison.available?"true":"false")
+       <<",\"reason\":"<<quoted(comparison.reason)
+       <<",\"bytes_read\":"<<(r.pre.bytesRead+r.post.bytesRead+r.actual.bytesRead)
+       <<",\"compared_scalars\":"<<comparison.comparedScalars
+       <<",\"mismatched_scalars\":"<<comparison.mismatchedScalars;
+    if(comparison.mismatchedScalars)out<<",\"first_mismatch_register\":"<<comparison.firstMismatchRegister
+                                      <<",\"first_mismatch_component\":"<<comparison.firstMismatchComponent;
+    out<<'}';
+  }
+  out<<"]}";
+}
 void save_impl(const char* reason){
     NativeStereoFpGuard defaultFp(true);
     if(!capturing)return;capturing=false;pairProof.finish();
@@ -1072,7 +1107,7 @@ void save_impl(const char* reason){
         out<<"],\"layout\":"<<r.layout<<",\"layout_known\":"<<r.layoutKnown<<",\"instance_slots\":"<<r.instanceSlots<<",\"layout_steps\":"<<r.layoutSteps<<",\"vertex_signature\":"<<r.vertexSignature<<",\"index\":["<<r.index.id<<','<<r.index.version<<','<<r.indexFormat<<','<<r.indexOffset<<"],\"topology\":"<<r.topology<<",\"buffer_epoch\":"<<r.bufferEpoch<<",\"ps_srv_signature\":"<<r.pixelResources<<",\"ps_sampler_signature\":"<<r.pixelSamplers<<",\"predicate\":["<<r.predicate<<','<<r.predicateValue<<"],\"cb\":[";
         for(unsigned i=0;i<r.constants.size();++i){if(i)out<<',';out<<'['<<r.constants[i].id<<','<<r.constants[i].version<<']';}
         out<<"],\"target_signature\":"<<r.targetSignature<<",\"rt\":["<<r.rtWidth<<','<<r.rtHeight<<','<<r.rtFormat<<','<<r.rtSamples<<','<<r.rtCount<<"],\"blend\":"<<r.blend<<",\"class_instances\":"<<r.classes<<",\"api_ticks\":"<<r.apiTicks<<",\"snapshot_ticks\":"<<r.snapshotTicks<<",\"native_mesh\":"<<r.nativeMesh<<",\"native_prepare_ticks\":"<<r.nativeBindTicks<<",\"native_to_draw_ticks\":"<<r.nativePrepareTicks<<",\"active_queries\":"<<r.activeQueries<<",\"active_query_mask\":"<<r.activeQueryMask<<",\"proof_ticks\":"<<r.proofTicks<<'}';}
-    out<<']';write_native_capture(out);write_native_classification(out);resourceTrace.write(out);const auto& proof=pairProof.result();
+    out<<']';write_native_capture(out);write_native_classification(out);write_native_transforms(out);resourceTrace.write(out);const auto& proof=pairProof.result();
     out<<",\"stereo_pair_proof\":{\"requested\":"<<unsigned(proofRequested)<<",\"status\":"<<quoted(proof.status.c_str())<<",\"reason\":"<<quoted(proof.reason.c_str())<<",\"route\":"<<quoted(proof.route.c_str());
     out<<",\"key\":"<<proof.key<<",\"observed\":"<<proof.observed<<",\"query_skips\":"<<proof.querySkips<<",\"timing_query_overlaps\":"<<proof.timingQueryOverlaps<<",\"opaque_candidates\":"<<proofCandidates<<",\"shader_rejections\":"<<proofShaderRejected;
     out<<",\"eligible_draws\":["<<proofEligible[0]<<','<<proofEligible[1]<<"],\"used_sampler_masks\":["<<proof.samplerSlots[0]<<','<<proof.samplerSlots[1]<<"],\"width\":"<<proof.width<<",\"height\":"<<proof.height<<",\"reference_depth_format\":"<<proof.depthFormat<<",\"native_cpu_preparation_shared\":false";
@@ -1108,6 +1143,47 @@ void cleanup_factories(){
 }
 void cleanup(){cleanup_methods();cleanup_factories();}
 } // namespace
+StereoNativeTransformToken stereo_audit_native_transform_begin(
+    const StereoNativeTransformInfo& info,unsigned entryMxcsr) noexcept {
+  NativeStereoFpGuard preserve;
+  if(!enabled.load(std::memory_order_relaxed)||!capturing.load(std::memory_order_relaxed)||
+     GetCurrentThreadId()!=owner.load(std::memory_order_relaxed)||activeSlot<0||
+     activeSlot>=int(framesWanted*4)||group!=31||suspended)return {};
+  try {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if(!enabled||!capturing)return {};
+    if(!expectedClassifyMainView||expectedClassifyGeneration!=nativeGeneration){++transformMissingViews;return {};}
+    if(info.args.view!=expectedClassifyMainView){++transformExcludedViews;return {};}
+    const unsigned slot=unsigned(activeSlot);
+    if(transformAttempts[slot]>=maxTransformsPerSlot||transformCount>=nativeTransforms.size()){
+      ++transformDrops;return {};
+    }
+    ++transformAttempts[slot];
+    const unsigned index=transformCount++;
+    auto& record=nativeTransforms[index];record={};
+    record.slot=slot;record.generation=nativeGeneration;record.entryMxcsr=entryMxcsr;
+    Suspend pause;
+    record.pre=capture_native_stereo_transform(info.args,info.readable);
+    return {true,index,slot,nativeGeneration,transformScopeEpoch,info};
+  } catch(...) {return {};}
+}
+void stereo_audit_native_transform_end(const StereoNativeTransformToken& token,unsigned postMxcsr) noexcept {
+  NativeStereoFpGuard preserve;
+  if(!token.entered||GetCurrentThreadId()!=owner.load(std::memory_order_relaxed)||suspended)return;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if(!enabled||!capturing||token.generation!=nativeGeneration||token.scopeEpoch!=transformScopeEpoch||activeSlot!=int(token.slot)||
+       group!=31||token.index>=transformCount)return;
+    auto& record=nativeTransforms[token.index];
+    if(record.ended||record.generation!=token.generation||record.slot!=token.slot)return;
+    record.ended=true;record.postMxcsr=postMxcsr;
+    if(!record.pre.complete)return;
+    Suspend pause;
+    record.post=capture_native_stereo_transform(token.invocation.args,token.invocation.readable);
+    if(record.post.complete)
+      record.actual=capture_native_stereo_transform_constants(token.invocation.args.vsShadow,token.invocation.readable);
+  } catch(...) {}
+}
 bool stereo_audit_enabled(){return enabled.load(std::memory_order_relaxed);}
 void stereo_audit_native_classify_hook_available(bool available) noexcept {
   classifyHookAvailable = available;
@@ -1292,6 +1368,7 @@ StereoAuditToken stereo_audit_begin(StereoAuditPass pass, const void* expectedMa
   sawScene = true;
   expectedClassifyMainView = expectedMainView;
   expectedClassifyGeneration = nativeGeneration;
+  ++transformScopeEpoch;
   return {true, unsigned(activeSlot), ticks(), nativeGeneration};
 }
 void stereo_audit_end(StereoAuditToken &token) {

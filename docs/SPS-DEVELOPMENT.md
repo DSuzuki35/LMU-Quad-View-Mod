@@ -1,8 +1,10 @@
 # Single-pass stereo development
 
-This is work toward a future 0.1.1 implementation, not a claim that the game
-currently renders in single-pass stereo. The released 0.1.0 path still executes
-native eye rendering and the two additional focus scene traversals.
+This branch is research toward possible SPS in 0.2.0, not a claim that the game
+currently renders in single-pass stereo. It still has its historical 0.1.0 base;
+released main has advanced independently to 0.1.2. Older entries below retain
+their original version targets as historical records. Native eye rendering and
+the two additional focus scene traversals still execute.
 
 ## Goal and acceptance
 
@@ -457,3 +459,79 @@ and is not established for LMU integration. Owner admission does not establish
 candidate visibility, drawable ownership or native scheduling. Every result
 reports `renderingEligible=false`; there is no runtime producer or switch.
 VERSION remains 0.1.0, and native SPS and release 0.1.1 remain unfinished.
+
+## Owned transform constants and original-call comparison (2026-11-02)
+
+The next bounded preparation component owns the numeric output of the ordinary
+native transform helper at RVA 0x565260. It does not replace that helper, its
+caller, material preparation, renderer cache effects, or any draw.
+
+Read-only inspection of the pinned analysis image confirms:
+
+- Preparation RVA 0x5629e0 selects shader flags when the low 31 supplied bits are
+  zero. Effective flag 1 invokes transform preparation after helper 0x5623d0.
+  That helper can still modify bone-related state; it must remain enabled.
+- Ordinary transform selection uses mesh->geometry (+0x80), geometry->owner
+  (+0x130), and the owner's matrix at +0x298. Mesh flag 0x8000 enables multiplying
+  that matrix by the per-eye derived/view matrices. Flag 0x100000 selects an
+  orientation path not modeled here.
+- The view matrix starts at view+0x1dc, eye-position scalars at +0x220, and the
+  derived matrix at +0x3a0. The matrix products use pairwise four-product sums.
+- A nonzero **64-bit** shader+8 enables writing VS registers 4..7 (world), 0..3
+  (derived), 8 (position xyz and zero w), and 16..19 (view). The CPU shadow starts
+  at image RVA 0x1b13630. PS register 15 and native cache effects are outside this
+  comparison; c9..c15 must not be overwritten or treated as transform output.
+
+`native_stereo_transform.hpp` computes these 52 float scalars from owned numeric
+inputs. It rejects nonfinite inputs/intermediates and unsupported MXCSR controls,
+preserves FP state, and returns no partial payload. Separate eye calls own their
+different results. Successful calculation never implies rendering eligibility.
+
+The existing opt-in F8/file-trigger audit now captures a restricted original
+invocation: effective flags exactly 1, reset false, enabled shader, nonnull
+mesh/geometry/owner, no mesh callback and no orientation flag. It compares copied
+before/after inputs and native shadow output only when the input values and
+pointer-chain identities remain stable. It never substitutes the prediction.
+The original signed return and original entry/post FP environments are preserved;
+original exceptions propagate without retry. Numeric evaluation occurs at export.
+
+The `native_transforms` JSON section reports bit-exact agreement/mismatch, refusal
+reasons, compared scalar count, first differing register/component, and bytes
+read. A strict attempt cap of 128 per frame/pass slot permits at most 1,024
+records over the two-frame capture. Non-main views are excluded before that cap.
+Each full invocation copies at most 696 native bytes; no raw addresses are
+serialized. Closed/reopened scopes, capture resets, duplicate end calls and
+shutdown reject stale tokens before reading any invocation pointers.
+
+Owned numeric/capture tests passed with GCC 16 at O0 and O2 (warnings-as-errors,
+FP contraction disabled). The integrated WARP audit test passed with GCC and
+MSVC, including a regression that first reproduced stale reads when the same
+pass slot reopened within one capture. A scope epoch now rejects those tokens.
+The complete MSVC native build/tests passed and produced the DLL. All MSVC
+consumers use /fp:strict, including the final DLL, so the tests and production
+calculation share the floating-point contract. Existing C4459 shadow warnings
+remain in the audit/resource-trace sources; no build errors remain.
+
+Local build notes: the Windows PowerShell 5 wrapper split the /Fe output path
+containing spaces, so validation used the installed VS x64 environment and
+PowerShell 7 to execute the same build-msvc.ps1. The GCC audit check required
+-Wno-misleading-indentation for pre-existing compressed statements; that switch
+was not added to the repository build. Neither issue required changing gameplay
+code. Independent review checked native offsets/math and lifecycle constraints;
+both reported issues (scope identity and shared MSVC strict mode) are addressed.
+
+### Next headset-PC test
+
+Use an **awake** headset and an on-track scene with diagnostics/stereo audit
+enabled, then capture two frames via Ctrl+Alt+F8 or `logs/stereo-audit.request`.
+Check `native_transforms`: distinguish available matches, actual mismatches,
+unsupported-domain refusals and dropped attempts. Slots 2/3 and 6/7 are the focus
+eyes; outer-only or zero-available captures cannot validate this focus subset.
+Do not benchmark with this audit enabled. No live transform match or performance
+gain has been measured for this change. A Pimax is unnecessary for the owned
+tests, but the intended Pimax/runtime setup still needs an eventual live check.
+
+This remains a research-branch diagnostic build, not a replacement for release
+0.1.2; crop/motion/launcher work from main has not been merged into it. Before
+replacing draws, resolve candidate/resource lifetimes, the remaining preparation
+effects, per-eye visibility/order, and the native consumer schedule.

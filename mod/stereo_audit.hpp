@@ -4,7 +4,19 @@
 #include <cstdint>
 #include <cstddef>
 #include "native_stereo_classify_capture.hpp"
+#include "native_stereo_transform.hpp"
+#define LMU_STEREO_TRANSFORM_AUDIT 1
 namespace lmuqv {
+struct StereoNativeTransformInfo {
+    NativeStereoTransformArgs args;
+    bool(*readable)(const void*,size_t)=nullptr;
+};
+struct StereoNativeTransformToken {
+    bool entered=false;unsigned index=0,slot=0;uint64_t generation=0,scopeEpoch=0;
+    StereoNativeTransformInfo invocation;
+};
+StereoNativeTransformToken stereo_audit_native_transform_begin(const StereoNativeTransformInfo&,unsigned entryMxcsr) noexcept;
+void stereo_audit_native_transform_end(const StereoNativeTransformToken&,unsigned postMxcsr) noexcept;
 inline constexpr std::array<unsigned,25> stereo_audit_vtable{12,13,20,21,38,39,40,41,42,14,15,48,47,46,12,15,13,16,17,18,11,58,27,28,57};
 enum class StereoAuditPass:unsigned {outer0,outer1,focus0,focus1,none};
 inline StereoAuditPass stereo_audit_eye(bool focus,unsigned eye){return StereoAuditPass((focus?2:0)+eye);}
