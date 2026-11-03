@@ -18,6 +18,11 @@ headset and joystick compatibility still needs tester validation.
 
 ## Dynamic center FOV (unreleased test build)
 
+Quad launches bypass OpenGridXR in the game process because its additional
+stereo crop can misalign outer and focus geometry. Its installed profiles are
+preserved; its crop, mask and enhancements are unavailable in these sessions.
+Native stereo VRS keeps the inherited OpenGridXR preference.
+
 In **Rendering**, scroll to **Enable dynamic center FOV (experimental)**.
 Minimum and Maximum are percentages of your configured baseline Focus region:
 defaults 70–100%, allowed 25–200%. Both tangent-space FOV axes scale together,

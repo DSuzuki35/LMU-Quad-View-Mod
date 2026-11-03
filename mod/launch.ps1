@@ -102,6 +102,8 @@ $info.Environment['XR_API_LAYER_PATH'] = $layerPlan.Paths
 $info.Environment['XR_ENABLE_API_LAYERS'] = $layerPlan.Layers
 if ($layerPlan.DisableVariable) { $info.Environment[$layerPlan.DisableVariable]='1' }
 foreach($variable in $layerPlan.DisableVariables){$info.Environment[$variable]='1'}
+# Its upstream stereo crop misaligns native outer and provider focus geometry.
+if($Mode -eq 'quad'){$info.Environment['DISABLE_OPENGRIDXR']='1'}
 $info.Environment['LMU_QV_FOVEATION_MODE'] = $FoveationMode
 $info.Environment['LMU_QV_MODE'] = $Mode
 $info.Environment['LMU_QV_VECTORXR_DIRECT_INPUTS'] = $(if ($Backend -eq 'VectorXR' -and $Mode -eq 'quad') { '1' } else { '0' })
@@ -154,6 +156,7 @@ $run = [pscustomobject]@{
     UseRuntimeSettings=[bool]$UseRuntimeSettings
     Backend=$Backend;FoveationMode=$FoveationMode;ProviderManifest=$layerPlan.ProviderManifest;ProviderName=$layerPlan.ProviderName;ExplicitManifest=$layerPlan.ExplicitManifest
     DisabledImplicitSwitches=$layerPlan.DisableVariables
+    OpenGridXrDisabled=($info.Environment['DISABLE_OPENGRIDXR'] -eq '1')
     EnabledLayers=$layerPlan.Layers
     OuterShadingRate=$OuterShadingRate
     OuterPixelsPercent=$OuterPixelsPercent;FocusPixelsPercent=$FocusPixelsPercent

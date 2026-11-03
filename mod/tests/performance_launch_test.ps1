@@ -16,6 +16,16 @@ $keys=@('LMU_QV_OUTER_SSR','LMU_QV_CPU_OUTER_REUSE','LMU_QV_CPU_UPLOAD_REUSE')
 $saved=@{}
 foreach($key in $keys){$saved[$key]=[Environment]::GetEnvironmentVariable($key,'Process')}
 try {
+    $savedGrid=[Environment]::GetEnvironmentVariable('DISABLE_OPENGRIDXR','Process')
+    try {
+        [Environment]::SetEnvironmentVariable('DISABLE_OPENGRIDXR',$null,'Process')
+        foreach($mode in @('quad','trace','stereo-timing')) {
+            $grid=& $fixture -Mode $mode
+            $actual=$grid.Info.Environment['DISABLE_OPENGRIDXR']
+            if(($mode -eq 'quad' -and $actual -ne '1') -or ($mode -ne 'quad' -and ![string]::IsNullOrEmpty($actual))){throw "OpenGridXR isolation incorrect for $mode"}
+            if([Environment]::GetEnvironmentVariable('DISABLE_OPENGRIDXR','Process')){throw 'OpenGridXR isolation changed parent'}
+        }
+    } finally {[Environment]::SetEnvironmentVariable('DISABLE_OPENGRIDXR',$savedGrid,'Process')}
     foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,'1','Process')}
     $default=& $fixture -Mode quad
     foreach($key in $keys){if($default.Info.Environment[$key] -ne '0'){throw "Inherited optimization survived defaults: $key"}}

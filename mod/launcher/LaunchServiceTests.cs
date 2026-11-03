@@ -29,6 +29,19 @@ class LaunchServiceTests {
             Check((string)layer["library_path"]==dll,"Explicit DLL path changed");
             Check(File.ReadAllText(manifest)==original,"Installed manifest modified");
             var settings=new LauncherSettings {GameDirectory=Path.Combine(root,"game's folder"),Backend="QVFR",FoveationMode="fixed",DebugFocus=true,NativeOuterResolution=false,OuterBlur=1.25m};
+            var originalGrid=Environment.GetEnvironmentVariable("DISABLE_OPENGRIDXR");
+            try {
+                Environment.SetEnvironmentVariable("DISABLE_OPENGRIDXR",null);
+                foreach(var backend in new[]{"Native","QVFR","VectorXR","VRS"}) {
+                    var gridSettings=new LauncherSettings {GameDirectory=settings.GameDirectory,Backend=backend};
+                    var gridInfo=LaunchService.MakeStartInfo(root,gridSettings,plan,Path.Combine(root,"grid.log"));
+                    Check(gridInfo.EnvironmentVariables["DISABLE_OPENGRIDXR"]==(backend=="VRS"?null:"1"),"OpenGridXR crop isolation incorrect for "+backend);
+                    Check(Environment.GetEnvironmentVariable("DISABLE_OPENGRIDXR")==null,"OpenGridXR isolation changed parent environment");
+                }
+                Environment.SetEnvironmentVariable("DISABLE_OPENGRIDXR","1");
+                var inheritedGrid=LaunchService.MakeStartInfo(root,new LauncherSettings {GameDirectory=settings.GameDirectory,Backend="VRS"},plan,Path.Combine(root,"grid.log"));
+                Check(inheritedGrid.EnvironmentVariables["DISABLE_OPENGRIDXR"]=="1","VRS must preserve inherited OpenGridXR disable preference");
+            } finally { Environment.SetEnvironmentVariable("DISABLE_OPENGRIDXR",originalGrid); }
             Environment.SetEnvironmentVariable("LMU_QV_VRS_EXCLUSIVE","1");
             Environment.SetEnvironmentVariable("LMU_QV_FOCUS_OFFSET_X_PERCENT","49");
             Environment.SetEnvironmentVariable("LMU_QV_CROP_WIDTH_PERCENT","29");
@@ -51,6 +64,7 @@ class LaunchServiceTests {
             Directory.CreateDirectory(Path.Combine(root,"build"));File.WriteAllBytes(Path.Combine(root,"build","lmu_quadview.dll"),new byte[]{4,5,6});
             var prepared=metadataFactory.Invoke(null,new object[]{root,settings,plan,info,Path.Combine(root,"quad.log")});
             var savedMetadata=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(new JavaScriptSerializer().Serialize(prepared));
+            Check((bool)savedMetadata["OpenGridXrDisabled"],"OpenGridXR isolation missing from run metadata");
             Check(Convert.ToDecimal(savedMetadata["CropWidthPercent"])==75.5m&&Convert.ToDecimal(savedMetadata["CropHeightPercent"])==42.25m,"Crop missing from run metadata");
             Check(Convert.ToDecimal(savedMetadata["FocusOffsetXPercent"])==-12.5m&&Convert.ToDecimal(savedMetadata["FocusOffsetYPercent"])==50,"Offsets missing from run metadata");
             Check(!info.UseShellExecute&&info.Arguments=="+XR"&&info.FileName==Path.Combine(settings.GameDirectory,"Le Mans Ultimate.exe"),"Must launch executable directly");

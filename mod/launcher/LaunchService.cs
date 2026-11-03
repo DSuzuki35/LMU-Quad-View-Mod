@@ -161,6 +161,11 @@ namespace LmuQuadViewLauncher {
             if(!String.IsNullOrEmpty(plan.DisableVariable)) environment[plan.DisableVariable]="1";
             foreach(var variable in plan.DisableVariables)environment[variable]="1";
             bool vrs=settings.Backend=="VRS";
+            // OpenGridXR crops the stereo FOV above this adapter. The native
+            // outer scene then uses that crop while focus rendering/submission
+            // uses the provider FOV, producing misaligned geometry. Isolate
+            // quad launches only; installed profiles and native stereo stay intact.
+            if(!vrs)environment["DISABLE_OPENGRIDXR"]="1";
             if(settings.Backend=="VectorXR"||vrs)environment["DISABLE_XR_APILAYER_MBUCCHIA_toolkit"]="1";
             environment["LMU_QV_MODE"]=vrs?"vrs":"quad";environment["LMU_QV_USE_RUNTIME_SETTINGS"]=vrs?"0":"1";
             environment["LMU_QV_FOVEATION_MODE"]=settings.FoveationMode;environment["LMU_QV_LOG"]=settings.DiagnosticsEnabled?log:"";
@@ -244,7 +249,7 @@ namespace LmuQuadViewLauncher {
             return new {Status="prepared",Pid=(int?)null,Mode=settings.Backend=="VRS"?"vrs":"quad",Backend=settings.Backend,FoveationMode=settings.FoveationMode,VrsPeripheralRate=settings.VrsPeripheralRate,
                 Exe=info.FileName,ExeSHA256=SupportedExecutableHash,LayerSHA256=HashFile(System.IO.Path.Combine(root,@"build\lmu_quadview.dll")),
                 ProviderManifest=plan.ProviderPath,ProviderName=plan.ProviderName,ProviderSHA256=plan.Library==null?null:HashFile(plan.Library),
-                ExplicitManifest=plan.ExplicitManifest,EnabledLayers=plan.Layers,DisabledImplicitSwitches=plan.DisableVariables,Log=log,
+                ExplicitManifest=plan.ExplicitManifest,EnabledLayers=plan.Layers,DisabledImplicitSwitches=plan.DisableVariables,OpenGridXrDisabled=info.EnvironmentVariables["DISABLE_OPENGRIDXR"]=="1",Log=log,
                 DiagnosticsEnabled=settings.DiagnosticsEnabled,BenchmarkEnabled=settings.DiagnosticsEnabled&&settings.BenchmarkEnabled,BenchmarkRequested=settings.BenchmarkEnabled,BenchmarkTemplate=settings.BenchmarkTemplate,
                 DebugFocus=settings.DebugFocus,RenderProfiling=settings.RenderProfiling,StereoDrawAudit=info.EnvironmentVariables["LMU_QV_STEREO_AUDIT"]=="1",StereoShaderCapture=info.EnvironmentVariables["LMU_QV_STEREO_SHADER_CAPTURE"]=="1",StereoPairProof=info.EnvironmentVariables["LMU_QV_STEREO_DRAW_PROOF"]=="1",CpuUploadReuse=info.EnvironmentVariables["LMU_QV_CPU_UPLOAD_REUSE"]=="1",CpuUploadBatch=info.EnvironmentVariables["LMU_QV_CPU_UPLOAD_BATCH"]=="1",RenderProfileSeconds=settings.RenderProfileSeconds,NativeOuterResolution=info.EnvironmentVariables["LMU_QV_NATIVE_OUTER"]=="1",UseRuntimeSettings=settings.Backend!="VRS",
                 CpuOuterReuse=info.EnvironmentVariables["LMU_QV_CPU_OUTER_REUSE"]=="1",OuterSsr=info.EnvironmentVariables["LMU_QV_OUTER_SSR"]=="1",CpuOuterReuseRequested=settings.CpuOuterReuse,OuterSsrRequested=settings.OuterSsr,

@@ -6,6 +6,9 @@ Versions before 1.0 remain experimental and may change compatibility or settings
 
 ## Unreleased - dynamic focus test
 
+- Isolate quad launches from OpenGridXR's additional stereo crop, which can
+  misalign native outer and focus geometry. Preserve installed profiles and VRS.
+- Preserve rendered view metadata across late tracking queries in the same frame.
 - Optional automatic center FOV scaling with configurable min/max and GPU reserve.
 - Fixed resolution; asynchronous GPU feedback with smoothing, hysteresis, scene,
   failure and staleness guards, and a stable scale per display time.

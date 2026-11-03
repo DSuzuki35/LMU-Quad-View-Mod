@@ -58,3 +58,34 @@ provider composition/reprojection. No files are uploaded.
 References: OpenXR xrSyncActions specification and Valve OpenVR public headers.
 https://registry.khronos.org/OpenXR/specs/1.1/man/html/xrSyncActions.html
 https://github.com/ValveSoftware/openvr/blob/master/headers/openvr.h
+
+## Same-frame capture identifies an additional crop conflict
+
+Native LMU run `quad-20261103-095200-f66dcdb6`, PID 43688, captured frame
+4619 with all four images successful (mask 15). The failed preceding run had
+fallen back to OpenComposite after SteamVR reported HmdNotFound at startup;
+this capture is from the subsequent successful native OpenXR start.
+
+The outer image cropped using the recorded runtime focus tangent bounds has
+matching debug border and HUD positions, but vertically displaced cockpit
+geometry compared with the focus image. BMP RGB must be inspected with alpha
+ignored: source alpha is not uniformly opaque and ordinary alpha compositing
+incorrectly makes some car surfaces black in diagnostic previews.
+
+VectorXR logs the layer order VectorXR -> OpenGridXR -> LMU adapter -> QVFR.
+OpenGridXR's installed LMU profile has CropTop=8, CropBottom=21, Enabled=1;
+its live status confirms active cropping in this PID. The adapter sees outer
+vertical projection scale 0.8741776 and zero offset, while LMU's native camera
+has scale 1.231236 and offset -0.1830986. These are exactly the 71% remaining
+height and asymmetric crop: 0.8741776/0.71 and -0.13/0.71. Native outer geometry
+uses the upstream crop; focus rendering and submission use the downstream FOV.
+The old dimension normalization masks the corresponding 3540 -> 2513 height
+change without removing the incompatible FOV change.
+
+The launcher now sets the installed manifest's DISABLE_OPENGRIDXR switch only
+in quad child processes (Native, QVFR, VectorXR). VRS preserves the inherited
+preference. No registry or installed settings are changed. Run metadata exposes
+OpenGridXrDisabled. A regression test failed before the change and verifies
+quad isolation, untouched parent environment and VRS behavior afterwards.
+Headset validation after restarting with this launcher is still required.
+Missing gaze remains separate: QVFR again reported no data after 60 seconds.

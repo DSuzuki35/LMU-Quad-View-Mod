@@ -18,6 +18,10 @@ The physical presence of an eye tracker is not enough if the runtime hides it.
 QVFR mode allows the registered VectorXR layer to load for its independent OSD.
 Keep VectorXR's own Quadviews feature off for LMU when using mbucchia QVFR.
 Configure the overlay in VectorXR; this launcher leaves those preferences alone.
+Quad launches disable OpenGridXR only in the child game process. Its additional
+stereo FOV crop misaligns the native outer scene with the provider's focus view.
+Installed OpenGridXR profiles are preserved; its crop, mask and enhancements
+are unavailable in that quad session. Native stereo VRS retains its preferences.
 Restart LMU after updating the launcher to remove the previous process-local block.
 
 All normal tuning is inside the launcher. Save or Launch writes a managed
