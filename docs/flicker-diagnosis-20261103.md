@@ -42,7 +42,8 @@ moving gaze, fresh caller output, both-eye consistency, failed/invalid late
 queries, different time/space, uncropped FOV, stable dynamic scale, composition
 submission, and next-frame refresh. Existing invalid-FOV tests now explicitly
 exercise failures before the renderer consumes its snapshot. An independent
-review found no important issue. Actual symptom resolution is not yet verified.
+review found no important issue. At this stage actual symptom resolution was
+not yet verified; see the subsequent live validation below.
 
 ## Next capture
 
@@ -87,8 +88,9 @@ in quad child processes (Native, QVFR, VectorXR). VRS preserves the inherited
 preference. No registry or installed settings are changed. Run metadata exposes
 OpenGridXrDisabled. A regression test failed before the change and verifies
 quad isolation, untouched parent environment and VRS behavior afterwards.
-Headset validation after restarting with this launcher is still required.
-Missing gaze remains separate: QVFR again reported no data after 60 seconds.
+At this stage headset validation after restarting was still required.
+Missing gaze remained separate: QVFR again reported no data after 60 seconds.
+The next section records the subsequent validation and recovery.
 
 ## Live validation and eye-tracking recovery
 

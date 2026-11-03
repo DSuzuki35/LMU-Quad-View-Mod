@@ -45,6 +45,7 @@ $files = @{
     'docs/PERFORMANCE.md' = 'docs/PERFORMANCE.md'
     'docs/dynamic-focus-validation.md' = 'docs/dynamic-focus-validation.md'
     'docs/flicker-diagnosis-20261103.md' = 'docs/flicker-diagnosis-20261103.md'
+    'docs/OPENGRIDXR-INTEGRATION.md' = 'docs/OPENGRIDXR-INTEGRATION.md'
     'PORTABLE-DESIGN.md' = 'PORTABLE-DESIGN.md'
     'STEREO-SHADER-CONVERSION.md' = 'STEREO-SHADER-CONVERSION.md'
     'INSTANCED-STEREO-HANDOFF.md' = 'INSTANCED-STEREO-HANDOFF.md'

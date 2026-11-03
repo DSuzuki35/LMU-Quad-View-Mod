@@ -1,9 +1,13 @@
-UNRELEASED DYNAMIC FOCUS TEST BUILD (based on 0.2.0)
+LMU QUAD VIEW MOD — v0.2.1
+
+DYNAMIC CENTER FOV (EXPERIMENTAL)
 Rendering: enable dynamic center FOV and configure min/max (% of baseline)
 and GPU reserve. Defaults: 70/100/2. Resolution remains fixed. Disable render
 profiling for automatic adjustment. See README.md. Headset testing required.
 
-LMU QUAD VIEW MOD — v0.2.0
+Quad launches bypass OpenGridXR to prevent its additional stereo crop from
+misaligning outer and focus images. Installed profiles are preserved.
+See docs/flicker-diagnosis-20261103.md and docs/OPENGRIDXR-INTEGRATION.md.
 
 STEREO VRS (NVIDIA, EXPERIMENTAL)
 Choose Stereo VRS for two native eye views with reduced peripheral shading.

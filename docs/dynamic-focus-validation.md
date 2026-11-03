@@ -1,7 +1,7 @@
 # Dynamic focus test build and log diagnosis
 
-Base: GitHub main 02c0625 (0.2.0), fetched 2026-11-03. Implementation is on
-local branch codex/dynamic-focus-fov. No installed game/provider files changed.
+Base: GitHub main 02c0625 (0.2.0), fetched 2026-11-03. Implementation is included
+in release 0.2.1. The native game executable and provider binaries are unchanged.
 
 ## Supplied log: quad-20261102-183224-1f695136.zip
 
@@ -51,7 +51,9 @@ patch. This build keeps resolution fixed; no live resolution support claimed.
 
 Run mod/build-msvc.cmd and mod/build-launcher.ps1 for full validation.
 Build logs and launcher screenshots remain in the local ignored build outputs.
-No LMU/headset run was performed. Check visual alignment, gaze tracking, transitions,
+No dynamic-FOV-enabled LMU/headset run was performed. Later fixed-FOV hardware
+validation is documented in [the flicker diagnosis](flicker-diagnosis-20261103.md).
+Check visual alignment, gaze tracking, transitions,
 missed frames and measured performance before relying on automatic FOV changes.
 Disjoint GPU timing is shared with benchmark and pauses when render profiling
 or legacy engine GPU timing is armed. Compositor GPU work is not measured.

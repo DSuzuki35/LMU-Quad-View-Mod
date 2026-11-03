@@ -4,17 +4,23 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
-## Unreleased - dynamic focus test
+## 0.2.1 - 2026-11-03
 
 - Isolate quad launches from OpenGridXR's additional stereo crop, which can
   misalign native outer and focus geometry. Preserve installed profiles and VRS.
 - Preserve rendered view metadata across late tracking queries in the same frame.
 - Optional automatic center FOV scaling with configurable min/max and GPU reserve.
+- Show actual per-eye rendered FOV and dynamic scale/state in benchmark overlays.
 - Fixed resolution; asynchronous GPU feedback with smoothing, hysteresis, scene,
   failure and staleness guards, and a stable scale per display time.
 - Share benchmark timing; pause adaptation while other GPU profiling is armed.
 - Accept valid QVFR handle 1 when uniquely identified in the native eye vector.
-- Headset compatibility and performance gains still require hardware testing.
+- Add same-frame four-view capture and a documented OpenGridXR integration handoff.
+- Dream Air SE / SBoys3 / SteamVR / QVFR live validation confirmed aligned,
+  steady images after bypassing OpenGridXR. Gaze recovered after closing the
+  SteamVR dashboard and restarting eye tracking in Pimax Play.
+- Dynamic FOV was off during that hardware test. Its performance benefit and
+  wider headset compatibility remain unverified.
 
 ## 0.2.0 - 2026-11-02
 

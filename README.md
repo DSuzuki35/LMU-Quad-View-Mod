@@ -5,10 +5,10 @@ A free Windows x64 / D3D11 mod that adds two outer and two focus views to
 Quad-Views-Foveated (QVFR) or VectorXR separately to provide quad views on a
 stereo runtime.
 
-**v0.2.0 is an experimental offline build.** Headset and runtime compatibility
+**v0.2.1 is an experimental offline build.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
-Version 0.2.0 retains the **Benchmark** page with Minimal and
+Version 0.2.1 retains the **Benchmark** page with Minimal and
 Detailed in-headset overlays, separate joystick bindings for visibility and
 manual recording, local HTML/CSV/JSON reports, and latest-launch diagnostics.
 Enable Benchmark before launching and leave the launcher open. See
@@ -16,7 +16,7 @@ Enable Benchmark before launching and leave the launcher open. See
 also includes the motion-compensation and mod-owned crop changes below; real
 headset and joystick compatibility still needs tester validation.
 
-## Dynamic center FOV (unreleased test build)
+## Dynamic center FOV (experimental)
 
 Quad launches bypass OpenGridXR in the game process because its additional
 stereo crop can misalign outer and focus geometry. Its installed profiles are
@@ -54,8 +54,14 @@ vertical degrees after crop constraints. Detailed also shows the source frame.
 Updates follow the overlay's existing 5 Hz refresh; menu or failed frames show
 `--` instead of a stale scene FOV. HOLD means another GPU profiler is armed.
 
-This test build also fixes valid QVFR swapchain handle `1` being rejected as a
+Version 0.2.1 also fixes valid QVFR swapchain handle `1` being rejected as a
 placeholder, which could result in zero submitted quad projections.
+
+Live testing on Dream Air SE / SBoys3 / SteamVR / QVFR confirmed aligned and
+steady images after bypassing OpenGridXR. Gaze recovered after closing the
+SteamVR dashboard and restarting eye tracking in Pimax Play. Dynamic FOV was
+off during this test. See the [diagnosis](docs/flicker-diagnosis-20261103.md)
+and [OpenGridXR integration handoff](docs/OPENGRIDXR-INTEGRATION.md).
 
 ## Stereo VRS (experimental)
 
@@ -94,7 +100,7 @@ contributions are welcome. See [the contribution guide](CONTRIBUTING.md).
 
 ## Install and launch
 
-1. Use the complete `LMU-Quad-View-Mod-0.2.0.zip` package. Published builds are listed in [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
+1. Use the complete `LMU-Quad-View-Mod-0.2.1.zip` package. Published builds are listed in [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
 2. Extract the **complete ZIP** to a writable folder outside the LMU installation.
 3. Open **LMU-QuadView-Launcher.exe**. Keep its `.exe.config` file beside it.
 4. In **Setup**, select the LMU game folder. Ensure your headset's OpenXR runtime
