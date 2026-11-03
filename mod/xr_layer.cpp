@@ -107,6 +107,7 @@ struct State {
     XrSession session{};
     XrSystemId system{};
     bool quad=false, vrs=false, running=false, frame=false, shouldRender=false, located=false;
+    bool renderViewsLocked=false; // Rendering, UI and submission share one locate snapshot.
     float vrsWidth=.5f,vrsHeight=.5f;
     lmuqv::VrsFocus vrsFocus[2];
     XrPosef vrsGazePose{};bool vrsTracked=false;
@@ -234,6 +235,7 @@ bool trackAppImages(){return s.pixelEnabled||s.debugFocus||s.focusOwnership;}
 bool heldFocusImages(){for(const auto& pair:s.appChains)if(pair.second.focusLease)return true;return false;}
 void clearFrame() {
     s.frame=false;s.shouldRender=false;s.located=false;s.captures[0]=s.captures[1]=false;
+    s.renderViewsLocked=false;
     s.sceneFocus[0]=s.sceneFocus[1]=false;
     std::fill(std::begin(s.debugDrawn),std::end(s.debugDrawn),false);
 }
@@ -647,6 +649,7 @@ XrResult XRAPI_CALL layerBeginFrame(XrSession session,const XrFrameBeginInfo* in
     // Flush an abandoned/discarded frame before accepting new engine captures.
     bool released=releaseOuters();
     bool hadWait=s.waitPending;
+    s.renderViewsLocked=false;
     s.frame=XR_SUCCEEDED(r)&&s.waitPending&&released;
     if(s.waitPending){s.predictedTime=s.pendingTime;s.framePeriod=s.pendingPeriod;s.shouldRender=s.waitShouldRender;s.waitPending=false;}
     s.located=s.located&&s.locateTime==s.predictedTime;
@@ -692,7 +695,8 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
     }
     if(!count||(cap&&!out))return XR_ERROR_VALIDATION_FAILURE;
     *count=2;if(!cap)return XR_SUCCESS;if(cap<2)return XR_ERROR_SIZE_INSUFFICIENT;
-    s.located=false;
+    const bool preserveRendered=s.frame&&s.renderViewsLocked;
+    if(!preserveRendered)s.located=false;
     XrViewLocateInfo modified=*info;modified.viewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO;
     auto foveated=structure<XrViewLocateFoveatedRenderingVARJO>(XR_TYPE_VIEW_LOCATE_FOVEATED_RENDERING_VARJO);
     foveated.next=info->next;foveated.foveatedRenderingActive=s.eyeTrackingActive?XR_TRUE:XR_FALSE;
@@ -701,7 +705,7 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
     uint32_t runtimeCount=0;XrResult r=next.LocateViews(session,&modified,state,4,&runtimeCount,runtime);
     if(XR_FAILED(r))return r;
     if(runtimeCount!=4)return XR_ERROR_RUNTIME_FAILURE;
-    for(unsigned eye=0;eye<2;++eye)s.fullOuterFov[eye]=runtime[eye].fov;
+    XrFovf fullOuter[2]={runtime[0].fov,runtime[1].fov};
     // Cropped FOV feeds rendering/UI; output is embedded back into fullOuterFov.
     // Translate each freshly located gaze FOV once; keep poses and never clamp to the outer FOV.
     if(!s.rawFovLogged){
@@ -709,7 +713,7 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
         s.rawFovLogged=true;
     }
     // Snapshot once per located display time, including locate-before-begin.
-    if(!s.dynamicScaleLocated||s.dynamicLocateTime!=info->displayTime){
+    if(!preserveRendered&&(!s.dynamicScaleLocated||s.dynamicLocateTime!=info->displayTime)){
         s.dynamicFrameScale=s.dynamicFocus.scale();s.dynamicLocateTime=info->displayTime;s.dynamicScaleLocated=true;
     }
     for(unsigned eye=2;eye<4;++eye){
@@ -724,8 +728,19 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
         logf("Invalid rendered crop FOV; rejecting located views");return XR_ERROR_RUNTIME_FAILURE;
     }
     const auto valid=XR_VIEW_STATE_POSITION_VALID_BIT|XR_VIEW_STATE_ORIENTATION_VALID_BIT;
-    s.located=(state->viewStateFlags&valid)==valid;s.locateTime=info->displayTime;s.locateSpace=info->space;
-    std::copy(std::begin(runtime),std::end(runtime),std::begin(s.views));
+    if(!preserveRendered){
+        s.located=(state->viewStateFlags&valid)==valid;s.locateTime=info->displayTime;s.locateSpace=info->space;
+        std::copy(std::begin(runtime),std::end(runtime),std::begin(s.views));
+        std::copy(std::begin(fullOuter),std::end(fullOuter),std::begin(s.fullOuterFov));
+    }else if(s.frames<10||s.frames%120==0){
+        double fovDelta=0,positionDelta=0;
+        for(unsigned i=0;i<4;++i){
+            const auto& a=s.views[i];const auto& b=runtime[i];
+            fovDelta=(std::max)({fovDelta,double(std::abs(a.fov.angleLeft-b.fov.angleLeft)),double(std::abs(a.fov.angleRight-b.fov.angleRight)),double(std::abs(a.fov.angleUp-b.fov.angleUp)),double(std::abs(a.fov.angleDown-b.fov.angleDown))});
+            positionDelta=(std::max)({positionDelta,double(std::abs(a.pose.position.x-b.pose.position.x)),double(std::abs(a.pose.position.y-b.pose.position.y)),double(std::abs(a.pose.position.z-b.pose.position.z))});
+        }
+        logf("render_views preserved frame=%llu lateLocateFovDeltaRad=%.9g positionDeltaM=%.9g sameTime=%d sameSpace=%d",static_cast<unsigned long long>(s.frames),fovDelta,positionDelta,s.locateTime==info->displayTime,s.locateSpace==info->space);
+    }
     for(unsigned i=0;i<2;++i){out[i].pose=runtime[i].pose;out[i].fov=runtime[i].fov;}
     if(s.frames<10||s.frames%120==0) logf("xrLocateViews mode=quad frame=%llu runtime=%u app=2 begun=%d valid=%d time=%lld",static_cast<unsigned long long>(s.frames),runtimeCount,s.frame,s.located,static_cast<long long>(s.locateTime));
     return r;
@@ -834,6 +849,10 @@ XrResult releaseAppImageNow(XrSwapchain chain,const XrSwapchainImageReleaseInfo*
                (!s.pixelRequireScene||(s.sceneFocus[0]&&s.sceneFocus[1]))&&
                (!s.capture.requested||lmuqv::capture_detail::triggered(s.capture))){
                 s.pixelFrame=s.frames;logf("pixel_stats_begin frame=%llu requireScene=%d sceneFocus=%d/%d (single-frame readback before release)",static_cast<unsigned long long>(s.pixelFrame),s.pixelRequireScene,s.sceneFocus[0],s.sceneFocus[1]);
+                if(s.capture.requested)for(unsigned i=0;i<4;++i){
+                    const auto& v=s.views[i];
+                    logf("capture_view frame=%llu view=%u time=%lld fov=%.9g,%.9g,%.9g,%.9g position=%.9g,%.9g,%.9g orientation=%.9g,%.9g,%.9g,%.9g",static_cast<unsigned long long>(s.pixelFrame),i,static_cast<long long>(s.locateTime),v.fov.angleLeft,v.fov.angleRight,v.fov.angleUp,v.fov.angleDown,v.pose.position.x,v.pose.position.y,v.pose.position.z,v.pose.orientation.x,v.pose.orientation.y,v.pose.orientation.z,v.pose.orientation.w);
+                }
             }
             diagnosePixelSlot(app.eye+2,app.images[app.acquired.front().index]);
         }
@@ -1194,6 +1213,7 @@ void xr_vrs_scene_complete(unsigned eye){std::lock_guard<std::recursive_mutex> l
 bool xr_frame_views(XrView (&views)[4]) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(!s.quad||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
+    s.renderViewsLocked=true;
     std::copy(std::begin(s.views),std::end(s.views),std::begin(views));return true;
 }
 bool xr_frame_full_outer_fov(XrFovf (&fov)[2]) {

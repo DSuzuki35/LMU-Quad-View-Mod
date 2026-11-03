@@ -687,7 +687,7 @@ int main(int argc,char** argv) {
     XrCompositionLayerProjection projection{};projection.type=XR_TYPE_COMPOSITION_LAYER_PROJECTION;projection.space=li.space;projection.viewCount=2;projection.views=pv;
     const auto* layer=reinterpret_cast<const XrCompositionLayerBaseHeader*>(&projection);
     XrFrameEndInfo end{};end.type=XR_TYPE_FRAME_END_INFO;end.displayTime=123;end.layerCount=1;end.layers=&layer;
-    auto begin=[&](){
+    auto begin=[&](bool consumeRenderViews=true){
         XrFrameState fs{};fs.type=XR_TYPE_FRAME_STATE;
         XrView engineViews[4]{};
         assert(!lmuqv::xr_frame_views(engineViews));
@@ -696,6 +696,7 @@ int main(int argc,char** argv) {
         assert(reinterpret_cast<PFN_xrBeginFrame>(load("xrBeginFrame"))(session,nullptr)==XR_SUCCESS);
         assert(!lmuqv::xr_frame_views(engineViews));
         li.displayTime=123;assert(locateViews(session,&li,&state,2,&count,located.views)==XR_SUCCESS);
+        if(!consumeRenderViews)return; // Exercise failed queries before rendering locks the snapshot.
         assert(lmuqv::xr_frame_views(engineViews)==runtimeShouldRender);
         for(unsigned eye=0;eye<2;++eye){pv[eye].pose=located.views[eye].pose;pv[eye].fov=located.views[eye].fov;}
         if(runtimeShouldRender){
@@ -916,13 +917,13 @@ int main(int argc,char** argv) {
     assert(movingFocusSubmissions==2&&acquireCount==successfulReleases);
     movingFocusTest=false;runtimeTime=123;li.displayTime=123;end.displayTime=123;
     if(focusBoxPercent!=100||focusOffsetX!=0||focusOffsetY!=0){
-        begin();invalidFocusFov=true;
+        begin(false);invalidFocusFov=true;
         assert(locateViews(session,&li,&state,2,&count,located.views)==XR_ERROR_RUNTIME_FAILURE);
         XrView cached[4]{};assert(!lmuqv::xr_frame_views(cached));
         assert(!lmuqv::xr_copy_outer(0,source));
         finish();assert(submittedLayers==0);invalidFocusFov=false;
         if(focusOffsetX!=0||focusOffsetY!=0){
-            begin();invalidOuterFov=true;
+            begin(false);invalidOuterFov=true;
             assert(locateViews(session,&li,&state,2,&count,located.views)==XR_ERROR_RUNTIME_FAILURE);
             assert(!lmuqv::xr_frame_views(cached)&&!lmuqv::xr_copy_outer(0,source));
             finish();assert(submittedLayers==0);invalidOuterFov=false;
