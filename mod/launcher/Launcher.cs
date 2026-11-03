@@ -359,6 +359,9 @@ namespace LmuQuadViewLauncher
         readonly DarkScrollPage renderingPage = new DarkScrollPage { Name = "RenderingPage" };
         readonly DarkScrollPage setupPage = new DarkScrollPage { Name = "SetupPage" };
         bool busy;
+        string[] steamRequest;
+        Process steamGame;
+        readonly Timer steamLifetime = new Timer { Interval=1000 };
         string SettingsPath { get { return Path.Combine(root, "launcher-settings.xml"); } }
 
         static ComboBox Choice(string[] choices)
@@ -503,6 +506,7 @@ namespace LmuQuadViewLauncher
             KeyDown+=delegate(object sender,KeyEventArgs e) { if(e.KeyCode==Keys.Escape&&joystick!=null&&joystick.Listening) {joystick.CancelListen();bindingStatus.Text="Button assignment cancelled.";e.Handled=true;} };
             Shown+=delegate { if(joystick==null) {joystick=new JoystickInput(new DirectInputButtonSource(Handle));UpdateBindings();joystick.VisibilityPressed+=delegate {benchmark.ToggleOverlay();};joystick.RecordingPressed+=delegate {benchmark.ToggleRecording();};benchmarkTimer.Start();} };
             benchmarkTimer.Tick+=delegate { PollBenchmark(); };
+            steamLifetime.Tick+=delegate { if(steamGame!=null&&steamGame.HasExited)Close(); };
         }
         Control BuildSidebar()
         {
@@ -604,11 +608,11 @@ namespace LmuQuadViewLauncher
         }
         void BuildSetup()
         {
-            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 5, Margin = new Padding(0) };
+            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 6, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 153)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 900)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 900)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 190)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
             var browseGame = Theme.Button("Browse", false); browseGame.Click += delegate {
                 using (var d = new FolderBrowserDialog { Description = "Select the folder containing Le Mans Ultimate.exe", ShowNewFolderButton = false }) {
                     if (Directory.Exists(game.Text)) d.SelectedPath = game.Text;
@@ -648,7 +652,14 @@ namespace LmuQuadViewLauncher
             stack.Controls.Add(outerSsr,0,20);
             stack.Controls.Add(Caption("Requires smaller native outer targets. Reduces outer reflection resources with a 40% per-axis floor; reflections may soften, focus stays unchanged. Unsupported layouts keep native resources."),0,21);
             options.Controls.Add(stack); grid.Controls.Add(options, 0, 3);
-            grid.Controls.Add(Caption("Keep your headset's OpenXR runtime active. Configure VectorXR's LMU Quadviews profile when using it; select one quad-view provider."), 0, 4);
+            var steamCard=new Surface {Name="SteamLaunchCard",Dock=DockStyle.Fill,Margin=new Padding(0,0,0,14),Padding=new Padding(17,12,17,10)};
+            var steamStack=Stack(3);steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,32));steamStack.RowStyles.Add(new RowStyle(SizeType.Percent,100));steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,40));
+            steamStack.Controls.Add(Theme.Label("Launch from Steam",13F,Theme.Text),0,0);
+            steamStack.Controls.Add(Caption("Save settings, then paste the copied line into Steam > LMU > Properties > Launch Options. Steam Play starts the mod automatically. Clear that line to undo."),0,1);
+            var steamCopy=Theme.Button("Copy Steam launch option",false);steamCopy.Name="SteamLaunchCopy";steamCopy.Dock=DockStyle.Fill;
+            steamCopy.Click+=delegate {try {Clipboard.SetText(SteamLaunch.LaunchOptions(Application.ExecutablePath));status.Text="Copied. Save settings, then paste into LMU's Steam Launch Options. Keep %command% and append any additional game arguments.";}catch(Exception error){ShowError(error.Message);}};
+            steamStack.Controls.Add(steamCopy,0,2);steamCard.Controls.Add(steamStack);grid.Controls.Add(steamCard,0,4);
+            grid.Controls.Add(Caption("Keep your headset's OpenXR runtime active. Configure VectorXR's LMU Quadviews profile when using it; select one quad-view provider."), 0, 5);
         }
         static NumericUpDown BenchmarkNumber(string name,decimal min,decimal max,decimal value) {
             return new SpacedNumericUpDown {Name=name,AccessibleName=name,Minimum=min,Maximum=max,Value=value,DecimalPlaces=2,Increment=0.05m,Dock=DockStyle.Fill,BackColor=Theme.Field,ForeColor=Theme.Text,BorderStyle=BorderStyle.FixedSingle,TextAlign=HorizontalAlignment.Right};
@@ -757,6 +768,7 @@ namespace LmuQuadViewLauncher
             benchmarkNav.BackColor=Theme.AccentDark;benchmarkNav.ForeColor=Theme.Text;RefreshBenchmarkPreview();
         }
         protected override void Dispose(bool disposing) {
+            if(disposing){steamLifetime.Stop();steamLifetime.Dispose();if(steamGame!=null)steamGame.Dispose();}
             if(disposing) {help.Dispose();benchmarkTimer.Stop();benchmarkTimer.Dispose();if(joystick!=null)joystick.Dispose();if(benchmark!=null)benchmark.Dispose();if(benchmarkPreview.Image!=null) {benchmarkPreview.Image.Dispose();benchmarkPreview.Image=null;}}
             base.Dispose(disposing);
         }
@@ -924,15 +936,20 @@ namespace LmuQuadViewLauncher
         {
             if (busy) return;
             LauncherSettings settings;
-            try { settings = Values(); QvfrSettings.Save(SettingsPath, settings); }
+            string gameArguments=null;
+            try { settings = Values();if(steamRequest!=null)gameArguments=SteamLaunch.GameArguments(steamRequest,settings); QvfrSettings.Save(SettingsPath, settings); }
             catch (Exception ex) { ShowError(ex.Message); return; }
             SetBusy(true); status.ForeColor = Theme.Muted; status.Text = "Checking the game build and preparing OpenXR...";
             var worker = new BackgroundWorker();
-            worker.DoWork += delegate(object sender, DoWorkEventArgs e) { e.Result = LaunchService.Launch(root, settings); };
+            worker.DoWork += delegate(object sender, DoWorkEventArgs e) { e.Result = LaunchService.Launch(root, settings,gameArguments); };
             worker.RunWorkerCompleted += delegate(object sender, RunWorkerCompletedEventArgs e) {
                 worker.Dispose(); if (IsDisposed || Disposing) return; SetBusy(false);
                 if (e.Error != null) { ShowError(e.Error.Message); return; }
                 status.ForeColor = Color.FromArgb(149, 207, 169); status.Text = "LMU started (PID " + e.Result + "). Changes apply on your next launch.";
+                if(steamRequest!=null) {
+                    try {steamGame=Process.GetProcessById((int)e.Result);steamLifetime.Start();WindowState=FormWindowState.Minimized;}
+                    catch(ArgumentException){Close();}
+                }
             };
             worker.RunWorkerAsync();
         }
@@ -944,10 +961,16 @@ namespace LmuQuadViewLauncher
             MessageBox.Show(this, message, "LMU Quad View", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new Launcher());
+            if(args.Length==0){Application.Run(new Launcher());return;}
+            try {
+                SteamLaunch.LoadArguments(AppDomain.CurrentDomain.BaseDirectory,args);
+                var form=new Launcher();form.steamRequest=args;
+                form.Shown+=delegate {form.BeginInvoke(new Action(form.StartGame));};
+                Application.Run(form);
+            } catch(Exception error) {MessageBox.Show(error.Message,"LMU Quad View - Steam launch",MessageBoxButtons.OK,MessageBoxIcon.Warning);Environment.ExitCode=1;}
         }
     }
 }

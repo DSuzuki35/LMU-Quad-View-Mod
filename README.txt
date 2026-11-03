@@ -1,4 +1,27 @@
-LMU QUAD VIEW MOD — v0.2.1
+LMU QUAD VIEW MOD — v0.3.0
+
+SIGNED BUILD
+I bought a code-signing certificate for this project. The DLL and executables
+are signed through Certum SimplySign, with SHA-256 and a timestamp.
+Publisher: Open Source Developer Daniel Sosulski. Windows reputation warnings
+may still appear.
+
+STEAM PLAY
+Save settings, then use Setup > Copy Steam launch option. Paste the complete
+line into Steam > Le Mans Ultimate > Properties > General > Launch Options.
+Keep %command% in that line. Steam Play then starts LMU with the saved mod
+settings, and the launcher minimizes while serving the overlay. It closes
+after LMU exits. Remove the wrapper from Launch Options to undo this setup.
+See docs/STEAM-LAUNCH.md for details and additional arguments.
+Automated tests pass; live Steam/headset validation remains outstanding.
+
+OPTIONAL SUPPORT
+Buy Me a Coffee: https://buymeacoffee.com/dansuzuki
+Patreon: https://www.patreon.com/cw/DanSuzuki
+Affiliate links and discounts: https://dansuzuki.com/discounts/
+Affiliate purchases may earn me a commission at no extra cost to you.
+Support is entirely optional and never expected. This tool will always be free.
+No donation, purchase or subscription is required for any feature.
 
 CORRECTED 0.2.1
 Automatic GPU-driven focus resizing was removed after failed user testing.
@@ -42,7 +65,7 @@ INSTALL
 Extract the WHOLE ZIP to a writable folder outside LMU. Open
 LMU-QuadView-Launcher.exe and keep its .exe.config file beside it.
 Requires .NET Framework 4.8. No PowerShell installation or script unblocking is
-needed to run the distributed launcher. The EXE is unsigned.
+needed to run the distributed launcher. Release binaries are digitally signed.
 
 In Setup select the LMU folder. Ensure the headset's OpenXR runtime is active.
 In Rendering select Native OpenXR, Quad-Views-Foveated (QVFR), VectorXR, or

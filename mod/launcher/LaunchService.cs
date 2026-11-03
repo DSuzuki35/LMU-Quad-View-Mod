@@ -211,7 +211,7 @@ namespace LmuQuadViewLauncher {
             File.WriteAllText(path,new JavaScriptSerializer().Serialize(value),new UTF8Encoding(false));
         }
         static string MetadataPath(ProcessStartInfo info) { return System.IO.Path.ChangeExtension(info.EnvironmentVariables["LMU_QV_LOG"],null)+"-run.json"; }
-        public static ProcessStartInfo Prepare(string root,LauncherSettings settings) {
+        public static ProcessStartInfo Prepare(string root,LauncherSettings settings,string gameArguments=null) {
             QvfrSettings.Validate(settings);
             root=System.IO.Path.GetFullPath(root);CheckSearchPath(root);
             ValidateExecutable(System.IO.Path.Combine(System.IO.Path.GetFullPath(settings.GameDirectory),"Le Mans Ultimate.exe"));
@@ -238,12 +238,13 @@ namespace LmuQuadViewLauncher {
             if(settings.DiagnosticsEnabled)Directory.CreateDirectory(logDirectory);
             var log=System.IO.Path.Combine(logDirectory,"quad-"+stamp+".log");
             var info=MakeStartInfo(root,settings,plan,log);
+            if(gameArguments!=null)info.Arguments=gameArguments;
             if(settings.DiagnosticsEnabled)WriteJson(MetadataPath(info),PreparedMetadata(root,settings,plan,info,log));
             return info;
         }
         internal static object PreparedMetadata(string root,LauncherSettings settings,LayerPlan plan,ProcessStartInfo info,string log) {
             return new {Status="prepared",Pid=(int?)null,Mode=settings.Backend=="VRS"?"vrs":"quad",Backend=settings.Backend,FoveationMode=settings.FoveationMode,VrsPeripheralRate=settings.VrsPeripheralRate,
-                Exe=info.FileName,ExeSHA256=SupportedExecutableHash,LayerSHA256=HashFile(System.IO.Path.Combine(root,@"build\lmu_quadview.dll")),
+                Exe=info.FileName,Arguments=info.Arguments,ExeSHA256=SupportedExecutableHash,LayerSHA256=HashFile(System.IO.Path.Combine(root,@"build\lmu_quadview.dll")),
                 ProviderManifest=plan.ProviderPath,ProviderName=plan.ProviderName,ProviderSHA256=plan.Library==null?null:HashFile(plan.Library),
                 ExplicitManifest=plan.ExplicitManifest,EnabledLayers=plan.Layers,DisabledImplicitSwitches=plan.DisableVariables,OpenGridXrDisabled=info.EnvironmentVariables["DISABLE_OPENGRIDXR"]=="1",Log=log,
                 DiagnosticsEnabled=settings.DiagnosticsEnabled,BenchmarkEnabled=settings.DiagnosticsEnabled&&settings.BenchmarkEnabled,BenchmarkRequested=settings.BenchmarkEnabled,BenchmarkTemplate=settings.BenchmarkTemplate,
@@ -255,8 +256,8 @@ namespace LmuQuadViewLauncher {
                 OuterPercent=settings.OuterPercent,InnerPercent=settings.InnerPercent,FocusWidthPercent=settings.FocusWidthPercent,FocusHeightPercent=settings.FocusHeightPercent,
                 PreparedUTC=DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture)};
         }
-        public static int Launch(string root,LauncherSettings settings) {
-            var info=Prepare(root,settings);
+        public static int Launch(string root,LauncherSettings settings,string gameArguments=null) {
+            var info=Prepare(root,settings,gameArguments);
             try {
             // Preparation is testable without touching the user's QVFR profile.
             // Only the actual launch commits this configuration, after all guards.

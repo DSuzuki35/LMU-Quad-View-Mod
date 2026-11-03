@@ -10,11 +10,11 @@ $versionFiles = Write-LmuVersionFiles (Join-Path $PSScriptRoot 'build/launcher-v
 $core = @((Join-Path $PSScriptRoot 'launcher/QvfrSettings.cs'),(Join-Path $PSScriptRoot 'launcher/FocusGeometry.cs'),(Join-Path $PSScriptRoot 'launcher/LaunchService.cs'),(Join-Path $PSScriptRoot 'launcher/AssemblyInfo.cs'))
 $manifest = Join-Path $PSScriptRoot 'launcher/app.manifest'
 $core += $versionFiles.AssemblyPath
-$core += @('BenchmarkController.cs','JoystickInput.cs','LaunchDiagnostics.cs') | ForEach-Object { Join-Path $PSScriptRoot ('launcher/' + $_) }
+$core += @('BenchmarkController.cs','JoystickInput.cs','LaunchDiagnostics.cs','SteamLaunch.cs') | ForEach-Object { Join-Path $PSScriptRoot ('launcher/' + $_) }
 $icon = Join-Path $PSScriptRoot 'launcher/assets/quadview.ico'
 $appConfig = Join-Path $PSScriptRoot 'launcher/app.config'
 $references = @('/reference:System.Windows.Forms.dll','/reference:System.Drawing.dll','/reference:System.Xml.Linq.dll','/reference:System.Web.Extensions.dll')
-foreach ($test in @('SettingsTests','FocusGeometryTests','LaunchServiceTests','JoystickInputTests','LaunchDiagnosticsTests','BenchmarkTests')) {
+foreach ($test in @('SettingsTests','FocusGeometryTests','LaunchServiceTests','SteamLaunchTests','JoystickInputTests','LaunchDiagnosticsTests','BenchmarkTests')) {
     $testOutput = Join-Path $PSScriptRoot ('build/' + $test + '.exe')
     & $compiler /nologo /target:exe /platform:x64 /optimize+ /warnaserror+ "/main:$test" "/out:$testOutput" @references @core (Join-Path $PSScriptRoot "launcher/$test.cs")
     if ($LASTEXITCODE -ne 0) { throw "$test compilation failed" }

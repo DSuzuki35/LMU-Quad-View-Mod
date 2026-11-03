@@ -4,6 +4,31 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
+## 0.3.0 - 2026-11-03
+
+- So, who wants to get banned by EAC? Use at your own risk 😅🙈
+  Seriously: no anti-cheat approval or ban-safety guarantee is claimed. Use offline.
+
+- Start the mod from Steam's Play button using the launch option copied from
+  Setup. The launcher automatically applies saved settings, preserves Steam's
+  game arguments, adds +XR when missing and stays available for the overlay.
+  The supported-game guard and process-local provider/crop isolation still apply.
+- I bought a code-signing certificate for this project. The release DLL
+  and executables are signed through Certum SimplySign, with SHA-256 and a
+  timestamp. Signing identifies the publisher and makes changes detectable;
+  it does not guarantee that Windows reputation warnings will disappear.
+- If you would like to help with the certificate and ongoing development, you
+  can use [Buy Me a Coffee](https://buymeacoffee.com/dansuzuki),
+  [Patreon](https://www.patreon.com/cw/DanSuzuki), or my
+  [affiliate links and discount codes](https://dansuzuki.com/discounts/).
+  Affiliate purchases may earn me a commission at no extra cost to you.
+  **Support is entirely optional and is never expected. The tool will always
+  be free, with no payment or subscription needed to use its features.**
+- Retain the corrected 0.2.1 QVFR handle, rendered-view and OpenGridXR alignment
+  fixes. Automatic dynamic FOV remains removed; resolution stays fixed.
+- Native and launcher automated tests pass. The new Steam start path has not
+  yet been validated in a live Steam/headset session.
+
 ## 0.2.1 - 2026-11-03
 
 - Isolate quad launches from OpenGridXR's additional stereo crop, which can

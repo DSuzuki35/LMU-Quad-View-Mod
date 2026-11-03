@@ -165,6 +165,9 @@ class GuiLayoutTests {
             Screenshot(form,Path.Combine(output,stem+"-crop.png"));
             Check(form.Controls.Find("DynamicFocusCard",true).Length==0,"Removed dynamic focus controls remain in rendering page");
         }
+        if(pageName=="SetupPage") {
+            var steam=Named(form,"SteamLaunchCopy");steam.Focus();Settle(form);FullyVisible(steam);TextFits(steam);
+        }
         Screenshot(form,Path.Combine(output,stem+"-"+pageName+"-bottom.png"));
         Console.WriteLine(stem+" "+pageName+": text/ancestor bounds, footer reachability, dark scrolling PASS; scroll="+scroll.Maximum);
     }

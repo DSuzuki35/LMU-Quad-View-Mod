@@ -5,10 +5,10 @@ A free Windows x64 / D3D11 mod that adds two outer and two focus views to
 Quad-Views-Foveated (QVFR) or VectorXR separately to provide quad views on a
 stereo runtime.
 
-**v0.2.1 is an experimental offline build.** Headset and runtime compatibility
+**v0.3.0 is an experimental offline build.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
-Version 0.2.1 retains the **Benchmark** page with Minimal and
+Version 0.3.0 retains the **Benchmark** page with Minimal and
 Detailed in-headset overlays, separate joystick bindings for visibility and
 manual recording, local HTML/CSV/JSON reports, and latest-launch diagnostics.
 Enable Benchmark before launching and leave the launcher open. See
@@ -81,7 +81,7 @@ contributions are welcome. See [the contribution guide](CONTRIBUTING.md).
 
 ## Install and launch
 
-1. Use the complete `LMU-Quad-View-Mod-0.2.1.zip` package. Published builds are listed in [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
+1. Use the complete `LMU-Quad-View-Mod-0.3.0.zip` package from [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases/tag/v0.3.0).
 2. Extract the **complete ZIP** to a writable folder outside the LMU installation.
 3. Open **LMU-QuadView-Launcher.exe**. Keep its `.exe.config` file beside it.
 4. In **Setup**, select the LMU game folder. Ensure your headset's OpenXR runtime
@@ -90,8 +90,33 @@ contributions are welcome. See [the contribution guide](CONTRIBUTING.md).
    changing rendering settings.
 
 Requires Windows x64, D3D11 and .NET Framework 4.8. The distributed launcher does
-not require PowerShell or script unblocking. The EXE is unsigned, so Windows may
-show reputation warnings. OpenXR Toolkit is not required.
+not require PowerShell or script unblocking. The release DLL and executables
+are signed through Certum SimplySign by **Open Source Developer Daniel Sosulski**.
+Windows reputation warnings may still appear. OpenXR Toolkit is not required.
+
+### Start with Steam Play
+
+After saving your settings, use **Setup > Copy Steam launch option** and paste
+the complete line into **Steam > Le Mans Ultimate > Properties > General >
+Launch Options**. It has this form (use your actual launcher path):
+
+```text
+"C:\Your mod folder\LMU-QuadView-Launcher.exe" --steam %command%
+```
+
+Keep `%command%` as written; Steam replaces it with LMU's executable and game
+arguments. Append any extra game arguments after it. Steam Play now starts LMU
+with your saved mod settings automatically, adding `+XR` if absent. The launcher
+minimizes after launch, continues serving the benchmark overlay, and closes
+when LMU exits. Rendering changes still require a game restart. Save settings
+in this copy of the launcher before the first Steam launch.
+
+Keep the mod folder in place, or copy the launch option again after moving it.
+To undo the integration, remove this wrapper from Steam's Launch Options and
+restore any previous arguments. This does not replace game files or register a
+global OpenXR layer. See [Steam startup details](docs/STEAM-LAUNCH.md).
+The Steam start path passes automated tests; a live Steam/headset test remains
+outstanding for this release.
 
 | Provider | Setup and settings |
 | --- | --- |
@@ -227,6 +252,17 @@ and test commands, review expectations and release steps. The
 [architecture guide](docs/ARCHITECTURE.md) maps the launcher, XR adapter, hooks and
 resource ownership. Native builds run tests; graphics tests use D3D11 WARP and
 cannot replace headset QA. Release versions come from the root `VERSION` file.
+
+## Optional support
+
+I bought a code-signing certificate so the distributed DLL and executables can
+identify their publisher. If you would like to support the certificate and
+development, there is [Buy Me a Coffee](https://buymeacoffee.com/dansuzuki),
+[Patreon](https://www.patreon.com/cw/DanSuzuki), and my
+[affiliate links and discounts](https://dansuzuki.com/discounts/).
+Affiliate purchases may earn me a commission at no extra cost to you.
+**Support is completely optional and never expected. This tool will always be
+free; no donation, purchase or subscription is required for any feature.**
 
 ## License
 

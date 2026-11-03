@@ -1,4 +1,4 @@
-param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'),[string]$ArchiveName='')
+param([string]$OutputDirectory = (Join-Path $PSScriptRoot 'dist'),[string]$ArchiveName='', [switch]$RequireSigned)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'tools/version.ps1')
 $version = Get-LmuVersion
@@ -44,6 +44,7 @@ $files = @{
     'docs/ARCHITECTURE.md' = 'docs/ARCHITECTURE.md'
     'docs/PERFORMANCE.md' = 'docs/PERFORMANCE.md'
     'docs/focus-validation.md' = 'docs/focus-validation.md'
+    'docs/STEAM-LAUNCH.md' = 'docs/STEAM-LAUNCH.md'
     'docs/flicker-diagnosis-20261103.md' = 'docs/flicker-diagnosis-20261103.md'
     'docs/OPENGRIDXR-INTEGRATION.md' = 'docs/OPENGRIDXR-INTEGRATION.md'
     'PORTABLE-DESIGN.md' = 'PORTABLE-DESIGN.md'
@@ -57,6 +58,15 @@ $files = @{
 $proofPath='mod/build/msvc/stereo_instancing_test.exe'
 if(!(Test-Path -LiteralPath (Join-Path $PSScriptRoot $proofPath))){$proofPath='mod/build/stereo_instancing_test.exe'}
 $files[$proofPath]='tools/PortableStereoCheck.exe'
+if($RequireSigned) {
+    $publisher = $null
+    foreach($source in $files.Keys | Where-Object { $_ -match '\.(dll|exe)$' }) {
+        $signature=Get-AuthenticodeSignature -LiteralPath (Join-Path $PSScriptRoot $source)
+        if($signature.Status -ne 'Valid' -or !$signature.TimeStamperCertificate) { throw "Valid timestamped signature required: $source" }
+        if(!$publisher) { $publisher=$signature.SignerCertificate.Thumbprint }
+        if($signature.SignerCertificate.Thumbprint -ne $publisher) { throw "Release binaries must have the same signer: $source" }
+    }
+}
 foreach ($source in $files.Keys) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $source) -Destination (Join-Path $stage $files[$source])
 }
