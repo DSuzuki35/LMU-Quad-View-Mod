@@ -89,3 +89,27 @@ OpenGridXrDisabled. A regression test failed before the change and verifies
 quad isolation, untouched parent environment and VRS behavior afterwards.
 Headset validation after restarting with this launcher is still required.
 Missing gaze remains separate: QVFR again reported no data after 60 seconds.
+
+## Live validation and eye-tracking recovery
+
+Run `quad-20261103-101622-4da8547f`, PID 12180, uses the isolated launcher.
+VectorXR confirms the downstream chain contains LMU adapter and QVFR with no
+OpenGridXR. Native and adapter projection scales/offsets now match exactly
+(vertical 0.8741776, offset zero). All four images of frame 5781 were captured
+successfully. Tangent-space comparisons of both eyes show aligned geometry;
+the user reports the picture is now aligned and steady. Dynamic FOV was off
+during this validation, so this is not a new dynamic-FOV performance test.
+
+The SteamVR desktop menu's `Toggle Dashboard` action finally closed the
+dashboard at approximately 10:21:25 local time. Read-only OpenVR reports
+dashboardVisible=0 and inputAvailable=1; LMU subsequently reaches FOCUSED.
+This alone did not restore gaze: the user still observed a stationary border.
+The user then restarted eye tracking in Pimax Play and confirmed it worked.
+SBoys3's `AppData/Roaming/CustomHeadset/diagnostic.json` also reported
+eyeTracking.valid=true. Do not infer that the previous no-data warning proves
+permanent hardware or runtime incompatibility.
+
+Recovery for this observed setup: use the isolated quad launcher, close the
+SteamVR dashboard, and restart eye tracking in Pimax Play if gaze remains
+stationary after the session becomes FOCUSED. The underlying reason the Pimax
+eye-tracking service needed restarting has not been established.
