@@ -42,7 +42,8 @@ inline int64_t counter_load(const int64_t& v){return InterlockedCompareExchange6
 inline int32_t sequence_load(const int32_t& v){return InterlockedCompareExchange(reinterpret_cast<volatile LONG*>(const_cast<int32_t*>(&v)),0,0);}
 inline int64_t ticks(){LARGE_INTEGER value{};QueryPerformanceCounter(&value);return value.QuadPart;}
 struct FocusTelemetry {
- // flags: 1=valid rendered quad scene, 2=dynamic mode, 4=other GPU timing armed.
+ // flags: 1=valid rendered quad scene. Bits 2/4 and scale are legacy ABI slots;
+ // corrected 0.2.1 emits no dynamic flags and always publishes scale=100.
  uint32_t flags=0;float scale=100,leftHorizontal=0,leftVertical=0,rightHorizontal=0,rightVertical=0;
  uint64_t frame=0;
 };

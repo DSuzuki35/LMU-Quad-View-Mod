@@ -163,11 +163,7 @@ class GuiLayoutTests {
             var wrapped=TextRenderer.MeasureText(cropHint.Text,cropHint.Font,new Size(cropHint.ClientSize.Width,Int32.MaxValue),TextFormatFlags.WordBreak);
             Check(wrapped.Height<=cropHint.ClientSize.Height,"Crop explanation is clipped");
             Screenshot(form,Path.Combine(output,stem+"-crop.png"));
-            foreach(var name in new[]{"DynamicFocusEnabled","DynamicFocusMinPercent","DynamicFocusMaxPercent","DynamicFocusReservePercent"}) {
-                var control=Named(form,name);control.Focus();Settle(form);FullyVisible(control);
-            }
-            TextFits(Named(form,"DynamicFocusEnabled"));
-            Screenshot(form,Path.Combine(output,stem+"-dynamic-focus.png"));
+            Check(form.Controls.Find("DynamicFocusCard",true).Length==0,"Removed dynamic focus controls remain in rendering page");
         }
         Screenshot(form,Path.Combine(output,stem+"-"+pageName+"-bottom.png"));
         Console.WriteLine(stem+" "+pageName+": text/ancestor bounds, footer reachability, dark scrolling PASS; scroll="+scroll.Maximum);
@@ -203,7 +199,7 @@ class GuiLayoutTests {
                 var outline=(CheckBox)typeof(Launcher).GetField("outline",flags).GetValue(form);
                 Check(!outline.Enabled&&outline.Checked&&vrsValues.DebugFocus,"VRS must disable quad outline while preserving its saved preference");
                 Check(vrsValues.VrsPeripheralRate==4,"GUI lost VRS peripheral rate");
-                Check(!Named(form,"DynamicFocusEnabled").Enabled&&!Named(form,"DynamicFocusMinPercent").Enabled&&!Named(form,"CropWidthPercent").Enabled&&!Named(form,"OuterResolution").Enabled&&!Named(form,"CpuUploadReuse").Enabled&&!Named(form,"StereoDrawAudit").Enabled,"VRS enables quad-only controls");
+                Check(!Named(form,"CropWidthPercent").Enabled&&!Named(form,"OuterResolution").Enabled&&!Named(form,"CpuUploadReuse").Enabled&&!Named(form,"StereoDrawAudit").Enabled,"VRS enables quad-only controls");
                 Check(vrsValues.CropWidthPercent==75&&vrsValues.NativeOuterResolution&&vrsValues.StereoDrawAudit&&vrsValues.CpuUploadReuse,"Selecting VRS destroys saved quad settings");
                 Check(Named(form,"RenderProfileSeconds").Enabled,"VRS disabled render profiling");
                 var vrsWidth=(PercentSetting)typeof(Launcher).GetField("focusWidth",flags).GetValue(form);

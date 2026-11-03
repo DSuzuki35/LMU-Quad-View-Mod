@@ -33,8 +33,6 @@ namespace LmuQuadViewLauncher
     public sealed class BenchmarkSnapshot
     {
         public bool FocusFovValid { get; internal set; }
-        public bool DynamicFocus { get; internal set; }
-        public bool DynamicFocusHolding { get; internal set; }
         public double FocusScalePercent { get; internal set; }
         public double FocusLeftHorizontal { get; internal set; }
         public double FocusLeftVertical { get; internal set; }
@@ -71,7 +69,7 @@ namespace LmuQuadViewLauncher
             float lh=view.ReadSingle(148),lv=view.ReadSingle(152),rh=view.ReadSingle(156),rv=view.ReadSingle(160);
             ulong frame=view.ReadUInt64(168);
             Thread.MemoryBarrier();if(view.ReadInt32(136)!=sequence)return;
-            snapshot.DynamicFocus=(flags&2)!=0;snapshot.DynamicFocusHolding=(flags&4)!=0;
+
             if((flags&1)==0||frame==0||!BenchmarkStatistics.IsValue(scale)||scale<25||scale>200)return;
             foreach(float extent in new[]{lh,lv,rh,rv})if(!BenchmarkStatistics.IsValue(extent)||extent<=0||extent>=180)return;
             snapshot.FocusScalePercent=scale;snapshot.FocusLeftHorizontal=lh;snapshot.FocusLeftVertical=lv;
@@ -488,8 +486,7 @@ namespace LmuQuadViewLauncher
         internal static string FocusText(BenchmarkSnapshot s)
         {
             if(!s.FocusFovValid)return "Center FOV -- (no rendered quad scene)";
-            return String.Format(CultureInfo.InvariantCulture,"Center {0:0.#}% {1} | L {2:0.0} x {3:0.0} deg | R {4:0.0} x {5:0.0} deg",
-                s.FocusScalePercent,s.DynamicFocus?(s.DynamicFocusHolding?"HOLD":"AUTO"):"FIXED",
+            return String.Format(CultureInfo.InvariantCulture,"Center FOV | L {0:0.0} x {1:0.0} deg | R {2:0.0} x {3:0.0} deg",
                 s.FocusLeftHorizontal,s.FocusLeftVertical,s.FocusRightHorizontal,s.FocusRightVertical);
         }
         static string CompactStatus(BenchmarkSnapshot s)

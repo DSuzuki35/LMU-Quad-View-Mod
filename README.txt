@@ -1,9 +1,9 @@
 LMU QUAD VIEW MOD — v0.2.1
 
-DYNAMIC CENTER FOV (EXPERIMENTAL)
-Rendering: enable dynamic center FOV and configure min/max (% of baseline)
-and GPU reserve. Defaults: 70/100/2. Resolution remains fixed. Disable render
-profiling for automatic adjustment. See README.md. Headset testing required.
+CORRECTED 0.2.1
+Automatic GPU-driven focus resizing was removed after failed user testing.
+Manual focus size, eye tracking and the actual rendered FOV overlay remain.
+Old dynamic settings are ignored. Runtime resolution scaling is not implemented.
 
 Quad launches bypass OpenGridXR to prevent its additional stereo crop from
 misaligning outer and focus images. Installed profiles are preserved.

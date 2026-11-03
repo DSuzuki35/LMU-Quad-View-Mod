@@ -9,18 +9,18 @@ Versions before 1.0 remain experimental and may change compatibility or settings
 - Isolate quad launches from OpenGridXR's additional stereo crop, which can
   misalign native outer and focus geometry. Preserve installed profiles and VRS.
 - Preserve rendered view metadata across late tracking queries in the same frame.
-- Optional automatic center FOV scaling with configurable min/max and GPU reserve.
-- Show actual per-eye rendered FOV and dynamic scale/state in benchmark overlays.
-- Fixed resolution; asynchronous GPU feedback with smoothing, hysteresis, scene,
-  failure and staleness guards, and a stable scale per display time.
-- Share benchmark timing; pause adaptation while other GPU profiling is armed.
+- Corrected release: remove automatic GPU-driven center FOV resizing and its
+  min/max/reserve controls after failed user testing. Ignore obsolete saved
+  settings and inherited environment controls. Manual size and gaze remain.
+- Show actual per-eye rendered FOV in benchmark overlays.
+- Keep benchmark GPU timing separate from other armed GPU profilers.
 - Accept valid QVFR handle 1 when uniquely identified in the native eye vector.
 - Add same-frame four-view capture and a documented OpenGridXR integration handoff.
 - Dream Air SE / SBoys3 / SteamVR / QVFR live validation confirmed aligned,
   steady images after bypassing OpenGridXR. Gaze recovered after closing the
   SteamVR dashboard and restarting eye tracking in Pimax Play.
-- Dynamic FOV was off during that hardware test. Its performance benefit and
-  wider headset compatibility remain unverified.
+- Dynamic FOV was off during that successful hardware test and was subsequently
+  removed. Wider headset compatibility remains unverified.
 
 ## 0.2.0 - 2026-11-02
 

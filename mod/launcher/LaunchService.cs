@@ -185,10 +185,6 @@ namespace LmuQuadViewLauncher {
             environment["LMU_QV_PROFILE"]=settings.DiagnosticsEnabled&&settings.RenderProfiling?"1":"0";
             environment["LMU_QV_PROFILE_SECONDS"]=settings.RenderProfileSeconds.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_VECTORXR_DIRECT_INPUTS"]=settings.Backend=="VectorXR"?"1":"0";
-            environment["LMU_QV_DYNAMIC_FOCUS"]=!vrs&&settings.DynamicFocusEnabled?"1":"0";
-            environment["LMU_QV_DYNAMIC_FOCUS_MIN"]=settings.DynamicFocusMinPercent.ToString(CultureInfo.InvariantCulture);
-            environment["LMU_QV_DYNAMIC_FOCUS_MAX"]=settings.DynamicFocusMaxPercent.ToString(CultureInfo.InvariantCulture);
-            environment["LMU_QV_DYNAMIC_FOCUS_RESERVE"]=settings.DynamicFocusReservePercent.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_OUTER_BLUR"]=vrs?"0":settings.OuterBlur.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_CROP_WIDTH_PERCENT"]=vrs?"100":settings.CropWidthPercent.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_CROP_HEIGHT_PERCENT"]=vrs?"100":settings.CropHeightPercent.ToString(CultureInfo.InvariantCulture);
@@ -254,8 +250,6 @@ namespace LmuQuadViewLauncher {
                 DebugFocus=settings.DebugFocus,RenderProfiling=settings.RenderProfiling,StereoDrawAudit=info.EnvironmentVariables["LMU_QV_STEREO_AUDIT"]=="1",StereoShaderCapture=info.EnvironmentVariables["LMU_QV_STEREO_SHADER_CAPTURE"]=="1",StereoPairProof=info.EnvironmentVariables["LMU_QV_STEREO_DRAW_PROOF"]=="1",CpuUploadReuse=info.EnvironmentVariables["LMU_QV_CPU_UPLOAD_REUSE"]=="1",CpuUploadBatch=info.EnvironmentVariables["LMU_QV_CPU_UPLOAD_BATCH"]=="1",RenderProfileSeconds=settings.RenderProfileSeconds,NativeOuterResolution=info.EnvironmentVariables["LMU_QV_NATIVE_OUTER"]=="1",UseRuntimeSettings=settings.Backend!="VRS",
                 CpuOuterReuse=info.EnvironmentVariables["LMU_QV_CPU_OUTER_REUSE"]=="1",OuterSsr=info.EnvironmentVariables["LMU_QV_OUTER_SSR"]=="1",CpuOuterReuseRequested=settings.CpuOuterReuse,OuterSsrRequested=settings.OuterSsr,
                 VectorXrDirectInputs=settings.Backend=="VectorXR",OuterBlur=settings.OuterBlur,
-                DynamicFocusEnabled=settings.Backend!="VRS"&&settings.DynamicFocusEnabled,DynamicFocusMinPercent=settings.DynamicFocusMinPercent,
-                DynamicFocusMaxPercent=settings.DynamicFocusMaxPercent,DynamicFocusReservePercent=settings.DynamicFocusReservePercent,
                 CropWidthPercent=settings.CropWidthPercent,CropHeightPercent=settings.CropHeightPercent,
                 FocusOffsetXPercent=settings.FocusOffsetXPercent,FocusOffsetYPercent=settings.FocusOffsetYPercent,
                 OuterPercent=settings.OuterPercent,InnerPercent=settings.InnerPercent,FocusWidthPercent=settings.FocusWidthPercent,FocusHeightPercent=settings.FocusHeightPercent,

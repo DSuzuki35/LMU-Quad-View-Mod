@@ -47,13 +47,15 @@ class LaunchServiceTests {
             Environment.SetEnvironmentVariable("LMU_QV_CROP_WIDTH_PERCENT","29");
             settings.CropWidthPercent=75.5m;settings.CropHeightPercent=42.25m;
             settings.FocusOffsetXPercent=-12.5m;settings.FocusOffsetYPercent=50;
-            settings.DynamicFocusEnabled=true;settings.DynamicFocusMinPercent=65.5m;settings.DynamicFocusMaxPercent=125;
-            settings.DiagnosticsEnabled=false;
-            var dynamicInfo=LaunchService.MakeStartInfo(root,settings,plan,Path.Combine(root,"dynamic.log"));
-            Check(dynamicInfo.EnvironmentVariables["LMU_QV_DYNAMIC_FOCUS"]=="1"&&dynamicInfo.EnvironmentVariables["LMU_QV_DYNAMIC_FOCUS_MIN"]=="65.5"&&dynamicInfo.EnvironmentVariables["LMU_QV_DYNAMIC_FOCUS_MAX"]=="125","Dynamic focus export independent of diagnostics");
-            settings.Backend="VRS";
-            Check(LaunchService.MakeStartInfo(root,settings,plan,Path.Combine(root,"vrs.log")).EnvironmentVariables["LMU_QV_DYNAMIC_FOCUS"]=="0","VRS must disable dynamic quad focus");
-            settings.Backend="QVFR";settings.DiagnosticsEnabled=true;
+            var dynamicKeys=new[]{"LMU_QV_DYNAMIC_FOCUS","LMU_QV_DYNAMIC_FOCUS_MIN","LMU_QV_DYNAMIC_FOCUS_MAX","LMU_QV_DYNAMIC_FOCUS_RESERVE"};
+            var oldDynamic=new Dictionary<string,string>();
+            try {
+                foreach(var key in dynamicKeys){oldDynamic[key]=Environment.GetEnvironmentVariable(key);Environment.SetEnvironmentVariable(key,"1");}
+                foreach(var backend in new[]{"Native","QVFR","VectorXR","VRS"}) {
+                    var child=LaunchService.MakeStartInfo(root,new LauncherSettings {GameDirectory=settings.GameDirectory,Backend=backend},plan,Path.Combine(root,"legacy.log"));
+                    foreach(var key in dynamicKeys)Check(child.EnvironmentVariables[key]==null,"Removed dynamic control leaked into child: "+key);
+                }
+            } finally {foreach(var key in dynamicKeys)Environment.SetEnvironmentVariable(key,oldDynamic[key]);}
             var info=LaunchService.MakeStartInfo(root,settings,plan,Path.Combine(root,"quad.log"));
             Check(info.EnvironmentVariables["LMU_QV_CROP_WIDTH_PERCENT"]=="75.5"&&info.EnvironmentVariables["LMU_QV_CROP_HEIGHT_PERCENT"]=="42.25","Independent crop not exported invariantly");
             Check(Environment.GetEnvironmentVariable("LMU_QV_CROP_WIDTH_PERCENT")=="29","Crop leaked into host environment");
