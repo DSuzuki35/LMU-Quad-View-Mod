@@ -172,6 +172,22 @@ void outerUploadSettingsTest(){
 }
 int main() {
     using namespace lmuqv;
+    // QVFR issues opaque handles 1 and 2. Exact native identity, not numeric
+    // value, decides whether an eye is assigned (reported log regression).
+    XrSwapchain eyeHandles[]{reinterpret_cast<XrSwapchain>(1),XR_NULL_HANDLE};
+    std::uintptr_t eyeVector[]{reinterpret_cast<std::uintptr_t>(eyeHandles),
+        reinterpret_cast<std::uintptr_t>(eyeHandles+2)};
+    const auto savedBase=base;
+    base=reinterpret_cast<std::uintptr_t>(eyeVector)-0x19b28d0;
+    installed=true;nativeRuntimeSettings=true;
+    require(engine_game_eye(eyeHandles[0])==0,"valid QVFR handle 1 rejected for left eye");
+    eyeHandles[1]=reinterpret_cast<XrSwapchain>(2);
+    require(engine_game_eye(eyeHandles[1])==1,"right eye identity lost");
+    require(engine_game_eye(XR_NULL_HANDLE)==2,"null handle accepted");
+    require(engine_game_eye(reinterpret_cast<XrSwapchain>(3))==2,"auxiliary handle accepted");
+    eyeHandles[1]=eyeHandles[0];
+    require(engine_game_eye(eyeHandles[0])==2,"ambiguous native handles accepted");
+    base=savedBase;installed=false;nativeRuntimeSettings=false;
     SetEnvironmentVariableA("LMU_QV_DIAGNOSTICS","0");
     uiPlaneSizeTest();
     outerUploadScopeTest();outerUploadSettingsTest();

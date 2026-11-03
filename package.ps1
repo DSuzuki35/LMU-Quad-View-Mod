@@ -41,6 +41,7 @@ $files = @{
     'CONTRIBUTING.md' = 'CONTRIBUTING.md'
     'docs/ARCHITECTURE.md' = 'docs/ARCHITECTURE.md'
     'docs/PERFORMANCE.md' = 'docs/PERFORMANCE.md'
+    'docs/dynamic-focus-validation.md' = 'docs/dynamic-focus-validation.md'
     'PORTABLE-DESIGN.md' = 'PORTABLE-DESIGN.md'
     'STEREO-SHADER-CONVERSION.md' = 'STEREO-SHADER-CONVERSION.md'
     'INSTANCED-STEREO-HANDOFF.md' = 'INSTANCED-STEREO-HANDOFF.md'

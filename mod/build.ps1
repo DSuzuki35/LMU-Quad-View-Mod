@@ -23,7 +23,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'View crop tests compilation failed' }
     & .\build\view_crop_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'View crop tests failed' }
-    foreach ($test in @('benchmark_native','benchmark_overlay','benchmark_frame','benchmark_gpu')) {
+    foreach ($test in @('dynamic_focus','dynamic_focus_frame','benchmark_native','benchmark_overlay','benchmark_frame','benchmark_gpu')) {
         & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" -ld3d11 -ld3dcompiler -ldxguid -luser32 -o "build/${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test compilation failed" }
         & ".\build\${test}_test.exe"

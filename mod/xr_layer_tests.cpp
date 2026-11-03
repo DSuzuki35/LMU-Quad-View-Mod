@@ -53,6 +53,7 @@ bool typedSrgbRuntime=false;
 bool sampledInputsRequested=false,rejectSampledInputs=false;
 bool profileOnCloseRequested=false,profileCloseOtherThread=false,profileMenuFrames=false;
 unsigned sampledAttempts=0,sampledAccepted=0;
+bool dynamicRequested=false;
 double focusBoxPercent=100;
 double focusHeightPercent=100;
 double focusOffsetX=0,focusOffsetY=0;
@@ -285,6 +286,9 @@ XrResult XRAPI_CALL release(XrSwapchain chain,const XrSwapchainImageReleaseInfo*
         if(runtimeSettings&&(ordinal==1||ordinal==2)){
             const unsigned fraction=ordinal==1?(runtimeTime==701?4:6):(runtimeTime==701?6:2);
             x=debugDesc.Width*fraction/16+1;
+            // At 80% span, each side moves inward by 5% of outer width;
+            // the 2.3% focus inset adds .0092 of outer width.
+            if(dynamicRequested)x=unsigned(debugDesc.Width*(fraction/16.0+.0592));
         }
         if(ordinal==1||ordinal==2)x+=unsigned(debugDesc.Width*focusOffsetX/100);
         auto border=texturePixel(textures[ordinal],x,debugDesc.Height/2);
@@ -297,7 +301,7 @@ XrResult XRAPI_CALL release(XrSwapchain chain,const XrSwapchainImageReleaseInfo*
         if(runtimeSettings&&(ordinal==1||ordinal==2)){
             // Runtime vertical tangent extent is +/- .5; outer extent is +/- 1.
             // 2.3% inset lands in row 16/29/33 at heights 64/112/128.
-            const unsigned topRow=(debugDesc.Height==64?16:debugDesc.Height==112?29:33)+unsigned(debugDesc.Height*(-focusOffsetY)/100);
+            const unsigned topRow=(dynamicRequested?unsigned(debugDesc.Height*.3092):(debugDesc.Height==64?16:debugDesc.Height==112?29:33))+unsigned(debugDesc.Height*(-focusOffsetY)/100);
             auto top=texturePixel(textures[ordinal],interior,topRow);
             assert(((top>>8)&255)==255&&((top>>16)&255)==0&&(top&255)>80);
         }
@@ -494,6 +498,7 @@ int main(int argc,char** argv) {
         profileOnCloseRequested|=!std::strcmp(argv[arg],"--profile-on-close");
         profileMenuFrames|=!std::strcmp(argv[arg],"--profile-menu-frames");
         profileCloseOtherThread|=!std::strcmp(argv[arg],"--profile-close-other-thread");
+        dynamicRequested|=!std::strcmp(argv[arg],"--dynamic-focus");
         sampledInputsRequested|=!std::strcmp(argv[arg],"--sampled-inputs");
         rejectSampledInputs|=!std::strcmp(argv[arg],"--reject-sampled-inputs");
         outerBlurRequested|=!std::strcmp(argv[arg],"--outer-blur");
@@ -563,6 +568,10 @@ int main(int argc,char** argv) {
         SetEnvironmentVariableA("LMU_QV_FOCUS_PIXELS_PERCENT","200");
         focusBoxPercent=focusHeightPercent=100;
     }
+    SetEnvironmentVariableA("LMU_QV_DYNAMIC_FOCUS",dynamicRequested?"1":nullptr);
+    SetEnvironmentVariableA("LMU_QV_DYNAMIC_FOCUS_MIN","80");
+    SetEnvironmentVariableA("LMU_QV_DYNAMIC_FOCUS_MAX","80");
+    if(dynamicRequested)focusBoxPercent=focusHeightPercent=80;
     XrNegotiateLoaderInfo loader{XR_LOADER_INTERFACE_STRUCT_LOADER_INFO,1,sizeof(XrNegotiateLoaderInfo),1,1,XR_MAKE_VERSION(1,0,0),XR_CURRENT_API_VERSION};
     XrNegotiateApiLayerRequest req{};
     req.structType=XR_LOADER_INTERFACE_STRUCT_API_LAYER_REQUEST;req.structVersion=1;req.structSize=sizeof(req);

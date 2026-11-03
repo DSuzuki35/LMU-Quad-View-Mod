@@ -10,6 +10,7 @@ class SettingsTests
     static void Main()
     {
         string folder=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"settings-test-"+Guid.NewGuid().ToString("N")); Directory.CreateDirectory(folder);
+        Require(typeof(LauncherSettings).GetProperty("DynamicFocusEnabled")!=null,"Dynamic focus opt-in missing");
         var s=new LauncherSettings { Backend="QVFR", OuterPercent=10,InnerPercent=200,FocusWidthPercent=33,FocusHeightPercent=25 };
         foreach(var name in new[]{"CropWidthPercent","CropHeightPercent"}) {
             var property=typeof(LauncherSettings).GetProperty(name);
@@ -48,7 +49,12 @@ class SettingsTests
         s.FocusAspectRatio=2.19283709218806m;s.RenderProfiling=true;s.RenderProfileSeconds=300;s.DiagnosticsEnabled=false;s.StereoDrawAudit=true;s.StereoShaderCapture=true;s.StereoPairProof=true;s.CpuUploadReuse=true;
         s.FocusOffsetXPercent=-50;s.FocusOffsetYPercent=12.5m;
         s.CropWidthPercent=75.5m;s.CropHeightPercent=42.25m;
+        Require(!new LauncherSettings().DynamicFocusEnabled,"Dynamic focus must default off");
+        s.DynamicFocusEnabled=true;s.DynamicFocusMinPercent=65.5m;s.DynamicFocusMaxPercent=125;s.DynamicFocusReservePercent=2.5m;
         string xml=Path.Combine(folder,"launcher-settings.xml"); QvfrSettings.Save(xml,s); var loaded=QvfrSettings.Load(xml);
+        Require(loaded.DynamicFocusEnabled&&loaded.DynamicFocusMinPercent==65.5m&&loaded.DynamicFocusMaxPercent==125&&loaded.DynamicFocusReservePercent==2.5m,"Dynamic focus roundtrip");
+        s.DynamicFocusMinPercent=126;Rejected(delegate{QvfrSettings.Validate(s);});s.DynamicFocusMinPercent=65.5m;
+        s.DynamicFocusReservePercent=0;Rejected(delegate{QvfrSettings.Validate(s);});s.DynamicFocusReservePercent=2.5m;
         Require(loaded.BenchmarkEnabled&&loaded.BenchmarkTemplate==1&&loaded.BenchmarkX==-1.25m&&loaded.BenchmarkY==0.5m&&loaded.BenchmarkDistance==2.5m&&loaded.BenchmarkWidth==0.8m,"Benchmark placement/template did not roundtrip");
         Require(loaded.BenchmarkVisibilityDevice==s.BenchmarkVisibilityDevice&&loaded.BenchmarkVisibilityName==s.BenchmarkVisibilityName&&loaded.BenchmarkVisibilityButton==127&&loaded.BenchmarkRecordingDevice==s.BenchmarkRecordingDevice&&loaded.BenchmarkRecordingButton==0,"Distinct joystick bindings did not roundtrip");
         s.BenchmarkVisibilityButton=128;Rejected(delegate {QvfrSettings.Validate(s);});s.BenchmarkVisibilityButton=127;

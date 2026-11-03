@@ -1039,8 +1039,8 @@ void removeHooks(std::size_t count) {
 }
 
 unsigned engine_game_eye(XrSwapchain chain){
-    if(!installed.load()||!nativeRuntimeSettings||chain==XR_NULL_HANDLE||
-       chain==reinterpret_cast<XrSwapchain>(std::uintptr_t(1)))return 2;
+    // OpenXR handles are opaque: software providers legitimately issue 1.
+    if(!installed.load()||!nativeRuntimeSettings||chain==XR_NULL_HANDLE)return 2;
     // LMU passes these exact two vector elements to xrCreateSwapchain and
     // reads the completed handles back for xrEnumerateSwapchainImages.
     auto* vector=address<std::uintptr_t>(0x19b28d0);

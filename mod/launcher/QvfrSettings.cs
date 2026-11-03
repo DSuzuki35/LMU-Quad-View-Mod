@@ -40,6 +40,10 @@ namespace LmuQuadViewLauncher
         public bool OuterSsr { get; set; }
         public int RenderProfileSeconds { get; set; }
         public bool NativeOuterResolution { get; set; }
+        public bool DynamicFocusEnabled { get; set; }
+        public decimal DynamicFocusMinPercent { get; set; }
+        public decimal DynamicFocusMaxPercent { get; set; }
+        public decimal DynamicFocusReservePercent { get; set; }
         public decimal OuterBlur { get; set; }
         public decimal OuterPercent { get; set; }
         public decimal InnerPercent { get; set; }
@@ -65,6 +69,7 @@ namespace LmuQuadViewLauncher
             BenchmarkVisibilityButton=BenchmarkRecordingButton=-1;
             FocusWidthPercent = FocusHeightPercent = 50;
             CropWidthPercent = CropHeightPercent = 100;
+            DynamicFocusMinPercent=70;DynamicFocusMaxPercent=100;DynamicFocusReservePercent=2;
         }
     }
     public static class QvfrSettings
@@ -74,6 +79,10 @@ namespace LmuQuadViewLauncher
         public static void Validate(LauncherSettings s)
         {
             if (s == null) throw new ArgumentNullException("settings");
+            if(s.DynamicFocusMinPercent<25||s.DynamicFocusMaxPercent>200||s.DynamicFocusMinPercent>s.DynamicFocusMaxPercent)
+                throw new ArgumentException("Dynamic focus requires 25 <= minimum <= maximum <= 200 percent of baseline FOV.");
+            if(s.DynamicFocusReservePercent<1||s.DynamicFocusReservePercent>30)
+                throw new ArgumentException("Dynamic focus GPU reserve must be between 1 and 30 percent.");
             if(s.BenchmarkTemplate<0||s.BenchmarkTemplate>1)throw new ArgumentException("Select Minimal or Detailed benchmark template.");
             if(s.BenchmarkX < -2 || s.BenchmarkX > 2 || s.BenchmarkY < -2 || s.BenchmarkY > 2 || s.BenchmarkDistance < 0.3m || s.BenchmarkDistance > 5 || s.BenchmarkWidth < 0.2m || s.BenchmarkWidth > 2)throw new ArgumentException("Benchmark placement is outside the supported range.");
             ValidateBinding(s.BenchmarkVisibilityDevice,s.BenchmarkVisibilityButton);
@@ -138,6 +147,10 @@ namespace LmuQuadViewLauncher
             s.OuterSsr=Boolean.Parse(Value(x,"OuterSsr","false"));
             s.RenderProfileSeconds=Int32.Parse(Value(x,"RenderProfileSeconds","120"),CultureInfo.InvariantCulture);
             s.NativeOuterResolution = Boolean.Parse(Value(x, "NativeOuterResolution", "true"));
+            s.DynamicFocusEnabled=Boolean.Parse(Value(x,"DynamicFocusEnabled","false"));
+            s.DynamicFocusMinPercent=Decimal.Parse(Value(x,"DynamicFocusMinPercent","70"),CultureInfo.InvariantCulture);
+            s.DynamicFocusMaxPercent=Decimal.Parse(Value(x,"DynamicFocusMaxPercent","100"),CultureInfo.InvariantCulture);
+            s.DynamicFocusReservePercent=Decimal.Parse(Value(x,"DynamicFocusReservePercent","2"),CultureInfo.InvariantCulture);
             s.OuterBlur = Decimal.Parse(Value(x, "OuterBlur", "0"), CultureInfo.InvariantCulture);
             s.OuterPercent = Decimal.Parse(Value(x, "OuterPercent", "25"), CultureInfo.InvariantCulture);
             s.InnerPercent = Decimal.Parse(Value(x, "InnerPercent", "100"), CultureInfo.InvariantCulture);
@@ -180,6 +193,9 @@ namespace LmuQuadViewLauncher
                 new XElement("OuterSsr",s.OuterSsr),
                 new XElement("RenderProfileSeconds",s.RenderProfileSeconds),
                 new XElement("NativeOuterResolution", s.NativeOuterResolution), new XElement("UseRuntimeSettings", true),
+                new XElement("DynamicFocusEnabled",s.DynamicFocusEnabled),
+                new XElement("DynamicFocusMinPercent",s.DynamicFocusMinPercent),new XElement("DynamicFocusMaxPercent",s.DynamicFocusMaxPercent),
+                new XElement("DynamicFocusReservePercent",s.DynamicFocusReservePercent),
                 new XElement("OuterBlur", s.OuterBlur),
                 new XElement("OuterPercent", s.OuterPercent), new XElement("InnerPercent", s.InnerPercent),
                 new XElement("CropWidthPercent", s.CropWidthPercent), new XElement("CropHeightPercent", s.CropHeightPercent),

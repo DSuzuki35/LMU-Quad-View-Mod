@@ -34,6 +34,13 @@ class LaunchServiceTests {
             Environment.SetEnvironmentVariable("LMU_QV_CROP_WIDTH_PERCENT","29");
             settings.CropWidthPercent=75.5m;settings.CropHeightPercent=42.25m;
             settings.FocusOffsetXPercent=-12.5m;settings.FocusOffsetYPercent=50;
+            settings.DynamicFocusEnabled=true;settings.DynamicFocusMinPercent=65.5m;settings.DynamicFocusMaxPercent=125;
+            settings.DiagnosticsEnabled=false;
+            var dynamicInfo=LaunchService.MakeStartInfo(root,settings,plan,Path.Combine(root,"dynamic.log"));
+            Check(dynamicInfo.EnvironmentVariables["LMU_QV_DYNAMIC_FOCUS"]=="1"&&dynamicInfo.EnvironmentVariables["LMU_QV_DYNAMIC_FOCUS_MIN"]=="65.5"&&dynamicInfo.EnvironmentVariables["LMU_QV_DYNAMIC_FOCUS_MAX"]=="125","Dynamic focus export independent of diagnostics");
+            settings.Backend="VRS";
+            Check(LaunchService.MakeStartInfo(root,settings,plan,Path.Combine(root,"vrs.log")).EnvironmentVariables["LMU_QV_DYNAMIC_FOCUS"]=="0","VRS must disable dynamic quad focus");
+            settings.Backend="QVFR";settings.DiagnosticsEnabled=true;
             var info=LaunchService.MakeStartInfo(root,settings,plan,Path.Combine(root,"quad.log"));
             Check(info.EnvironmentVariables["LMU_QV_CROP_WIDTH_PERCENT"]=="75.5"&&info.EnvironmentVariables["LMU_QV_CROP_HEIGHT_PERCENT"]=="42.25","Independent crop not exported invariantly");
             Check(Environment.GetEnvironmentVariable("LMU_QV_CROP_WIDTH_PERCENT")=="29","Crop leaked into host environment");

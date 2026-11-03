@@ -32,6 +32,15 @@ namespace LmuQuadViewLauncher
 
     public sealed class BenchmarkSnapshot
     {
+        public bool FocusFovValid { get; internal set; }
+        public bool DynamicFocus { get; internal set; }
+        public bool DynamicFocusHolding { get; internal set; }
+        public double FocusScalePercent { get; internal set; }
+        public double FocusLeftHorizontal { get; internal set; }
+        public double FocusLeftVertical { get; internal set; }
+        public double FocusRightHorizontal { get; internal set; }
+        public double FocusRightVertical { get; internal set; }
+        public ulong FocusFrame { get; internal set; }
         public double Fps { get; internal set; }
         public double FrameMs { get; internal set; }
         public double AppWallMs { get; internal set; }
@@ -53,6 +62,21 @@ namespace LmuQuadViewLauncher
 
     internal static class BenchmarkReader
     {
+        internal static void ReadFocus(MemoryMappedViewAccessor view,BenchmarkSnapshot snapshot)
+        {
+            snapshot.FocusFovValid=false;
+            int sequence=view.ReadInt32(136);if(sequence==0||(sequence&1)!=0)return;
+            Thread.MemoryBarrier();
+            uint flags=view.ReadUInt32(140);float scale=view.ReadSingle(144);
+            float lh=view.ReadSingle(148),lv=view.ReadSingle(152),rh=view.ReadSingle(156),rv=view.ReadSingle(160);
+            ulong frame=view.ReadUInt64(168);
+            Thread.MemoryBarrier();if(view.ReadInt32(136)!=sequence)return;
+            snapshot.DynamicFocus=(flags&2)!=0;snapshot.DynamicFocusHolding=(flags&4)!=0;
+            if((flags&1)==0||frame==0||!BenchmarkStatistics.IsValue(scale)||scale<25||scale>200)return;
+            foreach(float extent in new[]{lh,lv,rh,rv})if(!BenchmarkStatistics.IsValue(extent)||extent<=0||extent>=180)return;
+            snapshot.FocusScalePercent=scale;snapshot.FocusLeftHorizontal=lh;snapshot.FocusLeftVertical=lv;
+            snapshot.FocusRightHorizontal=rh;snapshot.FocusRightVertical=rv;snapshot.FocusFrame=frame;snapshot.FocusFovValid=true;
+        }
         internal static bool Valid(MemoryMappedViewAccessor view, int pid)
         { return view.Capacity >= BenchmarkAbi.Size && view.ReadUInt32(0) == BenchmarkAbi.Magic && view.ReadInt32(4) == 1 && view.ReadInt32(8) == BenchmarkAbi.Size && view.ReadInt32(12) == pid && view.ReadInt64(16) > 0; }
         internal static void SkipOverwritten(long published, ref long next, ref long dropped)
@@ -209,7 +233,9 @@ namespace LmuQuadViewLauncher
         void ReadDiagnostics()
         {
             if (view == null) return;
+            BenchmarkReader.ReadFocus(view,Snapshot);
             Snapshot.NativeStatus = view.ReadInt32(84); Snapshot.LastXrResult = view.ReadInt32(92); Snapshot.ProjectionCount = view.ReadInt32(96);
+            if(view.ReadInt32(88)==0||Snapshot.NativeStatus==4||Snapshot.ProjectionCount==0)Snapshot.FocusFovValid=false;
             Snapshot.GpuFailures = view.ReadUInt32(100); Snapshot.DiagnosticReason = view.ReadInt32(132);
             bool stereo=view.ReadUInt32(108)>0&&view.ReadUInt32(112)>0&&view.ReadUInt32(116)>0&&view.ReadUInt32(120)>0&&view.ReadUInt32(124)==0&&view.ReadUInt32(128)==0;
             Snapshot.Resolution = (stereo?"Stereo eyes ":"Outer ") + view.ReadUInt32(108) + "x" + view.ReadUInt32(112) + " / " + view.ReadUInt32(116) + "x" + view.ReadUInt32(120) + (stereo?"":"  Focus " + view.ReadUInt32(124) + "x" + view.ReadUInt32(128));
@@ -438,7 +464,8 @@ namespace LmuQuadViewLauncher
                 if (!detailed)
                 {
                     Line(g, 30, 185, 738, 185);
-                    Draw(g, connected ? CompactStatus(s) : "Waiting for LMU benchmark connection", 32, 199, 16, Muted, false, 702, 37);
+                    Draw(g, connected ? CompactStatus(s) : "Waiting for LMU benchmark connection", 32, 195, 14, Muted, false, 702, 22);
+                    Draw(g, connected?FocusText(s):"Center FOV --",32,217,16,Accent,false,704,25);
                 }
                 else
                 {
@@ -451,11 +478,19 @@ namespace LmuQuadViewLauncher
                     History(g, s.FrameHistory, new RectangleF(180, 326, 550, 48));
                     Draw(g, "PROJECTIONS " + s.ProjectionCount + "     RING LOSS " + s.DroppedSamples + "     SAMPLES " + s.RecordedSamples, 32, 384, 15, Accent, true, 704, 25);
                     Draw(g, s.Resolution, 32, 411, 14, Muted, true, 704, 24);
-                    Draw(g, connected ? s.Diagnostic : "Enable Benchmark, then launch LMU with diagnostics enabled.", 32, 438, 15, Muted, false, 700, 42);
-                    Draw(g, "Wall timing includes waits. GPU excludes provider / compositor.", 32, 482, 12, Muted, false, 705, 18);
+                    Draw(g, connected?FocusText(s):"Center FOV --",32,434,16,Accent,false,704,25);
+                    Draw(g, connected ? s.Diagnostic : "Enable Benchmark, then launch LMU with diagnostics enabled.", 32, 460, 12, Muted, false, 700, 22);
+                    Draw(g, (connected&&s.FocusFovValid?"FOV frame "+s.FocusFrame+" | ":"")+"GPU excludes provider / compositor.", 32, 486, 11, Muted, false, 705, 16);
                 }
             }
             return bitmap;
+        }
+        internal static string FocusText(BenchmarkSnapshot s)
+        {
+            if(!s.FocusFovValid)return "Center FOV -- (no rendered quad scene)";
+            return String.Format(CultureInfo.InvariantCulture,"Center {0:0.#}% {1} | L {2:0.0} x {3:0.0} deg | R {4:0.0} x {5:0.0} deg",
+                s.FocusScalePercent,s.DynamicFocus?(s.DynamicFocusHolding?"HOLD":"AUTO"):"FIXED",
+                s.FocusLeftHorizontal,s.FocusLeftVertical,s.FocusRightHorizontal,s.FocusRightVertical);
         }
         static string CompactStatus(BenchmarkSnapshot s)
         {

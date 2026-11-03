@@ -310,6 +310,10 @@ namespace LmuQuadViewLauncher
             TextAlign=HorizontalAlignment.Right,Name="RenderProfileSeconds",AccessibleName="RenderProfileSeconds",Enabled=false};
         readonly PercentSetting outer = new PercentSetting("Outer resolution", 10, 400);
         readonly PercentSetting inner = new PercentSetting("Inner resolution", 25, 400);
+        readonly CheckBox dynamicFocus=Toggle("Enable dynamic center FOV (experimental)");
+        readonly PercentSetting dynamicMin=new PercentSetting("Minimum (% of baseline)",25,200) {Name="DynamicFocusMinPercent",Value=70};
+        readonly PercentSetting dynamicMax=new PercentSetting("Maximum (% of baseline)",25,200) {Name="DynamicFocusMaxPercent",Value=100};
+        readonly PercentSetting dynamicReserve=new PercentSetting("GPU reserve (%)",1,30) {Name="DynamicFocusReservePercent",Value=2};
         readonly PercentSetting cropWidth = new PercentSetting("Width", 25, 100) { Name="CropWidthPercent", Value=100 };
         readonly PercentSetting cropHeight = new PercentSetting("Height", 25, 100) { Name="CropHeightPercent", Value=100 };
         readonly PercentSetting focusWidth = new PercentSetting("Width", 10, 90);
@@ -528,10 +532,10 @@ namespace LmuQuadViewLauncher
         }
         void BuildRendering()
         {
-            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 6, Margin = new Padding(0) };
+            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 7, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 260)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 280));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 250)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 270)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54)); renderingPage.SetContent(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 250)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 270)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 330)); renderingPage.SetContent(grid);
             var provider = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
             var p = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7, Margin = new Padding(0) };
             p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -592,6 +596,16 @@ namespace LmuQuadViewLauncher
             info.Controls.Add(Caption("Softens peripheral shimmer; adds a small GPU pass. Focus stays sharp. 0 = off."), 1, 1);
             preview.Controls.Add(info); grid.Controls.Add(preview, 0, 4); grid.SetColumnSpan(preview, 2);
             grid.Controls.Add(resolutionHint, 0, 5); grid.SetColumnSpan(resolutionHint, 2);
+            var dynamicCard=new Surface {Name="DynamicFocusCard",Dock=DockStyle.Fill,Margin=new Padding(0,0,0,14),Padding=new Padding(17,12,17,10)};
+            var dynamicContent=Stack(5);
+            dynamicContent.RowStyles.Add(new RowStyle(SizeType.Absolute,34));
+            dynamicContent.RowStyles.Add(new RowStyle(SizeType.Absolute,65));dynamicContent.RowStyles.Add(new RowStyle(SizeType.Absolute,65));
+            dynamicContent.RowStyles.Add(new RowStyle(SizeType.Absolute,65));dynamicContent.RowStyles.Add(new RowStyle(SizeType.Percent,100));
+            dynamicFocus.Name="DynamicFocusEnabled";
+            dynamicContent.Controls.Add(dynamicFocus,0,0);dynamicContent.Controls.Add(dynamicMin,0,1);
+            dynamicContent.Controls.Add(dynamicMax,0,2);dynamicContent.Controls.Add(dynamicReserve,0,3);
+            dynamicContent.Controls.Add(Caption("Scales both center FOV axes relative to your Focus region, preserving aspect ratio. Resolution stays fixed. GPU app-time estimate excludes compositor work; savings are not guaranteed. Pauses while render profiling is enabled. Enable on next launch; adjusts while driving."),0,4);
+            dynamicCard.Controls.Add(dynamicContent);grid.Controls.Add(dynamicCard,0,6);grid.SetColumnSpan(dynamicCard,2);
         }
         Control SettingCard(string title, PercentSetting first, PercentSetting second, string hint, Padding margin)
         {
@@ -804,6 +818,7 @@ namespace LmuQuadViewLauncher
             outer.Enabled = inner.Enabled = qvfr;
             ((TableLayoutPanel)outer.Parent).GetControlFromPosition(0,3).Text=vrs?"Stereo VRS uses full runtime/game resolution. Adjust resolution there.":"Linear scale per dimension.";
             focusWidth.Enabled = focusHeight.Enabled = qvfr||vrs;
+            dynamicFocus.Enabled=dynamicMin.Enabled=dynamicMax.Enabled=dynamicReserve.Enabled=!vrs;
             vrsRate.Enabled=vrs;cropWidth.Enabled=cropHeight.Enabled=outerBlur.Enabled=nativeOuter.Enabled=outline.Enabled=!vrs;
             Controls.Find("ResetCrop",true)[0].Enabled=!vrs;
             manifest.Enabled = browseManifest.Enabled = qvfr;
@@ -869,6 +884,7 @@ namespace LmuQuadViewLauncher
             cpuOuterReuse.Checked=s.CpuOuterReuse;outerSsr.Checked=s.OuterSsr;
             profileDuration.Value=s.RenderProfileSeconds;
             outer.Value = s.OuterPercent; inner.Value = s.InnerPercent;
+            dynamicFocus.Checked=s.DynamicFocusEnabled;dynamicMin.Value=s.DynamicFocusMinPercent;dynamicMax.Value=s.DynamicFocusMaxPercent;dynamicReserve.Value=s.DynamicFocusReservePercent;
             cropWidth.Value=s.CropWidthPercent;cropHeight.Value=s.CropHeightPercent;
             SetFocusDisplay(s.FocusWidthPercent,s.FocusHeightPercent,s.Backend=="VRS");
             focusOffsetX.Value=s.FocusOffsetXPercent;focusOffsetY.Value=s.FocusOffsetYPercent;
@@ -887,6 +903,7 @@ namespace LmuQuadViewLauncher
                 BenchmarkVisibilityDevice=visibilityBinding==null?"":visibilityBinding.Device.ToString("D"),BenchmarkVisibilityName=visibilityBinding==null?"":visibilityBinding.Name,BenchmarkVisibilityButton=visibilityBinding==null?-1:visibilityBinding.Button,
                 BenchmarkRecordingDevice=recordingBinding==null?"":recordingBinding.Device.ToString("D"),BenchmarkRecordingName=recordingBinding==null?"":recordingBinding.Name,BenchmarkRecordingButton=recordingBinding==null?-1:recordingBinding.Button,
                 OuterPercent = outer.Value, InnerPercent = inner.Value,
+                DynamicFocusEnabled=dynamicFocus.Checked,DynamicFocusMinPercent=dynamicMin.Value,DynamicFocusMaxPercent=dynamicMax.Value,DynamicFocusReservePercent=dynamicReserve.Value,
                 CropWidthPercent=cropWidth.Value,CropHeightPercent=cropHeight.Value,
                 FocusWidthPercent = focusGeometry==null||focusDisplayedAsVrs?focusWidth.Value:focusGeometry.ProviderWidth(focusWidth.Value),
                 FocusHeightPercent = focusGeometry==null||focusDisplayedAsVrs?focusHeight.Value:focusGeometry.ProviderHeight(focusHeight.Value),

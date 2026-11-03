@@ -16,6 +16,42 @@ Enable Benchmark before launching and leave the launcher open. See
 also includes the motion-compensation and mod-owned crop changes below; real
 headset and joystick compatibility still needs tester validation.
 
+## Dynamic center FOV (unreleased test build)
+
+In **Rendering**, scroll to **Enable dynamic center FOV (experimental)**.
+Minimum and Maximum are percentages of your configured baseline Focus region:
+defaults 70–100%, allowed 25–200%. Both tangent-space FOV axes scale together,
+preserving aspect ratio and gaze center. They are not degrees or percentages of
+the headset's entire view. The existing rendered crop can further constrain them.
+Enable before launching LMU; the FOV then adjusts automatically while driving.
+
+**GPU reserve** defaults to 2%. Asynchronous GPU app timing is sampled every
+eight frames and smoothed. Sustained reserve below target shrinks the focus by
+two percentage points after 250 ms; reserve above target + 5 points expands it
+by one point after one second. Menu, failed, missing and stale samples cannot
+drive adjustments. Both eyes use a stable scale for each display time.
+
+**Resolution stays fixed.** Smaller FOV does not reduce pixel count; savings
+are not guaranteed. Larger FOV spreads the same pixels over more view area.
+Reserve estimates exclude compositor work and are not whole-GPU utilization.
+Diagnostics and benchmark UI are optional. Benchmark and dynamic focus share
+one timing span. **Disable render profiling for automatic adjustment**: while
+it or legacy engine GPU timing is armed, dynamic focus holds its last size to
+avoid conflicting queries. Stereo VRS disables dynamic quad focus.
+
+With diagnostics enabled, `dynamic_focus` entries report scale changes, timing
+and hold reasons. Start with more reserve if 2% is too tight. These changes have
+automated coverage but still require headset and performance validation.
+
+Enable **Benchmark** and leave the launcher open to see live FOV in both overlay
+layouts: baseline scale, AUTO/FIXED/HOLD, and actual left/right horizontal ×
+vertical degrees after crop constraints. Detailed also shows the source frame.
+Updates follow the overlay's existing 5 Hz refresh; menu or failed frames show
+`--` instead of a stale scene FOV. HOLD means another GPU profiler is armed.
+
+This test build also fixes valid QVFR swapchain handle `1` being rejected as a
+placeholder, which could result in zero submitted quad projections.
+
 ## Stereo VRS (experimental)
 
 Choose **Stereo VRS (NVIDIA, experimental)** for two native stereo views with

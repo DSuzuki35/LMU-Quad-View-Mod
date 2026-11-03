@@ -5,6 +5,8 @@
 #include "focus_overlay.hpp"
 #include "xr_sizes.hpp"
 #include "focus_box.hpp"
+#include "dynamic_focus.hpp"
+#include <limits>
 #include "view_crop.hpp"
 #include "outer_resample.hpp"
 #include "render_profile.hpp"
@@ -117,6 +119,12 @@ struct State {
     bool debugDrawn[4]{};
     bool waitPending=false, waitShouldRender=false;
     XrTime pendingTime{};
+    XrDuration pendingPeriod{},framePeriod{};
+    lmuqv::DynamicFocus dynamicFocus;
+    double dynamicFrameScale=100;
+    XrTime dynamicLocateTime{};
+    bool dynamicScaleLocated=false;
+    bool engineGpuTimingArmed=false;
     XrTime predictedTime{}, locateTime{};
     XrSpace locateSpace{};
     XrView views[4]{};
@@ -150,6 +158,29 @@ struct State {
 lmuqv::benchmark::Transport benchmarkTransport;
 lmuqv::benchmark::Overlay benchmarkOverlay;
 lmuqv::benchmark::GpuSpan<> benchmarkGpu;
+// Share one disjoint query span with benchmark mode; D3D11 disjoint spans must not nest.
+double dynamicGpuMs=lmuqv::benchmark::missing();uint64_t dynamicGpuFrame=0;bool dynamicGpuValid=false;
+struct DynamicSample {uint64_t frame=0;double periodMs=0;bool valid=false;};
+std::array<DynamicSample,128> dynamicSamples{};
+// Profiling can start at an engine hook after BeginFrame. Reserve its GPU
+// timing while armed, so disjoint queries never overlap in the same context.
+bool frameGpuSamplingAllowed(){return !s.engineGpuTimingArmed&&!lmuqv::renderProfile.enabled();}
+void dynamicFinish(unsigned submitted,XrResult result){
+    if(!s.dynamicFocus.enabled())return;
+    const bool scene=frameGpuSamplingAllowed()&&s.frame&&s.shouldRender&&s.sceneFocus[0]&&s.sceneFocus[1]&&submitted&&XR_SUCCEEDED(result);
+    if(!scene){s.dynamicFocus.resetEvidence();dynamicSamples={};}
+    dynamicSamples[s.frames%dynamicSamples.size()]={s.frames,double(s.framePeriod)/1e6,scene};
+    double ms=0;uint64_t frame=0;
+    dynamicGpuValid=benchmarkGpu.poll(ms,frame);dynamicGpuMs=ms;dynamicGpuFrame=frame;
+    if(!dynamicGpuValid&&s.frames%120==0)logf("dynamic_focus holding scale=%.2f%% reason=%s queryFailures=%u",s.dynamicFocus.scale(),frameGpuSamplingAllowed()?"no_fresh_scene_timing":"other_gpu_timing_armed",benchmarkGpu.failures);
+    if(dynamicGpuValid){
+        const auto& sample=dynamicSamples[frame%dynamicSamples.size()];
+        if(!scene||sample.frame!=frame||!sample.valid)return;
+        const bool changed=s.dynamicFocus.sample(ms,sample.periodMs,frame,s.frames);
+        if(changed||s.frames%120==0)logf("dynamic_focus sampleFrame=%llu gpuAppMs=%.3f budgetMs=%.3f estimatedHeadroom=%.2f%% nextScale=%.2f%% queryFailures=%u (fixed resolution, excludes compositor)",
+            static_cast<unsigned long long>(frame),ms,sample.periodMs,sample.periodMs>0?100*(1-ms/sample.periodMs):0,s.dynamicFocus.scale(),benchmarkGpu.failures);
+    }
+}
 bool benchmarkEnabled=false,benchmarkOverlayReady=false,benchmarkOverlayCapacityFailure=false;
 uint32_t benchmarkLayerLimit=0;
 int64_t benchmarkBeginQpc=0,benchmarkPreviousSceneQpc=0;
@@ -171,9 +202,24 @@ void benchmarkPublish(unsigned submitted,int reason,int64_t preSubmit,int64_t po
     if(!benchmarkEnabled)return;auto& data=*benchmarkTransport.data();auto& h=data.header;
     lmuqv::benchmark::Sample sample{};sample.qpc=postSubmit;sample.frame=s.frames;
     const bool scene=s.sceneFocus[0]&&s.sceneFocus[1];double scale=1000.0/double(h.frequency);
+    lmuqv::benchmark::FocusTelemetry focus;
+    focus.frame=s.frames;focus.scale=float(s.dynamicFrameScale);
+    focus.flags=(s.dynamicFocus.enabled()?2u:0u)|(s.dynamicFocus.enabled()&&!frameGpuSamplingAllowed()?4u:0u);
+    if(s.quad&&scene&&s.shouldRender&&submitted&&XR_SUCCEEDED(result)){
+        constexpr float degrees=57.29577951308232f;
+        focus.leftHorizontal=(s.views[2].fov.angleRight-s.views[2].fov.angleLeft)*degrees;
+        focus.leftVertical=(s.views[2].fov.angleUp-s.views[2].fov.angleDown)*degrees;
+        focus.rightHorizontal=(s.views[3].fov.angleRight-s.views[3].fov.angleLeft)*degrees;
+        focus.rightVertical=(s.views[3].fov.angleUp-s.views[3].fov.angleDown)*degrees;
+        const float extents[]{focus.leftHorizontal,focus.leftVertical,focus.rightHorizontal,focus.rightVertical};
+        if(std::all_of(std::begin(extents),std::end(extents),[](float v){return std::isfinite(v)&&v>0&&v<180;}))focus.flags|=1;
+    }
+    lmuqv::benchmark::publish_focus(data,focus);
     sample.intervalMs=scene&&benchmarkPreviousSceneQpc?double(benchmarkBeginQpc-benchmarkPreviousSceneQpc)*scale:lmuqv::benchmark::missing();
     sample.appMs=benchmarkBeginQpc?double(preSubmit-benchmarkBeginQpc)*scale:lmuqv::benchmark::missing();sample.providerMs=double(postSubmit-preSubmit)*scale;
-    sample.gpuMs=lmuqv::benchmark::missing();bool gpu=benchmarkGpu.poll(sample.gpuMs,sample.gpuFrame);
+    sample.gpuMs=lmuqv::benchmark::missing();bool gpu=false;
+    if(s.dynamicFocus.enabled()){gpu=dynamicGpuValid;sample.gpuMs=dynamicGpuMs;sample.gpuFrame=dynamicGpuFrame;}
+    else gpu=benchmarkGpu.poll(sample.gpuMs,sample.gpuFrame);
     sample.flags=(scene?1u:0u)|(s.shouldRender?2u:0u)|(submitted?4u:0u)|(gpu?8u:0u);sample.result=result;
     benchmarkPreviousSceneQpc=scene&&XR_SUCCEEDED(result)?benchmarkBeginQpc:0;
     h.running=s.running?1:0;h.result=result;h.projections=int32_t(submitted);h.gpuFailures=benchmarkGpu.failures;
@@ -309,7 +355,7 @@ void destroyOuter() {
 }
 void clearSession() {
     vrsGaze.resetSession();
-    benchmarkReset();
+    benchmarkReset();dynamicGpuValid=false;dynamicSamples={};s.dynamicFocus.resetEvidence();s.dynamicScaleLocated=false;
     for(auto& entry:s.appChains)clearFocusRtvs(entry.second);
     destroyOuter();
     outerResample.reset();cropResample.reset();
@@ -579,14 +625,14 @@ XrResult XRAPI_CALL layerEndSession(XrSession session) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(s.focusOwnership&&heldFocusImages()){logf("stereo_pass end-session refused: focus lease must be resolved or session destroyed");return XR_ERROR_CALL_ORDER_INVALID;}
     XrResult r=next.EndSession(session);benchmarkRuntimeResult(r);
-    if(XR_SUCCEEDED(r)){s.running=false;clearFrame();if(benchmarkEnabled){benchmarkGpu.stop(false);benchmarkPreviousSceneQpc=0;benchmarkTransport.data()->header.running=0;benchmarkTransport.data()->header.status=1;benchmarkTransport.data()->header.reason=0;}}logf("xrEndSession result=%d",r);return r;
+    if(XR_SUCCEEDED(r)){benchmarkGpu.stop(false);dynamicSamples={};s.dynamicFocus.resetEvidence();s.running=false;clearFrame();if(benchmarkEnabled){benchmarkGpu.stop(false);benchmarkPreviousSceneQpc=0;benchmarkTransport.data()->header.running=0;benchmarkTransport.data()->header.status=1;benchmarkTransport.data()->header.reason=0;}}logf("xrEndSession result=%d",r);return r;
 }
 XrResult XRAPI_CALL layerWaitFrame(XrSession session,const XrFrameWaitInfo* info,XrFrameState* state) {
     // A pipelined WaitFrame must not hold the lock needed by the previous EndFrame.
     XrResult r=next.WaitFrame(session,info,state);
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     benchmarkRuntimeResult(r);
-    if(XR_SUCCEEDED(r)){s.pendingTime=state->predictedDisplayTime;s.waitShouldRender=state->shouldRender==XR_TRUE;s.waitPending=true;}
+    if(XR_SUCCEEDED(r)){s.pendingTime=state->predictedDisplayTime;s.pendingPeriod=state->predictedDisplayPeriod;s.waitShouldRender=state->shouldRender==XR_TRUE;s.waitPending=true;}
     if(XR_FAILED(r)||s.frames<10||s.frames%120==0)logf("xrWaitFrame mode=%s completedBegins=%llu result=%d shouldRender=%d time=%lld",s.quad?"quad":"trace",static_cast<unsigned long long>(s.frames),r,s.waitShouldRender,static_cast<long long>(s.pendingTime));
     return r;
 }
@@ -602,11 +648,16 @@ XrResult XRAPI_CALL layerBeginFrame(XrSession session,const XrFrameBeginInfo* in
     bool released=releaseOuters();
     bool hadWait=s.waitPending;
     s.frame=XR_SUCCEEDED(r)&&s.waitPending&&released;
-    if(s.waitPending){s.predictedTime=s.pendingTime;s.shouldRender=s.waitShouldRender;s.waitPending=false;}
+    if(s.waitPending){s.predictedTime=s.pendingTime;s.framePeriod=s.pendingPeriod;s.shouldRender=s.waitShouldRender;s.waitPending=false;}
     s.located=s.located&&s.locateTime==s.predictedTime;
     s.captures[0]=s.captures[1]=false;++s.frames;
     s.sceneFocus[0]=s.sceneFocus[1]=false;
-    if(benchmarkEnabled){benchmarkBeginQpc=benchmarkStart;benchmarkGpu.stop(false);if(XR_SUCCEEDED(r))benchmarkGpu.start(s.context,s.frames);}
+    if(benchmarkEnabled)benchmarkBeginQpc=benchmarkStart;
+    if(benchmarkEnabled||s.dynamicFocus.enabled()){
+        benchmarkGpu.stop(false);
+        if(s.frame&&s.shouldRender&&frameGpuSamplingAllowed())benchmarkGpu.start(s.context,s.frames);
+        else s.dynamicFocus.resetEvidence();
+    }
     std::fill(std::begin(s.debugDrawn),std::end(s.debugDrawn),false);
     if(XR_FAILED(r))s.located=false;
     if(XR_FAILED(r)||!s.frame||s.frames<10||s.frames%120==0)logf("xrBeginFrame mode=%s frame=%llu pendingWait=%d renderable=%d shouldRender=%d result=%d",s.quad?"quad":"trace",static_cast<unsigned long long>(s.frames),hadWait,s.frame,s.shouldRender,r);
@@ -657,8 +708,13 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
         for(unsigned eye=0;eye<4;++eye)logf("Raw runtime locate FOV view=%u left=%.9g right=%.9g up=%.9g down=%.9g runtimeSettings=%d",eye,runtime[eye].fov.angleLeft,runtime[eye].fov.angleRight,runtime[eye].fov.angleUp,runtime[eye].fov.angleDown,s.runtimeSettings);
         s.rawFovLogged=true;
     }
+    // Snapshot once per located display time, including locate-before-begin.
+    if(!s.dynamicScaleLocated||s.dynamicLocateTime!=info->displayTime){
+        s.dynamicFrameScale=s.dynamicFocus.scale();s.dynamicLocateTime=info->displayTime;s.dynamicScaleLocated=true;
+    }
     for(unsigned eye=2;eye<4;++eye){
-        if((!s.runtimeSettings&&!lmuqv::scale_focus_fov(runtime[eye].fov,s.focusBox.width.percent,s.focusBox.height.percent))||
+        if((s.dynamicFocus.enabled()&&!lmuqv::scale_focus_fov(runtime[eye].fov,s.dynamicFrameScale,s.dynamicFrameScale))||
+           (!s.runtimeSettings&&!lmuqv::scale_focus_fov(runtime[eye].fov,s.focusBox.width.percent,s.focusBox.height.percent))||
            !lmuqv::offset_focus_fov(runtime[eye].fov,runtime[eye-2].fov,s.focusOffsetX.percent,s.focusOffsetY.percent)){
             logf("Invalid focus/outer FOV transform eye=%u focusWidthPercent=%g focusHeightPercent=%g offsetXPercent=%g offsetYPercent=%g; rejecting located views",eye-2,s.focusBox.width.percent,s.focusBox.height.percent,s.focusOffsetX.percent,s.focusOffsetY.percent);
             return XR_ERROR_RUNTIME_FAILURE;
@@ -900,6 +956,7 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
         ++submitted;
     }
     if(submitted)benchmarkReason=0;
+    if(s.dynamicFocus.enabled())benchmarkGpu.stop(s.frame&&s.shouldRender&&submitted&&s.sceneFocus[0]&&s.sceneFocus[1]);
     if(benchmarkEnabled){
         benchmarkGpu.stop(s.sceneFocus[0]&&s.sceneFocus[1]);
         lmuqv::benchmark::Config overlayConfig;
@@ -912,6 +969,7 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
     XrResult r;
     const int64_t benchmarkPreSubmit=benchmarkEnabled?lmuqv::benchmark::ticks():0;
     {lmuqv::ProfileScope submitProfile(lmuqv::ProfileSlot::provider_submit);r=next.EndFrame(session,&modified);}
+    dynamicFinish(submitted,r);
     if(benchmarkEnabled)benchmarkPublish(submitted,benchmarkReason,benchmarkPreSubmit,lmuqv::benchmark::ticks(),r);
     lmuqv::renderProfile.xr_frame_end(s.context);
     lmuqv::stereo_audit_frame_end();
@@ -992,6 +1050,18 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
         s.vrsWidth=dimension("LMU_QV_FOCUS_WIDTH_PERCENT");s.vrsHeight=dimension("LMU_QV_FOCUS_HEIGHT_PERCENT");
         logf("vrs mode=stereo peripheral shading experimental; focus=%.1f/%.1f%%; no quad views or extra focus passes",s.vrsWidth*100,s.vrsHeight*100);
     }
+    char dynamicSetting[8]{};
+    s.engineGpuTimingArmed=!environmentWide(L"LMU_QV_GPU_TIMING_TRIGGER").empty()||!environmentWide(L"LMU_QV_BENCH_CONTROL").empty();
+    const bool dynamicRequested=quad&&GetEnvironmentVariableA("LMU_QV_DYNAMIC_FOCUS",dynamicSetting,sizeof(dynamicSetting))==1&&dynamicSetting[0]=='1';
+    auto dynamicNumber=[](const char* name,double fallback){
+        char text[64]{};const auto n=GetEnvironmentVariableA(name,text,sizeof(text));if(!n)return fallback;
+        if(n>=sizeof(text))return std::numeric_limits<double>::quiet_NaN();
+        double value=0;const auto parsed=std::from_chars(text,text+n,value,std::chars_format::fixed);
+        return parsed.ec==std::errc{}&&parsed.ptr==text+n?value:std::numeric_limits<double>::quiet_NaN();
+    };
+    const double dynamicMin=dynamicNumber("LMU_QV_DYNAMIC_FOCUS_MIN",70),dynamicMax=dynamicNumber("LMU_QV_DYNAMIC_FOCUS_MAX",100),dynamicReserve=dynamicNumber("LMU_QV_DYNAMIC_FOCUS_RESERVE",2);
+    if(!s.dynamicFocus.configure(dynamicRequested,dynamicMin,dynamicMax,dynamicReserve))logf("dynamic_focus invalid settings; disabled");
+    if(s.dynamicFocus.enabled())logf("dynamic_focus enabled min=%g%% max=%g%% reserve=%g%% (relative baseline tangent FOV; fixed resolution; GPU app-span estimate)",dynamicMin,dynamicMax,dynamicReserve);
     s.outerBlur=quad?outerBlur:0;
     if(quad)logf("Outer smoothing radius=%g output pixels; focus source untouched",s.outerBlur);
     if(quad)logf("Foveation request mode=%s; actual eye-tracking availability is determined by the downstream provider",requestEyeTracking?"auto":"fixed");

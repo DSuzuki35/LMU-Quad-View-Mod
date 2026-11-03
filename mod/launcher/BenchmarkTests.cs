@@ -24,6 +24,7 @@ class BenchmarkTests
     }
     static void Main(string[] args)
     {
+        Check(typeof(BenchmarkSnapshot).GetProperty("FocusFovValid")!=null,"Overlay rendered FOV is missing");
         var stats = BenchmarkStatistics.Calculate(new double[] { 5, 1, 4, 2, 3, Double.NaN });
         Check(stats.Count == 5 && stats.Mean == 3 && stats.P50 == 3 && stats.P95 == 5 && stats.P99 == 5, "Nearest-rank percentiles");
         Check(BenchmarkStatistics.Calculate(new double[] { Double.NaN }).Count == 0, "Missing metrics must stay missing");
@@ -44,6 +45,17 @@ class BenchmarkTests
             long next = 1, dropped = 0;
             BenchmarkReader.SkipOverwritten(5000, ref next, ref dropped);
             Check(next == 905 && dropped == 904, "Ring overrun accounting");
+            var focus=new BenchmarkSnapshot();BenchmarkReader.ReadFocus(view,focus);
+            Check(!focus.FocusFovValid,"Old producer must not invent FOV telemetry");
+            view.Write(136,2);view.Write(140,3U);view.Write(144,80f);
+            view.Write(148,45f);view.Write(152,40f);view.Write(156,46f);view.Write(160,41f);view.Write(168,42UL);
+            BenchmarkReader.ReadFocus(view,focus);
+            Check(focus.FocusFovValid&&focus.DynamicFocus&&focus.FocusScalePercent==80&&focus.FocusLeftHorizontal==45&&focus.FocusRightVertical==41&&focus.FocusFrame==42,"Actual frame FOV extension offsets");
+            Check(BenchmarkOverlay.FocusText(focus)=="Center 80% AUTO | L 45.0 x 40.0 deg | R 46.0 x 41.0 deg","Overlay must display both actual eye extents");
+            view.Write(136,3);BenchmarkReader.ReadFocus(view,focus);Check(!focus.FocusFovValid,"Torn focus snapshot accepted");
+            view.Write(136,4);view.Write(140,2U);BenchmarkReader.ReadFocus(view,focus);Check(!focus.FocusFovValid,"Menu/stale focus shown as current");
+            view.Write(136,6);view.Write(140,7U);BenchmarkReader.ReadFocus(view,focus);Check(BenchmarkOverlay.FocusText(focus).Contains("HOLD"),"Profiling hold not visible");
+            view.Write(148,Single.NaN);view.Write(136,8);BenchmarkReader.ReadFocus(view,focus);Check(!focus.FocusFovValid,"Invalid FOV accepted");
         }
         string root = args.Length > 0 ? Path.GetFullPath(args[0]) : Path.Combine(Path.GetTempPath(), "benchmark-tests-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -56,6 +68,8 @@ class BenchmarkTests
                 BenchmarkSample sample;
                 Check(BenchmarkReader.TryRead(view, 1, out sample), "Native-produced commit");
                 Check(sample.Qpc == 123456789 && sample.FrameId == 42 && sample.IntervalMs == 11.25 && sample.AppWallMs == 8.5 && sample.ProviderWallMs == 1.75 && sample.GpuMs == 6.125 && sample.GpuFrameId == 40 && sample.Flags == 15 && sample.Result == 0, "Native-produced sample field offsets");
+                var focus=new BenchmarkSnapshot();BenchmarkReader.ReadFocus(view,focus);
+                Check(focus.FocusFovValid&&focus.FocusScalePercent==80&&focus.FocusLeftHorizontal==45&&focus.FocusRightVertical==41&&focus.FocusFrame==42,"Native-produced FOV extension");
                 Console.WriteLine("Native C++ fixture / C# ABI crosscheck passed.");
             }
         }
@@ -68,6 +82,9 @@ class BenchmarkTests
             controller.Tick();Check(controller.Snapshot.Resolution=="Stereo eyes 1600x1440 / 1600x1440","Stereo benchmark invents focus targets");
             view.Write(124,1200U);view.Write(128,1200U);controller.Tick();
             Check(controller.Snapshot.Resolution=="Outer 1600x1440 / 1600x1440  Focus 1200x1200","Quad benchmark dimensions regressed");
+            view.Write(136,2);view.Write(140,3U);view.Write(144,80f);view.Write(148,45f);view.Write(152,40f);view.Write(156,46f);view.Write(160,41f);view.Write(168,42UL);
+            controller.Tick();Check(controller.Snapshot.FocusFovValid,"Live controller omitted actual FOV");
+            view.Write(88,0);controller.Tick();Check(!controller.Snapshot.FocusFovValid,"Stopped session retained rendered FOV");view.Write(88,1);
             Check(controller.Connected && view.ReadInt32(44) == 1 && (view.ReadInt32(40) & 1) == 0, "Config seqlock");
             Check(view.ReadInt32(76) == 768 && view.ReadInt32(80) == 256 && (view.ReadInt32(72) & 1) == 0 && view.ReadInt32(72) != 0, "Bitmap seqlock/dimensions");
             int sequence = view.ReadInt32(72); controller.Tick(); Check(view.ReadInt32(72) == sequence, "Bitmap updates exceeded 5Hz");
@@ -126,6 +143,7 @@ class BenchmarkTests
             using (Bitmap bmp = controller.RenderPreview()) { Check(bmp.Width <= 768 && bmp.Height <= 512, "Detailed bitmap bounds"); bmp.Save(Path.Combine(root, "detailed.png")); }
         }
         var live = new BenchmarkSnapshot { Fps = 89.9, FrameMs = 11.12, AppWallMs = 7.52, ProviderWallMs = 1.24, GpuSpanMs = 6.31, GpuSourceFrame = 4932, ProjectionCount = 1, RecordedSamples = 5941, Resolution = "Outer 1600x1440 / 1600x1440  Focus 1200x1200", Diagnostic = "Scene projections submitted; headset output is not observable here.", FrameHistory = new double[] { 11, 11.1, 11.3, 10.9, 11.1, 14, 11.4, 11.2, 11.1, 11.3, 11.1 } };
+        live.FocusFovValid=true;live.DynamicFocus=true;live.FocusScalePercent=80;live.FocusLeftHorizontal=51.4;live.FocusLeftVertical=45.2;live.FocusRightHorizontal=50.8;live.FocusRightVertical=45.2;live.FocusFrame=5941;
         using (Bitmap bmp = BenchmarkOverlay.Render(live, 1, true, true)) bmp.Save(Path.Combine(root, "detailed-live.png"));
         using (Bitmap bmp = BenchmarkOverlay.Render(live, 0, true, true)) bmp.Save(Path.Combine(root, "minimal-live.png"));
         Console.WriteLine("Benchmark tests passed: ABI, seqlock, overruns, percentiles, missing values, escaping, partial capture, CSV and bitmap previews. Artifacts: " + root);

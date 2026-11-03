@@ -4,6 +4,15 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
+## Unreleased - dynamic focus test
+
+- Optional automatic center FOV scaling with configurable min/max and GPU reserve.
+- Fixed resolution; asynchronous GPU feedback with smoothing, hysteresis, scene,
+  failure and staleness guards, and a stable scale per display time.
+- Share benchmark timing; pause adaptation while other GPU profiling is armed.
+- Accept valid QVFR handle 1 when uniquely identified in the native eye vector.
+- Headset compatibility and performance gains still require hardware testing.
+
 ## 0.2.0 - 2026-11-02
 
 - **Rendered crop is still highly experimental.** Please test and report image,

@@ -124,8 +124,8 @@ int main(){
         eyes[1]=XR_NULL_HANDLE;
         require(engine_game_eye(eyes[0])==0,"first eye could not enumerate before second eye creation");
         eyes[1]=reinterpret_cast<XrSwapchain>(std::uintptr_t(1));
-        require(engine_game_eye(eyes[0])==0&&engine_game_eye(eyes[1])==2,
-                "native vector sentinel was classified as a swapchain");
+        require(engine_game_eye(eyes[0])==0&&engine_game_eye(eyes[1])==1,
+                "valid opaque handle 1 rejected despite unique native eye identity");
         eyes[1]=right;nativeVector[1]+=sizeof(XrSwapchain);
         require(engine_game_eye(eyes[0])==2,"oversized native eye vector accepted");
         nativeVector[1]-=sizeof(XrSwapchain);nativeRuntimeSettings=false;

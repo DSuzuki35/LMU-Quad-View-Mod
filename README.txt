@@ -1,3 +1,8 @@
+UNRELEASED DYNAMIC FOCUS TEST BUILD (based on 0.2.0)
+Rendering: enable dynamic center FOV and configure min/max (% of baseline)
+and GPU reserve. Defaults: 70/100/2. Resolution remains fixed. Disable render
+profiling for automatic adjustment. See README.md. Headset testing required.
+
 LMU QUAD VIEW MOD — v0.2.0
 
 STEREO VRS (NVIDIA, EXPERIMENTAL)
