@@ -130,6 +130,7 @@ std::uint64_t nativeOuterFull[2]{};
 unsigned nativeBindingProbes[2]{};
 ViewSnapshot* nativeOuterWarmupView=nullptr;
 unsigned nativeOuterWarmupCalls=0;
+unsigned nativeOuterPrepareFailures=0,nativeOuterRetryCalls=0;
 std::atomic<bool> installed{false};
 std::size_t installedHookCount=0;
 GpuTiming gpuTiming;
@@ -643,11 +644,23 @@ void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool late
         nativeViewOriginal(pointer,objects,lights,main,later);
         ++nativeOuterFull[view->eye_index];return;
     }
+    // Loading/standby frames cannot establish a usable resource bank. This
+    // read-only query also requires current located views and matching time;
+    // unlike xr_frame_views it does not lock the submission's view snapshot.
+    XrFovf renderableFov[2]{};
+    if(!xr_frame_full_outer_fov(renderableFov)){
+        nativeViewOriginal(pointer,objects,lights,main,later);return;
+    }
     // VR wrapper associations initially reference desktop depth targets. Native
     // main-view setup replaces those during the first ordinary scene renders.
     if(view!=nativeOuterWarmupView){nativeOuterWarmupView=view;nativeOuterWarmupCalls=0;}
     if(nativeOuterWarmupCalls<120){
         ++nativeOuterWarmupCalls;
+        nativeViewOriginal(pointer,objects,lights,main,later);
+        ++nativeOuterFull[view->eye_index];return;
+    }
+    if(nativeOuterRetryCalls){
+        --nativeOuterRetryCalls;
         nativeViewOriginal(pointer,objects,lights,main,later);
         ++nativeOuterFull[view->eye_index];return;
     }
@@ -666,17 +679,28 @@ void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool late
     }
     auto& nativeOuterBank=nativeOuterBanks[nativeOuterSeparateBanks?unsigned(view->eye_index):0];
     ProfileScope prepareProfile(profile_eye(ProfileSlot::native_prepare0,unsigned(view->eye_index)));
-    bool valid=
-        readable(reinterpret_cast<void*>(renderer+0x82cd0),8)&&
-        !*reinterpret_cast<bool*>(renderer+0x76f50)&&
-        *address<float>(0x199cc18)==1.f&&(view->flags&0xc0000000u)==0;
+    const char* reason=nullptr;
+    const float renderScale=*address<float>(0x199cc18);
+    if(!readable(reinterpret_cast<void*>(renderer),0x82cd8))reason="renderer_unavailable";
+    else if(*reinterpret_cast<bool*>(renderer+0x76f50))reason="renderer_mode";
+    else if(renderScale!=1.f)reason="render_scale";
+    else if(view->flags&0xc0000000u)reason="view_flags";
     const auto passes=view->main_passes;
-    valid=valid&&passes.end>=passes.begin&&(passes.end-passes.begin)%0x94==0&&
-        passes.end-passes.begin==0x94&&readable(reinterpret_cast<void*>(passes.begin),passes.end-passes.begin);
-    if(valid)for(auto p=passes.begin;p<passes.end;p+=0x94)valid=valid&&!*reinterpret_cast<bool*>(p);
+    if(!reason&&(passes.end<passes.begin||passes.end-passes.begin!=0x94))reason="main_pass_layout";
+    if(!reason&&!readable(reinterpret_cast<void*>(passes.begin),0x94))reason="main_pass_unavailable";
+    if(!reason&&*reinterpret_cast<bool*>(passes.begin))reason="main_pass_mode";
     const float clearDepth=*reinterpret_cast<unsigned*>(reinterpret_cast<std::byte*>(view)+0x3e8)==1?0.f:1.f;
-    if(!valid||!nativeOuterBank.prepare(base,renderer,width,height,clearDepth,readable,log_line,nativeOuterSsrOptIn)){
-        nativeOuterFailed=true;log_line("native_outer refused unsupported view/resource bank; live quad fallback: full-resolution outer render resampled to runtime output; outer render savings unavailable");
+    if(!reason&&!nativeOuterBank.prepare(base,renderer,width,height,clearDepth,readable,log_line,nativeOuterSsrOptIn))reason="resource_bank";
+    if(reason){
+        // Bound allocation attempts across the session; normal full-resolution
+        // quad rendering continues while resources settle and after exhaustion.
+        nativeOuterFailed=++nativeOuterPrepareFailures>=3;
+        nativeOuterRetryCalls=nativeOuterFailed?0:120;
+        char message[512]{};std::snprintf(message,sizeof(message),
+            "native_outer refused reason=%s renderScale=%.6g flags=0x%08x passBytes=%llu attempt=%u/3 retryAfter=%u renderableViews; live quad fallback: full-resolution outer render resampled to runtime output; outer render savings unavailable%s",
+            reason,double(renderScale),view->flags,static_cast<unsigned long long>(passes.end>=passes.begin?passes.end-passes.begin:0),
+            nativeOuterPrepareFailures,nativeOuterRetryCalls,renderScale!=1.f?"; select LMU Bilinear (render scale 1) for smaller outer targets":"");
+        log_line(message);
         prepareProfile.end();nativeViewOriginal(pointer,objects,lights,main,later);return;
     }
     if(nativeOuterSsrOptIn&&!nativeOuterBank.ssrActive()){
@@ -685,7 +709,7 @@ void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool late
     }
     NativeOuterBindings bindings;
     void* target=nullptr;void* second=nullptr;
-    valid=nativeOuterBank.mapTarget(reinterpret_cast<void*>(view->render_target),target)&&
+    bool valid=nativeOuterBank.mapTarget(reinterpret_cast<void*>(view->render_target),target)&&
         nativeOuterBank.mapTarget(reinterpret_cast<void*>(view->second_target_unknown),second)&&nativeOuterBank.bind(bindings);
     auto* raw=reinterpret_cast<std::byte*>(view);
     valid=valid&&bindings.add(address<unsigned>(0x1b1c654),width)&&bindings.add(address<unsigned>(0x1b1c658),height)&&
@@ -1104,6 +1128,7 @@ bool engine_start(ID3D11DeviceContext* context) {
         if(!cropAnchors){log_line("engine: native FOV crop ABI anchor mismatch; hooks refused");return false;}
     }
     nativeOuterWarmupView=nullptr;nativeOuterWarmupCalls=0;nativeOuterCompleted[0]=nativeOuterCompleted[1]=0;
+    nativeOuterPrepareFailures=nativeOuterRetryCalls=0;
     nativeOuterFull[0]=nativeOuterFull[1]=0;nativeBindingProbes[0]=nativeBindingProbes[1]=0;
     if(nativeOuterOptIn){
         if(worldVrsOptIn){log_line("engine: initial native outer experiment requires VRS disabled");return false;}

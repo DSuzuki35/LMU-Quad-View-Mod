@@ -367,8 +367,11 @@ XrResult queryQuad(XrInstance instance,XrSystemId system,std::array<XrViewConfig
     uint32_t count=0;
     XrResult r=next.EnumerateViewConfigurationViews(instance,system,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO,4,&count,out.data());
     for(auto& v:out) v.next=nullptr;
-    if(XR_FAILED(r)) return r;
-    return count==4 ? XR_SUCCESS : XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
+    if(XR_FAILED(r)||count!=4){
+        logf("Quad view recommendation query failed result=%d count=%u expected=4 eyeTracked=%d; check provider/runtime startup log",r,count,s.eyeTrackingActive);
+        return XR_FAILED(r)?r:XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
+    }
+    return XR_SUCCESS;
 }
 XrResult selectRuntimeSizes(const std::array<XrViewConfigurationView,4>& runtime){
     const uint32_t width=(std::max)(runtime[2].recommendedImageRectWidth,runtime[3].recommendedImageRectWidth);
@@ -559,7 +562,7 @@ XrResult XRAPI_CALL layerCreateSession(XrInstance instance,const XrSessionCreate
         XrResult sizing=queryQuad(instance,info->systemId,runtime);if(XR_FAILED(sizing))return sizing;
         sizing=selectRuntimeSizes(runtime);if(XR_FAILED(sizing))return sizing;
     }
-    XrResult r=next.CreateSession(instance,info,session);if(XR_FAILED(r))return r;
+    XrResult r=next.CreateSession(instance,info,session);if(XR_FAILED(r)){logf("Downstream xrCreateSession failed result=%d",r);return r;}
     s.session=*session;s.system=info->systemId;
     if(s.vrs&&s.requestEyeTracking)logf("vrs gaze initialized=%d; invalid/unavailable gaze uses fixed focus",vrsGaze.initialize(*session));
     for(auto chain=static_cast<const XrBaseInStructure*>(info->next);chain;chain=chain->next) {

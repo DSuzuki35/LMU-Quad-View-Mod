@@ -1,4 +1,4 @@
-param([string]$LayerOutput=(Join-Path $PSScriptRoot 'build/lmu_quadview.dll'),[switch]$StereoShaderOnly,[switch]$StereoProofOnly,[switch]$UploadBatchOnly,[switch]$FocusLeaseOnly)
+param([string]$LayerOutput=(Join-Path $PSScriptRoot 'build/lmu_quadview.dll'),[switch]$StereoShaderOnly,[switch]$StereoProofOnly,[switch]$UploadBatchOnly,[switch]$FocusLeaseOnly,[switch]$AutoloadOnly)
 $ErrorActionPreference='Stop'
 if(!(Get-Command cl.exe -ErrorAction SilentlyContinue)){throw 'Run build-msvc.cmd to initialize the x64 compiler environment.'}
 $LayerOutput=[IO.Path]::GetFullPath($LayerOutput)
@@ -27,6 +27,14 @@ try {
     $versionResource = Join-Path $build 'version.res'
     & rc.exe /nologo "/fo$versionResource" $versionFiles.ResourcePath
     if ($LASTEXITCODE -ne 0) { throw 'Native version resource compilation failed' }
+    Compile ($common+@('tests/autoload_policy_test.cpp',('/Fe'+(Join-Path $build 'autoload_policy_test.exe'))))
+    Run-Test 'autoload_policy_test'
+    Compile ($common+@('tests/autoload_activation_test.cpp',('/Fe'+(Join-Path $build 'autoload_activation_test.exe'))))
+    Run-Test 'autoload_activation_test'
+    Compile ($common+@('/LD','autoload.cpp',$versionResource,'advapi32.lib','ole32.lib',('/Fe'+(Join-Path ([IO.Path]::GetDirectoryName($LayerOutput)) 'lmu_autostart.dll'))))
+    Compile ($common+@('tests/autoload_passthrough_test.cpp','autoload.cpp','advapi32.lib','ole32.lib',('/Fe'+(Join-Path $build 'autoload_passthrough_test.exe'))))
+    Run-Test 'autoload_passthrough_test'
+    if($AutoloadOnly){return}
     if($FocusLeaseOnly){
         Compile ($common+@('tests/focus_image_lease_test.cpp','d3d11.lib','d3dcompiler.lib',('/Fe'+(Join-Path $build 'focus_image_lease_test.exe'))))
         Run-Test 'focus_image_lease_test'

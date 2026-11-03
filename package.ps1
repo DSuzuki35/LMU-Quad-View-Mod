@@ -4,7 +4,7 @@ $ErrorActionPreference = 'Stop'
 $version = Get-LmuVersion
 if (!$ArchiveName) { $ArchiveName = 'LMU-Quad-View-Mod-' + $version + '.zip' }
 # Refuse accidentally mixing binaries from an earlier release with current docs.
-foreach ($binary in @('mod/build/lmu_quadview.dll','mod/build/LMU-QuadView-Launcher.exe')) {
+foreach ($binary in @('mod/build/lmu_quadview.dll','mod/build/lmu_autostart.dll','mod/build/LMU-QuadView-Launcher.exe')) {
     $metadata = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $PSScriptRoot $binary))
     if ($metadata.ProductVersion -cne $version -or $metadata.FileVersion -cne ($version + '.0')) {
         throw "$binary does not match VERSION ($version). Rebuild native code and the launcher before packaging."
@@ -19,6 +19,7 @@ $stage = Join-Path $OutputDirectory ('package-' + [Guid]::NewGuid().ToString('N'
 New-Item -ItemType Directory -Path $stage,(Join-Path $stage 'build'),(Join-Path $stage 'licenses'),(Join-Path $stage 'tools'),(Join-Path $stage 'docs') | Out-Null
 $files = @{
     'mod/build/lmu_quadview.dll' = 'build/lmu_quadview.dll'
+    'mod/build/lmu_autostart.dll' = 'build/lmu_autostart.dll'
     'mod/build/LMU-QuadView-Launcher.exe' = 'LMU-QuadView-Launcher.exe'
     'mod/build/LMU-QuadView-Launcher.exe.config' = 'LMU-QuadView-Launcher.exe.config'
     'PORTABLE-QVFR.txt' = 'PORTABLE-QVFR.txt'

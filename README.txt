@@ -1,4 +1,4 @@
-LMU QUAD VIEW MOD — v0.3.0
+LMU QUAD VIEW MOD — v0.3.1
 
 SIGNED BUILD
 I bought a code-signing certificate for this project. The DLL and executables
@@ -7,13 +7,15 @@ Publisher: Open Source Developer Daniel Sosulski. Windows reputation warnings
 may still appear.
 
 STEAM PLAY
-Save settings, then use Setup > Copy Steam launch option. Paste the complete
-line into Steam > Le Mans Ultimate > Properties > General > Launch Options.
-Keep %command% in that line. Steam Play then starts LMU with the saved mod
-settings, and the launcher minimizes while serving the overlay. It closes
-after LMU exits. Remove the wrapper from Launch Options to undo this setup.
-See docs/STEAM-LAUNCH.md for details and additional arguments.
-Automated tests pass; live Steam/headset validation remains outstanding.
+Save settings, close LMU, then use Setup > Install / update automatic startup.
+Approve the Windows administrator prompt. Clear the old --steam %command%
+wrapper if you used it, preserving unrelated game arguments. Choose Steam's
+OpenXR launch mode. No custom launch option or background starter is needed.
+The signed implicit layer applies saved settings only in supported LMU sessions.
+The benchmark launcher attaches minimized when enabled and closes with LMU.
+Keep this package in place; reinstall after moving/updating it. Do not run LMU
+as administrator. Use Setup > Remove automatic startup to undo registration.
+See docs/STEAM-LAUNCH.md for details and the optional legacy wrapper.
 
 OPTIONAL SUPPORT
 Buy Me a Coffee: https://buymeacoffee.com/dansuzuki

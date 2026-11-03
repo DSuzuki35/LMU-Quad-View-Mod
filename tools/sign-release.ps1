@@ -14,7 +14,7 @@ if (!$SignTool) {
 if (!$SignTool -or !(Test-Path -LiteralPath $SignTool)) { throw 'Windows SDK SignTool not found.' }
 $cert = Get-Item -LiteralPath ('Cert:\CurrentUser\My\' + $Thumbprint)
 if (!$cert.HasPrivateKey -or $cert.NotAfter -le (Get-Date) -or $cert.NotBefore -gt (Get-Date)) { throw 'A current SimplySign code-signing certificate with its private-key provider is required.' }
-$files = @('mod/build/lmu_quadview.dll','mod/build/LMU-QuadView-Launcher.exe') | ForEach-Object { Join-Path $repo $_ }
+$files = @('mod/build/lmu_quadview.dll','mod/build/lmu_autostart.dll','mod/build/LMU-QuadView-Launcher.exe') | ForEach-Object { Join-Path $repo $_ }
 $proof = Join-Path $repo 'mod/build/msvc/stereo_instancing_test.exe'
 if (!(Test-Path -LiteralPath $proof)) { $proof = Join-Path $repo 'mod/build/stereo_instancing_test.exe' }
 $files += $proof

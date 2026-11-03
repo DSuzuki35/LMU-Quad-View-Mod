@@ -506,7 +506,7 @@ namespace LmuQuadViewLauncher
             KeyDown+=delegate(object sender,KeyEventArgs e) { if(e.KeyCode==Keys.Escape&&joystick!=null&&joystick.Listening) {joystick.CancelListen();bindingStatus.Text="Button assignment cancelled.";e.Handled=true;} };
             Shown+=delegate { if(joystick==null) {joystick=new JoystickInput(new DirectInputButtonSource(Handle));UpdateBindings();joystick.VisibilityPressed+=delegate {benchmark.ToggleOverlay();};joystick.RecordingPressed+=delegate {benchmark.ToggleRecording();};benchmarkTimer.Start();} };
             benchmarkTimer.Tick+=delegate { PollBenchmark(); };
-            steamLifetime.Tick+=delegate { if(steamGame!=null&&steamGame.HasExited)Close(); };
+            steamLifetime.Tick+=delegate { if(steamGame!=null&&!AutoStart.IsProcessRunning(steamGame.Id))Close(); };
         }
         Control BuildSidebar()
         {
@@ -612,7 +612,7 @@ namespace LmuQuadViewLauncher
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 153)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 900)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 190)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 900)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 250)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
             var browseGame = Theme.Button("Browse", false); browseGame.Click += delegate {
                 using (var d = new FolderBrowserDialog { Description = "Select the folder containing Le Mans Ultimate.exe", ShowNewFolderButton = false }) {
                     if (Directory.Exists(game.Text)) d.SelectedPath = game.Text;
@@ -653,12 +653,13 @@ namespace LmuQuadViewLauncher
             stack.Controls.Add(Caption("Requires smaller native outer targets. Reduces outer reflection resources with a 40% per-axis floor; reflections may soften, focus stays unchanged. Unsupported layouts keep native resources."),0,21);
             options.Controls.Add(stack); grid.Controls.Add(options, 0, 3);
             var steamCard=new Surface {Name="SteamLaunchCard",Dock=DockStyle.Fill,Margin=new Padding(0,0,0,14),Padding=new Padding(17,12,17,10)};
-            var steamStack=Stack(3);steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,32));steamStack.RowStyles.Add(new RowStyle(SizeType.Percent,100));steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,40));
+            var steamStack=Stack(4);steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,32));steamStack.RowStyles.Add(new RowStyle(SizeType.Percent,100));steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,44));steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,44));
             steamStack.Controls.Add(Theme.Label("Launch from Steam",13F,Theme.Text),0,0);
-            steamStack.Controls.Add(Caption("Save settings, then paste the copied line into Steam > LMU > Properties > Launch Options. Steam Play starts the mod automatically. Clear that line to undo."),0,1);
-            var steamCopy=Theme.Button("Copy Steam launch option",false);steamCopy.Name="SteamLaunchCopy";steamCopy.Dock=DockStyle.Fill;
-            steamCopy.Click+=delegate {try {Clipboard.SetText(SteamLaunch.LaunchOptions(Application.ExecutablePath));status.Text="Copied. Save settings, then paste into LMU's Steam Launch Options. Keep %command% and append any additional game arguments.";}catch(Exception error){ShowError(error.Message);}};
-            steamStack.Controls.Add(steamCopy,0,2);steamCard.Controls.Add(steamStack);grid.Controls.Add(steamCard,0,4);
+            steamStack.Controls.Add(Caption("Install once (administrator approval), then choose Steam's OpenXR mode. No custom launch option needed. Saved settings apply next launch. Keep this package in its current folder; reinstall after moving or updating it."),0,1);
+            var install=Theme.Button("Install / update automatic startup",false);install.Name="AutoStartInstall";install.Dock=DockStyle.Fill;
+            var remove=Theme.Button("Remove automatic startup",false);remove.Name="AutoStartRemove";remove.Dock=DockStyle.Fill;
+            install.Click+=delegate {ConfigureAutoStart(true);};remove.Click+=delegate {ConfigureAutoStart(false);};
+            steamStack.Controls.Add(install,0,2);steamStack.Controls.Add(remove,0,3);steamCard.Controls.Add(steamStack);grid.Controls.Add(steamCard,0,4);
             grid.Controls.Add(Caption("Keep your headset's OpenXR runtime active. Configure VectorXR's LMU Quadviews profile when using it; select one quad-view provider."), 0, 5);
         }
         static NumericUpDown BenchmarkNumber(string name,decimal min,decimal max,decimal value) {
@@ -953,6 +954,17 @@ namespace LmuQuadViewLauncher
             };
             worker.RunWorkerAsync();
         }
+        void ConfigureAutoStart(bool enable) {
+            if(busy)return;
+            try{if(enable)QvfrSettings.Save(SettingsPath,Values());}catch(Exception error){ShowError(error.Message);return;}
+            SetBusy(true);status.Text="Waiting for Windows administrator approval...";
+            var worker=new BackgroundWorker();worker.DoWork+=delegate {AutoStart.Enable(root,enable);};
+            worker.RunWorkerCompleted+=delegate(object sender,RunWorkerCompletedEventArgs e) {
+                worker.Dispose();if(IsDisposed||Disposing)return;SetBusy(false);
+                if(e.Error!=null){ShowError(e.Error.Message);return;}
+                status.Text=enable?"Automatic startup installed. Clear any old custom Steam launch option and use Steam's OpenXR mode.":"Automatic startup removed. You can still launch LMU from this launcher.";
+            };worker.RunWorkerAsync();
+        }
         void OpenLink(string url) { try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch (Exception ex) { ShowError(ex.Message); } }
         void ShowError(string message)
         {
@@ -964,13 +976,38 @@ namespace LmuQuadViewLauncher
         static void Main(string[] args)
         {
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
-            if(args.Length==0){Application.Run(new Launcher());return;}
+            string root=AppDomain.CurrentDomain.BaseDirectory;
             try {
-                SteamLaunch.LoadArguments(AppDomain.CurrentDomain.BaseDirectory,args);
-                var form=new Launcher();form.steamRequest=args;
-                form.Shown+=delegate {form.BeginInvoke(new Action(form.StartGame));};
-                Application.Run(form);
-            } catch(Exception error) {MessageBox.Show(error.Message,"LMU Quad View - Steam launch",MessageBoxButtons.OK,MessageBoxIcon.Warning);Environment.ExitCode=1;}
+                if(args.Length==3&&args[0]=="--prepare-autoload"){AutoStart.Prepare(root,Int32.Parse(args[1]),args[2]);return;}
+                if(args.Length==1&&args[0]=="--install-autoload"){AutoStart.Install(root);return;}
+                if(args.Length==1&&args[0]=="--uninstall-autoload"){AutoStart.Remove();return;}
+                if(args.Length==1&&args[0]=="--enable-autoload"){AutoStart.Enable(root,true);return;}
+                if(args.Length==1&&args[0]=="--disable-autoload"){AutoStart.Enable(root,false);return;}
+                // One benchmark/joystick controller per package, including automatic attachment.
+                string mutexName;using(var sha=System.Security.Cryptography.SHA256.Create())mutexName="Local\\LMUQuadViewUI-"+BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(root).TrimEnd('\\').ToUpperInvariant()))).Replace("-","");
+                bool first;
+                using(var mutex=new System.Threading.Mutex(true,mutexName,out first)) {
+                    if(args.Length==0){if(first)Application.Run(new Launcher());return;}
+                    if(args.Length==2&&args[0]=="--attach") {
+                        var settings=AutoStart.Settings(root);int pid=Int32.Parse(args[1]);AutoStart.ValidateProcess(settings,pid);
+                        if(!first)return;
+                        var attached=new Launcher();attached.steamGame=Process.GetProcessById(pid);
+                        attached.WindowState=FormWindowState.Minimized;attached.steamLifetime.Start();Application.Run(attached);return;
+                    }
+                    SteamLaunch.LoadArguments(root,args);
+                    if(!first) {
+                        var settings=AutoStart.Settings(root);int pid=LaunchService.Launch(root,settings,SteamLaunch.GameArguments(args,settings));
+                        using(var game=Process.GetProcessById(pid))game.WaitForExit();return;
+                    }
+                    var form=new Launcher();form.steamRequest=args;
+                    form.Shown+=delegate {form.BeginInvoke(new Action(form.StartGame));};Application.Run(form);
+                }
+            } catch(Exception error) {
+                Environment.ExitCode=1;
+                if(args.Length>0&&args[0]=="--prepare-autoload") {
+                    try{Directory.CreateDirectory(Path.Combine(root,"logs"));File.WriteAllText(Path.Combine(root,"logs","autoload-error.txt"),DateTime.UtcNow.ToString("o")+"\r\n"+error);}catch(IOException){}catch(UnauthorizedAccessException){}
+                }else MessageBox.Show(error.Message,"LMU Quad View - startup",MessageBoxButtons.OK,MessageBoxIcon.Warning);
+            }
         }
     }
 }

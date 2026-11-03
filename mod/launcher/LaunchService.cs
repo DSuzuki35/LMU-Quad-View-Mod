@@ -157,6 +157,8 @@ namespace LmuQuadViewLauncher {
             var inherited=new List<string>();foreach(string key in info.EnvironmentVariables.Keys) if(key.StartsWith("LMU_QV_",StringComparison.OrdinalIgnoreCase)) inherited.Add(key);
             foreach(var key in inherited) info.EnvironmentVariables.Remove(key);
             var environment=info.EnvironmentVariables;
+            environment["LMU_QV_DISABLE_AUTOLOAD"]="1";
+            environment["OPENGRIDXR_LMU_INTEGRATED"]="0";
             environment["XR_API_LAYER_PATH"]=plan.Paths;environment["XR_ENABLE_API_LAYERS"]=plan.Layers;
             if(!String.IsNullOrEmpty(plan.DisableVariable)) environment[plan.DisableVariable]="1";
             foreach(var variable in plan.DisableVariables)environment[variable]="1";
@@ -211,12 +213,22 @@ namespace LmuQuadViewLauncher {
             File.WriteAllText(path,new JavaScriptSerializer().Serialize(value),new UTF8Encoding(false));
         }
         static string MetadataPath(ProcessStartInfo info) { return System.IO.Path.ChangeExtension(info.EnvironmentVariables["LMU_QV_LOG"],null)+"-run.json"; }
-        public static ProcessStartInfo Prepare(string root,LauncherSettings settings,string gameArguments=null) {
+        internal static ProviderManifest ResolveProvider(LauncherSettings settings) {
+            bool vrs=settings.Backend=="VRS";
+            var providerBackend=settings.Backend=="Native"||vrs?"QVFR":settings.Backend;
+            var custom=settings.Backend=="VectorXR"?settings.VectorXrManifest:settings.QuadViewsManifest;
+            string path=vrs?null:settings.Backend!="Native"&&!String.IsNullOrWhiteSpace(custom)?custom:FindProviderManifest(providerBackend);
+            var provider=String.IsNullOrWhiteSpace(path)?null:ReadProviderManifest(path,settings.Backend!="Native",providerBackend);
+            if(settings.Backend!="Native"&&!vrs&&provider==null)throw new FileNotFoundException(settings.Backend+" is not installed. Install it from Setup or select its JSON manifest.");
+            return provider;
+        }
+        public static ProcessStartInfo Prepare(string root,LauncherSettings settings,string gameArguments=null,int automaticPid=0) {
             QvfrSettings.Validate(settings);
             root=System.IO.Path.GetFullPath(root);CheckSearchPath(root);
             ValidateExecutable(System.IO.Path.Combine(System.IO.Path.GetFullPath(settings.GameDirectory),"Le Mans Ultimate.exe"));
             var processes=Process.GetProcessesByName("Le Mans Ultimate");
-            bool running=processes.Length!=0;foreach(var process in processes) process.Dispose();
+            if(automaticPid!=0)AutoStart.ValidateProcess(settings,automaticPid);
+            bool running=false;foreach(var process in processes) {if(process.Id!=automaticPid)running=true;process.Dispose();}
             if(running) throw new InvalidOperationException("LMU is already running. Close it before launching again.");
             foreach(var relative in new[]{"XR_APILAYER_LMU_quadview.json",@"build\lmu_quadview.dll"}) if(!File.Exists(System.IO.Path.Combine(root,relative))) throw new FileNotFoundException("The mod package is incomplete: "+relative);
             var ownLayer=Layer(ReadJson(System.IO.Path.Combine(root,"XR_APILAYER_LMU_quadview.json")));
@@ -224,12 +236,7 @@ namespace LmuQuadViewLauncher {
             var ownLibrary=Value(ownLayer,"library_path");
             if(String.IsNullOrWhiteSpace(ownLibrary)||!String.Equals(System.IO.Path.GetFullPath(System.IO.Path.Combine(root,ownLibrary)),System.IO.Path.Combine(root,@"build\lmu_quadview.dll"),StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("The LMU manifest must reference this package's build/lmu_quadview.dll.");
-            bool vrs=settings.Backend=="VRS";
-            var providerBackend=settings.Backend=="Native"||vrs?"QVFR":settings.Backend;
-            var custom=settings.Backend=="VectorXR"?settings.VectorXrManifest:settings.QuadViewsManifest;
-            string providerPath=vrs?null:settings.Backend!="Native"&&!String.IsNullOrWhiteSpace(custom)?custom:FindProviderManifest(providerBackend);
-            ProviderManifest provider=String.IsNullOrWhiteSpace(providerPath)?null:ReadProviderManifest(providerPath,settings.Backend!="Native",providerBackend);
-            if(settings.Backend!="Native"&&!vrs&&provider==null) throw new FileNotFoundException(settings.Backend+" is not installed. Install it from the Setup page or select its JSON manifest.");
+            var provider=ResolveProvider(settings);
             var logDirectory=System.IO.Path.Combine(root,"logs");
             var stamp=DateTime.Now.ToString("yyyyMMdd-HHmmss",CultureInfo.InvariantCulture)+"-"+Guid.NewGuid().ToString("N").Substring(0,8);
             var runDirectory=System.IO.Path.Combine(root,settings.DiagnosticsEnabled?"logs":"runtime");
@@ -266,10 +273,7 @@ namespace LmuQuadViewLauncher {
                 if(process==null) throw new InvalidOperationException("Windows did not start LMU.");
                 int pid=process.Id;
                 if(!settings.DiagnosticsEnabled)return pid;
-                try {
-                    var path=MetadataPath(info);var metadata=ReadJson(path);
-                    metadata["Status"]="started";metadata["Pid"]=pid;metadata["StartedUTC"]=DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture);WriteJson(path,metadata);
-                } catch(IOException) { } catch(UnauthorizedAccessException) { } // Game already started; do not report a false launch failure.
+                MarkStarted(info,settings,pid,"launcher");
                 return pid;
             }
             } catch(Exception error) {
@@ -279,6 +283,14 @@ namespace LmuQuadViewLauncher {
                 } catch(IOException) { } catch(UnauthorizedAccessException) { }
                 throw;
             }
+        }
+        internal static void MarkStarted(ProcessStartInfo info,LauncherSettings settings,int pid,string launchKind) {
+            if(!settings.DiagnosticsEnabled)return;
+            try {
+                var path=MetadataPath(info);var metadata=ReadJson(path);
+                metadata["Status"]="started";metadata["Pid"]=pid;metadata["LaunchKind"]=launchKind;
+                metadata["StartedUTC"]=DateTime.UtcNow.ToString("o",CultureInfo.InvariantCulture);WriteJson(path,metadata);
+            }catch(IOException){}catch(UnauthorizedAccessException){}
         }
     }
 }

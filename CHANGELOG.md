@@ -4,6 +4,39 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
+## 0.3.1 - 2026-11-03
+
+- Read automatic-start activation from a per-user local file, with the older
+  registry location as fallback. Fix silent passthrough when the protected game
+  cannot see the launcher's HKCU activation. Record early startup/skip reasons
+  in `%LOCALAPPDATA%\LMUQuadView\autoload-<pid>.log`.
+- Preserve retained implicit overlays above the LMU adapter and place the
+  selected provider directly below it. This prevents VectorXR's OSD layer from
+  consuming QVFR's quad-view request during automatic startup.
+- Fix smaller outer targets rejecting PSVR2's DepthResolve wrapper (role 5).
+  LMU can own this texture through its SRV/RTV without a direct resource pointer;
+  resolve and validate the actual texture instead of skipping the depth target.
+- Defer outer-bank warmup/preparation until a renderable, located XR frame.
+  Retry unavailable/unsupported banks up to three times with 120 renderable
+  view calls between attempts, retaining full-resolution quad fallback.
+- Log individual outer precheck failures and source ownership. Unsupported FSR
+  render scaling now explicitly recommends Bilinear for smaller outer targets.
+  Log failed quad-view recommendation queries and downstream session creation.
+- Optional one-time automatic OpenXR installation: start LMU in Steam's OpenXR
+  mode without a custom launch option. Apply saved settings and attach the
+  benchmark launcher automatically. Setup also removes the integration.
+- A small signed implicit bootstrap loads the LMU adapter. Installation copies
+  signed DLLs to Program Files and verifies layer order, with rollback on error.
+  Other games pass through; third-party enabled states and relative order remain.
+- Keep quad-only OpenGridXR crop isolation, provider ordering, supported-build
+  checks and protection against loading the adapter twice. No game file changes.
+- Re-sign the launcher, both DLLs and the portable stereo check with SimplySign.
+- Validate the running game's path with limited process-information rights.
+  Avoid a startup failure when Windows denies reading the game's loaded modules.
+- Replace registry-key renaming with verified backup/recreation and rollback.
+  This bypasses the registry-rename kernel path implicated in local 0x3B crashes.
+  A compiled-import guard runs before launcher tests to reject that API.
+
 ## 0.3.0 - 2026-11-03
 
 - So, who wants to get banned by EAC? Use at your own risk 😅🙈

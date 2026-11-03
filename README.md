@@ -5,10 +5,10 @@ A free Windows x64 / D3D11 mod that adds two outer and two focus views to
 Quad-Views-Foveated (QVFR) or VectorXR separately to provide quad views on a
 stereo runtime.
 
-**v0.3.0 is an experimental offline build.** Headset and runtime compatibility
+**v0.3.1 is an experimental offline build.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
-Version 0.3.0 retains the **Benchmark** page with Minimal and
+Version 0.3.1 retains the **Benchmark** page with Minimal and
 Detailed in-headset overlays, separate joystick bindings for visibility and
 manual recording, local HTML/CSV/JSON reports, and latest-launch diagnostics.
 Enable Benchmark before launching and leave the launcher open. See
@@ -81,7 +81,7 @@ contributions are welcome. See [the contribution guide](CONTRIBUTING.md).
 
 ## Install and launch
 
-1. Use the complete `LMU-Quad-View-Mod-0.3.0.zip` package from [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases/tag/v0.3.0).
+1. Use the complete `LMU-Quad-View-Mod-0.3.1.zip` package. Published builds are on [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
 2. Extract the **complete ZIP** to a writable folder outside the LMU installation.
 3. Open **LMU-QuadView-Launcher.exe**. Keep its `.exe.config` file beside it.
 4. In **Setup**, select the LMU game folder. Ensure your headset's OpenXR runtime
@@ -96,27 +96,20 @@ Windows reputation warnings may still appear. OpenXR Toolkit is not required.
 
 ### Start with Steam Play
 
-After saving your settings, use **Setup > Copy Steam launch option** and paste
-the complete line into **Steam > Le Mans Ultimate > Properties > General >
-Launch Options**. It has this form (use your actual launcher path):
+Save settings, close LMU, then use **Setup > Install / update automatic startup**.
+Approve Windows' administrator prompt once. Remove any old `--steam %command%`
+wrapper from Steam's custom Launch Options, preserving unrelated game arguments.
+Use Steam's **OpenXR** launch mode. No custom Steam option or background starter
+is required. Flat-screen and OpenVR launches do not activate this OpenXR mod.
 
-```text
-"C:\Your mod folder\LMU-QuadView-Launcher.exe" --steam %command%
-```
-
-Keep `%command%` as written; Steam replaces it with LMU's executable and game
-arguments. Append any extra game arguments after it. Steam Play now starts LMU
-with your saved mod settings automatically, adding `+XR` if absent. The launcher
-minimizes after launch, continues serving the benchmark overlay, and closes
-when LMU exits. Rendering changes still require a game restart. Save settings
-in this copy of the launcher before the first Steam launch.
-
-Keep the mod folder in place, or copy the launch option again after moving it.
-To undo the integration, remove this wrapper from Steam's Launch Options and
-restore any previous arguments. This does not replace game files or register a
-global OpenXR layer. See [Steam startup details](docs/STEAM-LAUNCH.md).
-The Steam start path passes automated tests; a live Steam/headset test remains
-outstanding for this release.
+The installer registers a signed implicit OpenXR bootstrap and copies its DLLs
+to Program Files. It runs the adapter only in the configured, supported LMU
+process, applies saved settings, and attaches the minimized launcher when the
+benchmark is enabled. Other OpenXR applications pass straight through.
+Do not run LMU as administrator. Keep the extracted package in place; reinstall
+automatic startup after moving or updating it. Changes to rendering settings
+still require a game restart. **Remove automatic startup** reverses registration.
+See [Steam startup details](docs/STEAM-LAUNCH.md) for the optional legacy wrapper.
 
 | Provider | Setup and settings |
 | --- | --- |
@@ -126,7 +119,9 @@ outstanding for this release.
 | VectorXR | Install separately, enable its LMU Quadviews profile, and select VectorXR. Setup can locate its manifest or accept a JSON path. Configure resolution, focus and tracking in VectorXR; launcher QVFR sizing controls are inactive. See [VectorXR instructions](PORTABLE-VECTORXR.txt). |
 
 The launcher starts LMU with process-local provider settings and layer ordering.
-It does not modify the game EXE, global OpenXR registration or active runtime.
+The optional automatic-start installation registers its own implicit layer first,
+preserving third-party enabled states and relative order. Neither path modifies
+the game EXE or active runtime.
 QVFR profile changes are scoped to LMU, backed up and applied atomically. VectorXR
 launch preparation preserves installed manifests and disables conflicting layers
 for the launched process.
