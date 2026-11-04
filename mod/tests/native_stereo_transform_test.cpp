@@ -106,6 +106,7 @@ void capture() {
     c = compare_native_stereo_transform(pre,post,actual,0x1f80,0x1f80);
     assert(c.available && c.mismatchedScalars == 1);
     assert(c.firstMismatchRegister == 0 && c.firstMismatchComponent == 0);
+    assert(c.firstExpectedBits==0x3f800000u && c.firstObservedBits==0x40000000u);
     actual.constants.derived[0]=1; actual.constants.position[3]=-0.0f;
     c=compare_native_stereo_transform(pre,post,actual,0x1f80,0x1f80);
     assert(c.mismatchedScalars==1 && c.firstMismatchRegister==8 && c.firstMismatchComponent==3);
@@ -139,6 +140,34 @@ void capture() {
     assert(!capture_native_stereo_transform_constants(f.shadow.data(),readable).complete);
     assert(!capture_native_stereo_transform(f.args(),nullptr).complete);
 }
+void helper_capture() {
+    Fixture f;allow(f);
+    auto args=f.args();args.suppliedFlags=0;
+    // These are all flag combinations observed in the awake VectorXR captures.
+    for(uint32_t flags:{0xfu,0x2fu,0x12fu,0x292fu,0x812fu,0xa92fu}){
+        Fixture::put(f.shader,0xf8,flags);
+        args.boundary=NativeStereoTransformBoundary::Preparation;
+        assert(!capture_native_stereo_transform(args,readable).complete);
+        args.boundary=NativeStereoTransformBoundary::Helper;
+        const auto pre=capture_native_stereo_transform(args,readable);
+        const auto actual=capture_native_stereo_transform_constants(f.shadow.data(),readable);
+        const auto post=capture_native_stereo_transform(args,readable);
+        assert(pre.complete && pre.bytesRead==240 && post.complete);
+        const auto compared=compare_native_stereo_transform(pre,post,actual,0x1f80,0x1f80);
+        assert(compared.available && compared.comparedScalars==52 && compared.mismatchedScalars==0);
+    }
+    for(unsigned mode=1;mode<4;++mode){
+        args.alternateOwner=(mode&1)!=0;args.skipEyeConstants=(mode&2)!=0;reads=0;
+        const auto rejected=capture_native_stereo_transform(args,readable);
+        assert(!rejected.complete && reads==0 && !std::strcmp(rejected.reason,"unsupported transform helper mode"));
+    }
+    args.alternateOwner=args.skipEyeConstants=false;
+    Fixture::put(f.shader,8,uint64_t{0});
+    const auto disabled=capture_native_stereo_transform(args,readable);
+    assert(!disabled.complete && !std::strcmp(disabled.reason,"disabled transform shader"));
+    args.boundary=static_cast<NativeStereoTransformBoundary>(99);reads=0;
+    assert(!capture_native_stereo_transform(args,readable).complete && reads==0);
+}
 void forwarding() {
     const auto saved=_mm_getcsr(); int calls=0, ends=0;
     _mm_setcsr(0x1fbf);
@@ -151,10 +180,20 @@ void forwarding() {
     try {invoke_native_stereo_transform([](unsigned){return 0;},[&]()->int{++calls;throw 7;},[&](int,unsigned){++ends;});}
     catch(int code){caught=code==7;}
     assert(caught && calls==2 && ends==1);
+    _mm_setcsr(0x1fbf);calls=ends=0;
+    invoke_native_stereo_transform_helper(
+        [](unsigned entry){assert(entry==0x1fbf);_mm_setcsr(0x9fc0);return 17;},
+        [&]{++calls;assert(_mm_getcsr()==0x1fbf);_mm_setcsr(0x1f82);},
+        [&](int token,unsigned post){++ends;assert(token==17 && post==0x1f82);_mm_setcsr(0x9fc0);throw 1;});
+    assert(calls==1 && ends==1 && _mm_getcsr()==0x1f82);
+    caught=false;
+    try{invoke_native_stereo_transform_helper([](unsigned){return 0;},[&]{++calls;throw 7;},[&](int,unsigned){++ends;});}
+    catch(int code){caught=code==7;}
+    assert(caught && calls==2 && ends==1);
     _mm_setcsr(saved);
 }
 }
-int main(){numerical();capture();forwarding();std::cout<<"Owned stereo transforms: numeric, lifetime, bounded capture and comparison passed\n";}
+int main(){numerical();capture();helper_capture();forwarding();std::cout<<"Owned stereo transforms: numeric, helper boundary, lifetime, bounded capture and forwarding passed\n";}
 #else
 int main(){std::cerr<<"FAIL: owned native stereo transform preparation is missing\n";return 1;}
 #endif

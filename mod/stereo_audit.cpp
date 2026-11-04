@@ -129,6 +129,8 @@ struct NativeTransformRecord {
   unsigned slot=0,entryMxcsr=0,postMxcsr=0;
   uint64_t generation=0;
   bool ended=false;
+  NativeStereoTransformBoundary boundary=NativeStereoTransformBoundary::Preparation;
+  bool alternateOwner=false,skipEyeConstants=false;
   NativeStereoTransformSnapshot pre,post;
   NativeStereoTransformObserved actual;
 };
@@ -136,6 +138,7 @@ constexpr unsigned maxTransformsPerSlot=128;
 std::array<NativeTransformRecord,framesWanted*4*maxTransformsPerSlot> nativeTransforms;
 std::array<unsigned,framesWanted*4> transformAttempts{};
 unsigned transformCount=0,transformDrops=0,transformExcludedViews=0,transformMissingViews=0;
+std::atomic<bool> transformHookAvailable{false};
 uint64_t transformScopeEpoch=0;
 struct NativeClassifyRecord {
   unsigned slot = 0;
@@ -1065,26 +1068,39 @@ void write_native_classification(std::ostringstream &out) {
   out.precision(priorPrecision);
 }
 void write_native_transforms(std::ostringstream& out) {
-  out<<",\"native_transforms\":{\"scheduling_eligible\":false,\"attempts\":"<<transformCount
+  unsigned available=0,focusAvailable=0,mismatched=0,scalars=0,unfinished=0;
+  out<<",\"native_transforms\":{\"scheduling_eligible\":false,\"hook_available\":"<<(transformHookAvailable?"true":"false")
+     <<",\"attempt_limit_per_slot\":"<<maxTransformsPerSlot<<",\"attempts\":"<<transformCount
      <<",\"dropped\":"<<transformDrops<<",\"excluded_views\":"<<transformExcludedViews
      <<",\"missing_expected_views\":"<<transformMissingViews
-     <<",\"scope\":\"bounded original-invocation VS c0-c8/c16-c19 bit-exact comparison; not a pass replacement\",\"records\":[";
+     <<",\"scope\":\"bounded original-invocation VS c0-c8/c16-c19 comparison at the recorded boundary; not a pass replacement\",\"records\":[";
   for(unsigned i=0;i<transformCount;++i){
     if(i)out<<',';
     const auto& r=nativeTransforms[i];
     NativeStereoTransformComparison comparison;
     if(r.ended)comparison=compare_native_stereo_transform(r.pre,r.post,r.actual,r.entryMxcsr,r.postMxcsr);
+    if(comparison.available){++available;if(r.slot%4>=2)++focusAvailable;}
+    if(comparison.mismatchedScalars)++mismatched;
+    scalars+=comparison.comparedScalars;if(!r.ended)++unfinished;
     out<<"{\"slot\":"<<r.slot<<",\"ended\":"<<(r.ended?"true":"false")
+       <<",\"boundary\":"<<quoted(r.boundary==NativeStereoTransformBoundary::Helper?"transform_helper":"preparation")
+       <<",\"alternate_owner\":"<<(r.alternateOwner?"true":"false")
+       <<",\"skip_eye_constants\":"<<(r.skipEyeConstants?"true":"false")
        <<",\"available\":"<<(comparison.available?"true":"false")
        <<",\"reason\":"<<quoted(comparison.reason)
        <<",\"bytes_read\":"<<(r.pre.bytesRead+r.post.bytesRead+r.actual.bytesRead)
        <<",\"compared_scalars\":"<<comparison.comparedScalars
        <<",\"mismatched_scalars\":"<<comparison.mismatchedScalars;
     if(comparison.mismatchedScalars)out<<",\"first_mismatch_register\":"<<comparison.firstMismatchRegister
-                                      <<",\"first_mismatch_component\":"<<comparison.firstMismatchComponent;
+                                      <<",\"first_mismatch_component\":"<<comparison.firstMismatchComponent
+                                      <<",\"first_expected_bits\":"<<comparison.firstExpectedBits
+                                      <<",\"first_observed_bits\":"<<comparison.firstObservedBits;
     out<<'}';
   }
-  out<<"]}";
+  out<<"],\"available\":"<<available<<",\"focus_available\":"<<focusAvailable
+     <<",\"refused\":"<<(transformCount-available)<<",\"mismatched_records\":"<<mismatched
+     <<",\"compared_scalars\":"<<scalars<<",\"unfinished\":"<<unfinished
+     <<",\"capture_incomplete\":"<<((transformDrops||transformMissingViews||unfinished)?"true":"false")<<'}';
 }
 void save_impl(const char* reason){
     NativeStereoFpGuard defaultFp(true);
@@ -1162,6 +1178,7 @@ StereoNativeTransformToken stereo_audit_native_transform_begin(
     const unsigned index=transformCount++;
     auto& record=nativeTransforms[index];record={};
     record.slot=slot;record.generation=nativeGeneration;record.entryMxcsr=entryMxcsr;
+    record.boundary=info.args.boundary;record.alternateOwner=info.args.alternateOwner;record.skipEyeConstants=info.args.skipEyeConstants;
     Suspend pause;
     record.pre=capture_native_stereo_transform(info.args,info.readable);
     return {true,index,slot,nativeGeneration,transformScopeEpoch,info};
@@ -1185,6 +1202,9 @@ void stereo_audit_native_transform_end(const StereoNativeTransformToken& token,u
   } catch(...) {}
 }
 bool stereo_audit_enabled(){return enabled.load(std::memory_order_relaxed);}
+void stereo_audit_native_transform_hook_available(bool available) noexcept {
+  transformHookAvailable=available;
+}
 void stereo_audit_native_classify_hook_available(bool available) noexcept {
   classifyHookAvailable = available;
 }

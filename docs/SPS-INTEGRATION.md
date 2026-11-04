@@ -2,12 +2,11 @@
 
 This branch integrates main v0.3.3 (`c38e122`) and the complete SPS research from
 `experiment/sps-0.2.0` (`61a5940`, including `codex/sps-0.1.1`). Native rendering,
-preparation and draws remain enabled. Two awake-headset captures have now been
-reviewed: the classifier agrees on sampled focus calls, but the transform probe
-made no numeric comparisons because none of the observed preparation calls used
-its admitted flag value. The next code change must address that probe boundary;
-repeating the unchanged capture cannot establish transform agreement. See the
-2026-11-04 live findings at the end of [SPS-DEVELOPMENT.md](SPS-DEVELOPMENT.md).
+preparation and draws remain enabled. Two previous awake-headset captures showed
+classifier agreement but no usable transform comparisons. This revised build
+observes the transform helper directly and needs a new live capture. It is still
+step 2: validating the numeric payload before ownership/scheduling integration.
+See the live findings and revised boundary in [SPS-DEVELOPMENT.md](SPS-DEVELOPMENT.md).
 
 ## Integration changes
 
@@ -24,6 +23,9 @@ repeating the unchanged capture cannot establish transform agreement. See the
 - Keep GCC's strict FP requirements and main's existing warning/crop checks.
 - Make the launch metadata test use its temporary game fixture instead of the
   default Steam installation path. No launcher behavior changes.
+- Compare at the transform helper's entry/exit for its verified caller and
+  ordinary modes. Keep the larger preparation wrapper and all native work.
+- Export hook availability, comparison/refusal counts and first-mismatch bits.
 
 ## Validation on this PC
 
@@ -39,21 +41,24 @@ repeating the unchanged capture cannot establish transform agreement. See the
   views, instance ranges and sample masks.
 - Merge conflicts resolved; PowerShell scripts parse and Git whitespace checks
   pass. GCC was not rerun on this PC.
+- Revised helper numeric/capture checks pass at `/Od` and `/O2`, including the
+  flag combinations from the previous live test, without widening admission
+  around the whole preparation wrapper. Full native checks and JSON parsing pass.
 - Offline PE metadata confirms the classifier address is a function start in
   the installed executable with the documented pinned hash. On-disk byte probes
   did not match the runtime anchors, also true of the pre-existing render and
   preparation anchors. Actual loaded-code hook admission remains a live check.
 
 The integrated layer SHA256 from this build is
-`BC61E4982D033F3514B1FDFF045BC7F5E89343910E78EB29B6ADE2685FF4C7FE`.
+`A3F4FB298F7407565E4C7D760206724E8A53AFFD4F5DFF269E00B3DBD7832553`.
 These fixtures do not establish live transform agreement, native SPS or a
 frametime improvement. Existing audit variable-shadow warnings remain.
 
 ## Capture procedure
 
-This procedure produced the two captures reviewed above. Reuse it after the
-transform probe has been revised and tested; the current whole-preparation
-domain was not exercised by this scene.
+Use this revised helper-probe build. Its prepared local test folder preserves
+the last successful VectorXR launcher settings. The previous diagnostic package
+remains available separately.
 
 1. Extract this diagnostic package into a separate folder. Run its launcher,
    select your installed game directory and the quad-view provider you normally
@@ -76,7 +81,8 @@ domain was not exercised by this scene.
    Raw shader/code captures remain private development inputs.
 
 The capture must contain `native_transforms` comparisons for focus slots **2/3
-and 6/7**. Distinguish available matches, actual mismatches, refusals, dropped
+and 6/7**, with `hook_available=true` and record boundary `transform_helper`.
+Distinguish available matches, actual mismatches, refusals, dropped
 attempts and incomplete scopes. A standby/outer-only or zero-available capture
 cannot validate the focus subset. Audit timings include substantial diagnostic
 overhead and cannot establish a speedup.

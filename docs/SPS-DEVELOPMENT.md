@@ -589,3 +589,57 @@ outputs are observable at its return. Keep bounded reads, FP preservation,
 scope/generation checks and every original helper/preparation/draw. A successful
 helper comparison would establish only its numeric payload, not remove the
 larger native wrapper or establish scheduling. No SPS speedup was measured.
+
+## Transform-helper boundary diagnostic (2026-11-04)
+
+The runtime comparison now brackets the original `0x565260` helper itself,
+instead of the larger preparation wrapper. Read-only inspection verified the
+call at `0x562aca`: shader/view/mesh are in RCX/RDX/R8, alternate-owner mode is in
+R9b, and the fifth stack argument is the supplied-flags bit-9 mode. The caller
+continues at `0x562acf` without consuming a return value. The adapter treats the
+verified helper call as void. Its built MSVC unrecognized-caller path forwards
+all five arguments and, after the native call, only restores RSP/RBP and returns;
+inspection confirmed it does not modify the native RAX/XMM0 return registers.
+
+Hook admission checks the complete 26-byte prologue, the current PE function
+boundary and the call plus following flag test. The selected helper/caller bytes
+also match the existing private live-code container, and 382 helper instruction
+prefixes agree with its stored disassembly. The larger container intentionally
+restores old hook prefixes elsewhere, so its whole-range hash is not used as an
+unaltered live-memory hash. No game bytes are committed or packaged.
+
+Only the verified caller produces transform records. Both helper mode arguments
+must be false; enabled shader, mesh/geometry/owner, ordinary mesh orientation,
+callback, stable numeric inputs and FP controls retain their existing checks.
+The helper boundary does not require the entire preparation flag word to equal
+1: earlier bone/material work has already happened, and later preparation has
+not yet run. The old preparation-boundary fixture remains restricted to flags 1;
+its admission was not widened. Every original helper, preparation and draw runs.
+
+The helper snapshot copies at most 240 native input bytes. Two input snapshots
+and the 208-byte output snapshot total at most 688 bytes per admitted invocation,
+below the existing 696-byte bound. Limits remain 128 attempts per slot and 1,024
+over two scene frames. Prediction runs only at export. Missing/disabled/idle,
+wrong-thread, stale-token and reopened-scope behavior retains the no-read gates.
+
+`native_transforms` now reports hook availability, each record's boundary/modes,
+available and focus-available comparisons, refusals, mismatched records, compared
+scalars, unfinished calls and incomplete coverage. A mismatch includes the first
+register/component and expected/observed float bit patterns. Unavailable records
+remain refusals, never matches; scheduling eligibility remains false.
+
+The full MSVC native build/test suite passed. Numeric and capture fixtures passed
+at `/Od` and `/O2`, including all six observed shader flag combinations admitted
+at the helper boundary while refused by the larger-wrapper boundary. The audit
+fixture parsed as valid JSON with 124 available comparisons, four deliberate
+refusals and one deliberate mismatch; abandoned invocations stayed unavailable.
+Forwarding/FP/exception, caps, lifetime and synthetic hook-validation checks pass.
+Existing audit shadow warnings remain. No GCC or new live helper result is
+claimed by these tests.
+
+The next step is one awake on-track capture from this revised build. Require
+`hook_available=true`, `boundary=transform_helper`, usable records in both focus
+eyes (slots 2/3 and 6/7), and inspect matches, mismatches and refusal reasons.
+This is still step 2 of the continuation plan. A usable comparison is required
+before the ownership/scheduling work can rely on this numeric payload; it does
+not itself replace native work or establish a frametime gain.

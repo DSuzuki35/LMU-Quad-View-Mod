@@ -48,6 +48,14 @@ using NativePrepareFn=int(*)(void*,void*,void*,std::uint32_t,bool);
 NativePrepareFn nativePrepareOriginal{};bool nativePrepareHooked=false;
 constexpr std::uintptr_t nativePrepareRva=0x5629e0;
 constexpr std::array<std::uint8_t,20> nativePrepareAnchor{0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x30};
+// Verified caller at 0x562aca passes RCX/RDX/R8, R9b and one stack byte,
+// then continues preparation without consuming a return value.
+using NativeTransformFn=void(*)(void*,void*,void*,bool,bool);
+NativeTransformFn nativeTransformOriginal{};bool nativeTransformHooked=false;
+constexpr std::uintptr_t nativeTransformRva=0x565260;
+constexpr std::array<std::uint8_t,26> nativeTransformAnchor{
+    0x48,0x8b,0xc4,0x48,0x89,0x48,0x08,0x55,0x53,0x56,0x57,0x41,0x56,
+    0x41,0x57,0x48,0x8d,0x68,0xb8,0x48,0x81,0xec,0x18,0x01,0x00,0x00};
 using NativeClassifyFn = uint32_t(__fastcall *)(void *, void *, const float *, bool, float);
 NativeClassifyFn nativeClassifyOriginal{};
 bool nativeClassifyHooked = false;
@@ -615,29 +623,29 @@ uint32_t __fastcall nativeClassifyHook(void *candidate, void *view, const float 
         stereo_audit_native_classify_end(token, returned, post);
       });
 }
+void nativeTransformHook(void* shader,void* view,void* mesh,bool alternateOwner,bool skipEyeConstants){
+    const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
+    if(caller!=base+0x562acf){
+        nativeTransformOriginal(shader,view,mesh,alternateOwner,skipEyeConstants);return;
+    }
+    NativeStereoTransformArgs args{shader,view,mesh,address<void>(0x1b13630)};
+    args.boundary=NativeStereoTransformBoundary::Helper;
+    args.alternateOwner=alternateOwner;args.skipEyeConstants=skipEyeConstants;
+    invoke_native_stereo_transform_helper(
+        [&](unsigned entry){return stereo_audit_native_transform_begin({args,readable},entry);},
+        [&]{nativeTransformOriginal(shader,view,mesh,alternateOwner,skipEyeConstants);},
+        [](const StereoNativeTransformToken& token,unsigned post){stereo_audit_native_transform_end(token,post);});
+}
 int nativePrepareHook(void* shader,void* view,void* mesh,std::uint32_t flags,bool reset){
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     // Two verified world-sort submission sites. This hook observes the complete
     // original preparation and forwards its exact result; no setup is skipped.
     const bool known=caller==base+0x51f67e||caller==base+0x51f5c4;
     const StereoNativePrepareInfo preparation{shader, flags, reset, readable};
-    struct Tokens {StereoNativePrepareToken preparation;StereoNativeTransformToken transform;};
     return invoke_native_stereo_transform(
-        [&](unsigned entry){
-            Tokens tokens;
-            if(known){
-                const StereoNativeTransformInfo info{
-                    {shader,view,mesh,address<void>(0x1b13630),flags,reset},readable};
-                tokens.transform=stereo_audit_native_transform_begin(info,entry);
-                tokens.preparation=stereo_audit_native_prepare_begin(mesh,&preparation);
-            }
-            return tokens;
-        },
+        [&](unsigned){return known?stereo_audit_native_prepare_begin(mesh,&preparation):StereoNativePrepareToken{};},
         [&]{return nativePrepareOriginal(shader,view,mesh,flags,reset);},
-        [](const Tokens& tokens,unsigned post){
-            stereo_audit_native_transform_end(tokens.transform,post);
-            stereo_audit_native_prepare_end(tokens.preparation);
-        });
+        [](const StereoNativePrepareToken& token,unsigned){stereo_audit_native_prepare_end(token);});
 }
 void nativeUploadHook(void* cache,void* device,ID3D11DeviceContext* context,void* bindings){
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
@@ -1146,6 +1154,11 @@ bool nativeClassifyTargetVerified() {
     return matches(nativeClassifyRva,nativeClassifyAnchor)&&
         hookTargetPlausible(nativeClassifyRva)&&matches(0x41c8af,call);
 }
+bool nativeTransformTargetVerified() {
+    const std::array<std::uint8_t,10> call{0xe8,0x91,0x27,0x00,0x00,0xf6,0xc3,0x08,0x74,0x27};
+    return matches(nativeTransformRva,nativeTransformAnchor)&&
+        hookTargetPlausible(nativeTransformRva)&&matches(0x562aca,call);
+}
 }
 
 unsigned engine_game_eye(XrSwapchain chain){
@@ -1318,6 +1331,17 @@ bool engine_start(ID3D11DeviceContext* context) {
     if (auditRequested && !nativePrepareHooked)
       log_line("stereo_audit native preparation hook unavailable; paired private proof requires "
                "this identity source");
+    if(stereo_audit_enabled()&&nativePrepareHooked&&nativeTransformTargetVerified()){
+        if(MH_CreateHook(address<void>(nativeTransformRva),reinterpret_cast<void*>(&nativeTransformHook),
+                         reinterpret_cast<void**>(&nativeTransformOriginal))==MH_OK){
+            if(MH_EnableHook(address<void>(nativeTransformRva))==MH_OK){
+                nativeTransformHooked=true;
+                log_line("stereo_audit original transform helper hook enabled; bounded entry/exit comparison; native preparation/draws retained");
+            }else MH_RemoveHook(address<void>(nativeTransformRva));
+        }
+    }
+    stereo_audit_native_transform_hook_available(nativeTransformHooked);
+    if(auditRequested&&!nativeTransformHooked)log_line("stereo_audit native transform helper hook unavailable");
     if (stereo_audit_enabled() && nativeClassifyTargetVerified()) {
       if (MH_CreateHook(address<void>(nativeClassifyRva),
                         reinterpret_cast<void *>(&nativeClassifyHook),
@@ -1365,6 +1389,11 @@ bool engine_start(ID3D11DeviceContext* context) {
 }
 void engine_stop() {
     stereo_audit_stop();
+    if(nativeTransformHooked){
+        MH_DisableHook(address<void>(nativeTransformRva));MH_RemoveHook(address<void>(nativeTransformRva));
+        nativeTransformHooked=false;
+    }
+    stereo_audit_native_transform_hook_available(false);
     if (nativeClassifyHooked) {
       MH_DisableHook(address<void>(nativeClassifyRva));
       MH_RemoveHook(address<void>(nativeClassifyRva));

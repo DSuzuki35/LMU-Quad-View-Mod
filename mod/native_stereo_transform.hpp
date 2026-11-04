@@ -18,6 +18,17 @@ int invoke_native_stereo_transform(Begin&& begin,Native&& native,End&& end) {
     {NativeStereoFpGuard guard;try{end(token,post);}catch(...){}}
     return returned;
 }
+// The verified 0x562aca caller consumes no return value from 0x565260.
+// Forward its five arguments once and preserve FP state around diagnostics.
+template<class Begin,class Native,class End>
+void invoke_native_stereo_transform_helper(Begin&& begin,Native&& native,End&& end) {
+    const unsigned entry=_mm_getcsr();
+    using Token=decltype(begin(entry));Token token{};
+    {NativeStereoFpGuard guard;try{token=begin(entry);}catch(...){}}
+    native();
+    const unsigned post=_mm_getcsr();
+    {NativeStereoFpGuard guard;try{end(token,post);}catch(...){}}
+}
 using NativeStereoMatrix = std::array<float,16>;
 struct NativeStereoTransformInput {
     NativeStereoMatrix world{}, derived{}, view{};
@@ -86,9 +97,14 @@ inline NativeStereoTransformResult prepare_native_stereo_transform(
     return out;
 }
 
+enum class NativeStereoTransformBoundary { Preparation, Helper };
 struct NativeStereoTransformArgs {
     const void* shader{}; const void* view{}; const void* mesh{}; const void* vsShadow{};
     uint32_t suppliedFlags{}; bool reset{};
+    // The Helper boundary is set only by the original helper hook. It does not
+    // relax admission around the larger preparation wrapper.
+    NativeStereoTransformBoundary boundary=NativeStereoTransformBoundary::Preparation;
+    bool alternateOwner{},skipEyeConstants{};
 };
 inline constexpr size_t nativeStereoTransformInputByteLimit=244;
 struct NativeStereoTransformSnapshot {
@@ -104,7 +120,14 @@ struct NativeStereoTransformSnapshot {
 inline NativeStereoTransformSnapshot capture_native_stereo_transform(
     const NativeStereoTransformArgs& args,bool(*readable)(const void*,size_t)) noexcept {
     NativeStereoTransformSnapshot out;
-    if(args.reset || (args.suppliedFlags && args.suppliedFlags!=1)) {
+    if(args.boundary!=NativeStereoTransformBoundary::Preparation&&args.boundary!=NativeStereoTransformBoundary::Helper){
+        out.reason="unknown transform boundary";return out;
+    }
+    const bool helper=args.boundary==NativeStereoTransformBoundary::Helper;
+    if(helper&&(args.alternateOwner||args.skipEyeConstants)){
+        out.reason="unsupported transform helper mode";return out;
+    }
+    if(!helper&&(args.reset || (args.suppliedFlags && args.suppliedFlags!=1))) {
         out.reason="unsupported preparation flags or reset";return out;
     }
     NativeStereoCaptureReason reason=NativeStereoCaptureReason::complete;
@@ -116,11 +139,12 @@ inline NativeStereoTransformSnapshot capture_native_stereo_transform(
         const auto shader=reinterpret_cast<uintptr_t>(args.shader);
         const auto view=reinterpret_cast<uintptr_t>(args.view);
         const auto mesh=reinterpret_cast<uintptr_t>(args.mesh);
-        if(!reader.read(shader,0xf8,shaderFlags)||!reader.read(shader,8,shaderEnabled)) {
+        if((!helper&&!reader.read(shader,0xf8,shaderFlags))||!reader.read(shader,8,shaderEnabled)) {
             out.reason=native_stereo_capture_reason(reason);return out;
         }
         const auto effective=args.suppliedFlags ? args.suppliedFlags : shaderFlags;
-        if(effective!=1 || !shaderEnabled) {out.reason="unsupported preparation flags or disabled shader";return out;}
+        if(!helper&&effective!=1){out.reason="unsupported preparation flags";return out;}
+        if(!shaderEnabled){out.reason="disabled transform shader";return out;}
         if(!reader.read(mesh,0,meshFlags)||!reader.read(mesh,0xcc,callback)||!reader.read(mesh,0x80,geometry)) {
             out.reason=native_stereo_capture_reason(reason);return out;
         }
@@ -162,6 +186,7 @@ struct NativeStereoTransformComparison {
     bool available{};const char* reason="incomplete transform invocation";
     unsigned comparedScalars{},mismatchedScalars{};
     unsigned firstMismatchRegister=~0u,firstMismatchComponent=~0u;
+    uint32_t firstExpectedBits{},firstObservedBits{};
 };
 inline NativeStereoTransformComparison compare_native_stereo_transform(
     const NativeStereoTransformSnapshot& pre,const NativeStereoTransformSnapshot& post,
@@ -188,7 +213,11 @@ inline NativeStereoTransformComparison compare_native_stereo_transform(
         for(size_t i=0;i<a.size();++i){
             ++out.comparedScalars;
             if(std::memcmp(&a[i],&b[i],sizeof(float))!=0){
-                if(!out.mismatchedScalars){out.firstMismatchRegister=firstRegister+unsigned(i/4);out.firstMismatchComponent=unsigned(i%4);}
+                if(!out.mismatchedScalars){
+                    out.firstMismatchRegister=firstRegister+unsigned(i/4);out.firstMismatchComponent=unsigned(i%4);
+                    std::memcpy(&out.firstExpectedBits,&a[i],sizeof(float));
+                    std::memcpy(&out.firstObservedBits,&b[i],sizeof(float));
+                }
                 ++out.mismatchedScalars;
             }
         }
