@@ -6,6 +6,7 @@
 #include <d3d11.h>
 #include "openxr/openxr.h"
 #include "vrs_foveation.hpp"
+#include "xr_frame_inputs.hpp"
 
 namespace lmuqv {
 // XR side: frame cache valid only from successful locate to end-frame on rendering thread.
@@ -18,6 +19,9 @@ void xr_vrs_scene_complete(unsigned eye);
 // False in legacy mode or before validated runtime recommendations are available.
 bool xr_runtime_sizes(unsigned eye,uint32_t& outerWidth,uint32_t& outerHeight,uint32_t& focusWidth,uint32_t& focusHeight);
 bool xr_frame_views(XrView (&views)[4]);
+// Locks the same rendered locate snapshot as xr_frame_views and owns its flat
+// values plus session/frame/time/space/thread identity. Clears output on failure.
+bool xr_frame_inputs(QuadFrameInputs&);
 bool xr_frame_full_outer_fov(XrFovf (&fov)[2]);
 // Paired-pass integration infrastructure, not an enable switch for stereo.
 // Prepare before application swapchains are created. A held, waited image stays

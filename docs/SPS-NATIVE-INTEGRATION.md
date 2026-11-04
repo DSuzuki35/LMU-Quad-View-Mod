@@ -42,11 +42,18 @@ accounting for its copies and synchronization. Neither approach is implemented.
 
 ## First implementation deliverable
 
-Before the replacement producer, collect the [sampled CPU cost breakdown](SPS-CPU-PROFILING.md)
-with the heavy audit disabled and compare coarse/detailed controls. Establish
-whether remaining preparation/submission cost and target/input feasibility justify
-the route. A neutral CPU-only intermediate does not rule out a benefit from paired
-submissions; its copying/ownership cost still belongs in the final comparison.
+The user selected implementation-first continuation: shared preparation followed
+by portable stereo instancing. The rough CPU capture is informational. Further
+profiling is deferred and is not a prerequisite for implementing the producer.
+Correctness, complete fallback and eventual end-to-end performance remain
+acceptance checks. A CPU-only intermediate need not independently meet the final
+performance target before the paired-submission stage is implemented.
+
+The first runtime component now produces [owned focus camera inputs](SPS-FOCUS-INPUTS.md)
+before left focus rendering. It includes both actual XR focus FOVs and a restricted
+right camera prediction. The ordinary eye path consumes prepared projections when
+the frame/scene/view/order/native-depth checks match. Native world position,
+history, unfiltered source ownership and complete preparation effects remain open.
 
 Establish a restricted **owned focus input producer** and an equivalence check
 against the original traversal. This is the first component needed by the

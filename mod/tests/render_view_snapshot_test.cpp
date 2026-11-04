@@ -24,6 +24,10 @@ int main(){
     XrViewState state{XR_TYPE_VIEW_STATE};XrView output[2]{};uint32_t count=0;
     assert(layerLocateViews(s.session,&info,&state,2,&count,output)==XR_SUCCESS);
     XrView rendered[4]{};assert(lmuqv::xr_frame_views(rendered));
+    lmuqv::QuadFrameInputs owned;assert(lmuqv::xr_frame_inputs(owned));
+    assert(owned.identity.valid()&&owned.identity.session==1&&owned.identity.frame==s.frames&&
+        owned.identity.displayTime==s.predictedTime&&owned.identity.space==2&&owned.identity.thread==GetCurrentThreadId());
+    for(unsigned i=0;i<4;++i)assert(owned.views[i].next==nullptr&&owned.views[i].pose.position.x==rendered[i].pose.position.x);
     XrFovf fullOuter[2]{};assert(lmuqv::xr_frame_full_outer_fov(fullOuter));
     for(unsigned eye=0;eye<2;++eye)f.views[eye].pose=rendered[eye].pose;
     assert(layerLocateViews(s.session,&info,&state,2,&count,output)==XR_SUCCESS);
@@ -31,6 +35,8 @@ int main(){
     XrView secondEye[4]{};assert(lmuqv::xr_frame_views(secondEye));
     assert(secondEye[2].fov.angleLeft==rendered[2].fov.angleLeft);
     assert(secondEye[0].pose.position.x==rendered[0].pose.position.x);
+    lmuqv::QuadFrameInputs repeated;assert(lmuqv::xr_frame_inputs(repeated));
+    assert(repeated.identity==owned.identity&&repeated.views[2].fov.angleLeft==owned.views[2].fov.angleLeft);
     // Even a failed late tracking query must not erase the rendered frame.
     locateResult=XR_ERROR_RUNTIME_FAILURE;
     assert(layerLocateViews(s.session,&info,&state,2,&count,output)==XR_ERROR_RUNTIME_FAILURE);
@@ -44,6 +50,7 @@ int main(){
     XrFovf repeatedOuter[2]{};assert(lmuqv::xr_frame_full_outer_fov(repeatedOuter));
     assert(!std::memcmp(fullOuter,repeatedOuter,sizeof(fullOuter)));
     f.submit();
+    assert(!lmuqv::xr_frame_inputs(repeated)&&!repeated.identity.valid());
     assert(received.projectionCount==1);
     assert(received.views[2].fov.angleLeft==rendered[2].fov.angleLeft);
     assert(received.views[2].pose.position.x==rendered[2].pose.position.x);
@@ -54,5 +61,8 @@ int main(){
     assert(layerLocateViews(s.session,&info,&state,2,&count,output)==XR_SUCCESS);
     assert(lmuqv::xr_frame_views(secondEye));
     assert(secondEye[2].fov.angleLeft!=rendered[2].fov.angleLeft);
+    assert(lmuqv::xr_frame_inputs(repeated)&&repeated.identity!=owned.identity);
+    const auto nextIdentity=repeated.identity;
+    ++s.inputSessionSerial;assert(lmuqv::xr_frame_inputs(repeated)&&repeated.identity!=nextIdentity);
     std::cout<<"Rendered view snapshot survives late, failed and foreign-space locate calls; next frame refreshes\n";
 }

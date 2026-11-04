@@ -57,6 +57,10 @@ mode label here does not apply the numeric audit's full eligibility checks.
 
 ## Consequence for the next stage
 
+Subsequent user direction selects implementation-first continuation. Further
+profiling below is deferred and is not a prerequisite for the shared-input
+producer or portable stereo instancing implementation.
+
 The measurement coverage gate passes. Reliable detailed cost attribution and the
 net-performance gate remain open. Do not use the old broad focus-render timing,
 the 0.84 ms sum of coarse focus group means, or these category timings as promised

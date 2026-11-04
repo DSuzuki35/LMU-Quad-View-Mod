@@ -14,12 +14,23 @@ function Get-FileHash { [pscustomobject]@{Hash='fixture'} }
 $fixture=[scriptblock]::Create($prefix+$setup+[Environment]::NewLine+$environment+$metadata+';[pscustomobject]@{Info=$info;Run=($run|ConvertTo-Json|ConvertFrom-Json)}')
 $keys=@('LMU_QV_OUTER_SSR','LMU_QV_CPU_OUTER_REUSE','LMU_QV_CPU_UPLOAD_REUSE')
 $savedSps=[Environment]::GetEnvironmentVariable('LMU_QV_SPS_PROFILE','Process')
+$savedPreparation=[Environment]::GetEnvironmentVariable('LMU_QV_SPS_PREPARE','Process')
 $saved=@{}
 foreach($key in $keys){$saved[$key]=[Environment]::GetEnvironmentVariable($key,'Process')}
 try {
     [Environment]::SetEnvironmentVariable('LMU_QV_SPS_PROFILE','1','Process')
+    [Environment]::SetEnvironmentVariable('LMU_QV_SPS_PREPARE','1','Process')
     $spsDefault=& $fixture -Mode quad
     if($spsDefault.Info.Environment['LMU_QV_SPS_PROFILE'] -ne '0' -or $spsDefault.Run.SpsCpuProfiling){throw 'Inherited SPS profiling survived default launch'}
+    if($spsDefault.Info.Environment['LMU_QV_SPS_PREPARE'] -ne '0' -or $spsDefault.Run.SpsPreparation){throw 'Inherited SPS preparation survived default launch'}
+    foreach($quiet in @($false,$true)){
+        $preparation=& $fixture -Mode quad -SpsPreparation -DisableDiagnostics:$quiet
+        if($preparation.Info.Environment['LMU_QV_SPS_PREPARE'] -ne '1' -or !$preparation.Run.SpsPreparation -or $preparation.Run.SpsCpuProfiling -or $preparation.Run.RenderProfiling){throw 'SPS preparation must be independent of diagnostics/profiling'}
+    }
+    foreach($mode in @('trace','stereo-timing')){
+        $rejected=$false;try {& $fixture -Mode $mode -SpsPreparation|Out-Null} catch {$rejected=$true}
+        if(!$rejected){throw 'SPS preparation accepted a non-quad mode'}
+    }
     $sps=& $fixture -Mode quad -Backend VectorXR -UseRuntimeSettings -SpsCpuProfiling
     if($sps.Info.Environment['LMU_QV_SPS_PROFILE'] -ne '1' -or !$sps.Run.SpsCpuProfiling -or $sps.Run.StereoDrawAudit){throw 'SPS profiling environment/metadata mismatch'}
     $spsQuiet=& $fixture -Mode quad -SpsCpuProfiling -DisableDiagnostics
@@ -71,4 +82,4 @@ try {
         if(!$rejected){throw ('Invalid performance configuration accepted: '+($case|ConvertTo-Json -Compress))}
     }
     'Performance CLI tests passed: three providers, opt-in defaults, stale clearing, environment/metadata, mode/dependency guards, profiling and diagnostics-off; no game launched.'
-} finally {foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,$saved[$key],'Process')};[Environment]::SetEnvironmentVariable('LMU_QV_SPS_PROFILE',$savedSps,'Process')}
+} finally {foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,$saved[$key],'Process')};[Environment]::SetEnvironmentVariable('LMU_QV_SPS_PROFILE',$savedSps,'Process');[Environment]::SetEnvironmentVariable('LMU_QV_SPS_PREPARE',$savedPreparation,'Process')}

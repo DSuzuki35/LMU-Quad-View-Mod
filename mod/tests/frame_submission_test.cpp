@@ -91,7 +91,7 @@ struct Fixture {
     std::array<const XrCompositionLayerBaseHeader*,128> layers{};
     XrFrameEndInfo info{};
     Fixture(){
-        s=State{};s.quad=true;s.frames=11;s.session=reinterpret_cast<XrSession>(1);
+        s=State{};s.quad=true;s.frames=11;s.session=reinterpret_cast<XrSession>(1);s.inputSessionSerial=1;
         s.locateSpace=reinterpret_cast<XrSpace>(2);s.locateTime=s.predictedTime=12345;
         s.colorInfo.format=DXGI_FORMAT_R8G8B8A8_UNORM;s.colorInfo.width=1024;s.colorInfo.height=768;
         for(unsigned eye=0;eye<2;++eye){

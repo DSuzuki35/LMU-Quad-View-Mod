@@ -9,6 +9,7 @@
 #include "render_profile.hpp"
 #include "stereo_audit.hpp"
 #include "sps_cpu_profile_hooks.hpp"
+#include "native_stereo_focus_inputs.hpp"
 #include "pipeline_stats.hpp"
 #include "benchmark_control.hpp"
 #include "code_anchors.hpp"
@@ -171,6 +172,9 @@ std::atomic<uint64_t> renderCalls{0},focusCalls{0};
 std::atomic<uint64_t> uiCalls{0};
 struct History { ViewSnapshot* owner{}; TransformRecord transform{}; bool valid=false; };
 History innerHistory[2];
+bool spsPreparationOptIn=false,spsPreparedLogged=false,spsPreparationRefusedLogged=false;
+NativeStereoFocusFrame spsFocusFrame;
+struct SpsPreparationCounts {uint64_t prepared=0,refused=0,used[2]{},fallback[2]{};} spsPreparationCounts;
 void prepareHistory(History& history,ViewSnapshot* owner,bool nativePreviousValid) {
     // DYN invalidates native history on camera-definition changes even when View* is unchanged.
     if(history.owner!=owner || !nativePreviousValid) history=History{owner,{},false};
@@ -266,12 +270,16 @@ template<std::size_t N> bool matches(std::uintptr_t rva,const std::array<std::ui
     return readable(address<void>(rva),N) && !std::memcmp(address<void>(rva),bytes.data(),N);
 }
 Fov fov(const XrView& v) { return {v.fov.angleLeft,v.fov.angleRight,v.fov.angleUp,v.fov.angleDown}; }
-bool projection(const XrView& v,float nearZ,float farZ,Matrix& result) {
-    if(nativeRuntimeSettings)return make_engine_projection(fov(v),nearZ,farZ,1.f,1.f,result);
+bool projectionScales(float& sx,float& sy) {
+    if(nativeRuntimeSettings){sx=sy=1.f;return true;}
     auto renderer=*address<std::uintptr_t>(0x1b12be8);
     if(!readable(reinterpret_cast<void*>(renderer+0x770e0),8)) return false;
-    float sx{},sy{};std::memcpy(&sx,reinterpret_cast<void*>(renderer+0x770e0),4);
+    std::memcpy(&sx,reinterpret_cast<void*>(renderer+0x770e0),4);
     std::memcpy(&sy,reinterpret_cast<void*>(renderer+0x770e4),4);
+    return true;
+}
+bool projection(const XrView& v,float nearZ,float farZ,Matrix& result) {
+    float sx{},sy{};if(!projectionScales(sx,sy))return false;
     return make_engine_projection(fov(v),nearZ,farZ,sx,sy,result);
 }
 PFN_xrEnumerateViewConfigurationViews nativeEnumerateOriginal{};
@@ -889,7 +897,10 @@ void renderHook(void* unknown, bool laterPass) {
     // Only the verified DYN eye-loop call site. Menus and other render paths are untouched.
     if(caller != base+0xcd1763) return;
     XrView views[4]{};
-    if(!xr_frame_views(views)) return;
+    QuadFrameInputs frameInputs;
+    const bool ownedFrame=spsPreparationOptIn&&xr_frame_inputs(frameInputs);
+    if(ownedFrame)std::copy(frameInputs.views.begin(),frameInputs.views.end(),std::begin(views));
+    else {if(spsPreparationOptIn)spsFocusFrame.reset();if(!xr_frame_views(views))return;}
     auto* view=*address<ViewSnapshot*>(0x1a51370);
     if(!readable(view,sizeof(*view)) || view->eye_index<0 || view->eye_index>1) return;
     const unsigned eye=unsigned(view->eye_index);
@@ -917,7 +928,24 @@ void renderHook(void* unknown, bool laterPass) {
     std::memcpy(&nearZ,reinterpret_cast<std::byte*>(view)+0x24,4);
     std::memcpy(&farZ,reinterpret_cast<std::byte*>(view)+0x28,4);
     Matrix inner{},innerFar{};
-    if(!projection(views[eye+2],nearZ,farZ,inner) || !projection(views[eye+2],nearZ,1000000,innerFar)) {
+    if(spsPreparationOptIn&&eye==0){
+        NativeStereoFpGuard guard;
+        spsFocusFrame.reset();float scaleX{},scaleY{};
+        const auto camera=ownedFrame?capture_native_stereo_camera(view,address<void>(0x1b1be30),
+            address<void>(0x1a51400),address<void>(0x1a51370),readable):NativeStereoCameraSnapshot{};
+        const bool prepared=ownedFrame&&projectionScales(scaleX,scaleY)&&
+            spsFocusFrame.prepare(frameInputs,camera,reinterpret_cast<uintptr_t>(scene),
+                reinterpret_cast<uintptr_t>(view),nearZ,farZ,scaleX,scaleY);
+        if(prepared){++spsPreparationCounts.prepared;if(!spsPreparedLogged){
+            log_line("sps_prepare: both focus cameras owned before left focus; current locked XR FOVs; restricted right-view model; native eye draws retained");spsPreparedLogged=true;}}
+        else {++spsPreparationCounts.refused;if(!spsPreparationRefusedLogged){char line[256]{};
+            std::snprintf(line,sizeof(line),"sps_prepare fallback: %s; ordinary per-eye preparation retained",ownedFrame?spsFocusFrame.reason():"rendered frame identity unavailable");
+            log_line(line);spsPreparationRefusedLogged=true;}}
+    }
+    const bool preparedProjection=ownedFrame&&spsFocusFrame.consume(eye,frameInputs.identity,
+        reinterpret_cast<uintptr_t>(scene),reinterpret_cast<uintptr_t>(view),view->projection,view->far_projection,inner,innerFar);
+    if(spsPreparationOptIn){if(preparedProjection)++spsPreparationCounts.used[eye];else ++spsPreparationCounts.fallback[eye];}
+    if(!preparedProjection&&(!projection(views[eye+2],nearZ,farZ,inner) || !projection(views[eye+2],nearZ,1000000,innerFar))) {
         log_line("engine: invalid focus projection parameters");return;
     }
     if(view->projection[11]!=1.f || view->projection[15]!=0.f) {
@@ -1191,6 +1219,9 @@ bool engine_start(ID3D11DeviceContext* context) {
     char mode[32]{};GetEnvironmentVariableA("LMU_QV_MODE",mode,sizeof(mode));
     const bool stereoTiming=!std::strcmp(mode,"stereo-timing");
     stereoVrsMode=!std::strcmp(mode,"vrs");
+    char prepareSetting[8]{};
+    spsPreparationOptIn=!std::strcmp(mode,"quad")&&GetEnvironmentVariableA("LMU_QV_SPS_PREPARE",prepareSetting,sizeof(prepareSetting))==1&&prepareSetting[0]=='1';
+    spsFocusFrame.reset();spsPreparationCounts={};spsPreparedLogged=spsPreparationRefusedLogged=false;
     char auditSetting[8]{};const auto auditLength=GetEnvironmentVariableA("LMU_QV_STEREO_AUDIT",auditSetting,sizeof(auditSetting));
     wchar_t auditDirectory[32768]{};const auto auditDirectoryLength=GetEnvironmentVariableW(L"LMU_QV_STEREO_AUDIT_DIR",auditDirectory,32768);
     bool auditRequested=diagnostics_enabled()&&!stereoTiming&&auditLength==1&&auditSetting[0]=='1'&&auditDirectoryLength&&auditDirectoryLength<32768;
@@ -1401,11 +1432,18 @@ bool engine_start(ID3D11DeviceContext* context) {
     renderProfile.configure(profiling,log_line,durationSeconds,flush_log);
     if(!std::strcmp(profileSetting,"1")&&!profiling)log_line("render_profile disabled: incompatible legacy timing/benchmark or stereo mode");
     installed.store(true);
+    if(spsPreparationOptIn)log_line("sps_prepare enabled: early owned focus camera pair; existing native rendering order and fallback; no profiling required");
     log_line(stereoTiming ? "engine: verified build; stereo timing render hook only; no quad repeats or projection/UI changes" :
                            "engine: verified build; render/UI/projection/mask hooks enabled");
     return true;
 }
 void engine_stop() {
+    if(spsPreparationOptIn){char line[384]{};std::snprintf(line,sizeof(line),
+        "sps_prepare summary prepared_pairs=%llu refused_pairs=%llu prepared_projection_left=%llu prepared_projection_right=%llu fallback_left=%llu fallback_right=%llu; native eye draws retained",
+        static_cast<unsigned long long>(spsPreparationCounts.prepared),static_cast<unsigned long long>(spsPreparationCounts.refused),
+        static_cast<unsigned long long>(spsPreparationCounts.used[0]),static_cast<unsigned long long>(spsPreparationCounts.used[1]),
+        static_cast<unsigned long long>(spsPreparationCounts.fallback[0]),static_cast<unsigned long long>(spsPreparationCounts.fallback[1]));log_line(line);}
+    spsPreparationOptIn=false;spsFocusFrame.reset();
     sps_cpu_hooks::stop();
     stereo_audit_stop();
     if(nativeTransformHooked){

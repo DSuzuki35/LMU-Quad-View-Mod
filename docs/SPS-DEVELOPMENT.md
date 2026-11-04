@@ -740,3 +740,33 @@ benefit from fewer Draw calls. The native work-removal and measured-performance
 gates remain open. The analyzer now separates large-control-gap warnings from
 capture coverage, with a regression for complete coverage and excessive timing
 perturbation. See the [results and next measurement gate](SPS-CPU-PROFILE-RESULTS-20261104.md).
+
+## Implementation-first continuation: owned focus inputs (2026-11-04)
+
+The user chose continued shared-preparation plus portable-instancing work.
+Further profiling is deferred. `native_stereo_focus_inputs.hpp` now produces
+both focus cameras before left focus rendering from the locked current XR frame
+and the restricted native left-camera model. The XR bridge supplies owned flat
+views plus session/frame/time/space/thread identity. Both ordinary eye paths can
+consume prepared focus projections in order, with exact native depth/view/scene
+checks and ordinary per-eye fallback. The predicted right world/view matrices
+do not overwrite the native right camera or suppress its draws.
+
+The opt-in `-SpsPreparation` / `LMU_QV_SPS_PREPARE=1` works with diagnostics off;
+the development entry point uses normal gameplay without profiling hotkeys.
+Default launches retain the existing eye path. Native history, metadata,
+frustum/cache updates and all draw/preparation calls remain in place.
+
+The full MSVC native suite and CLI tests passed. New camera-input tests passed at
+both optimization levels, and XR snapshot lifecycle checks passed. A private
+fixture exercised four existing captured frame pairs using recovered native
+focus FOVs: projection differences zero; maximum current entry difference
+0.000183105 and derived entry difference 0.000488281. This is bounded numeric
+evidence, with no new live image-equivalence or performance claim.
+
+Next is the native unfiltered owner/source producer, then owned draw inputs and
+target/consumer integration for paired submission. The local code captures do
+not contain decoded source-builder code; read-only inspection needs the running
+game after a track has rendered. That inspection implements source ownership;
+it is independent of deferred performance measurement. See [implementation and
+remaining contracts](SPS-FOCUS-INPUTS.md).

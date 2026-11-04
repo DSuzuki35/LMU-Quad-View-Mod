@@ -104,6 +104,7 @@ struct AppChain {
 struct State {
     XrInstance instance{};
     XrSession session{};
+    uint64_t inputSessionSerial=0;
     XrSystemId system{};
     bool quad=false, vrs=false, running=false, frame=false, shouldRender=false, located=false;
     bool renderViewsLocked=false; // Rendering, UI and submission share one locate snapshot.
@@ -153,6 +154,7 @@ struct State {
     unsigned captureMask=0;
     uint64_t frames=0;
 } s;
+uint64_t inputSessionSerial=0; // Survives State resets and reused XR handles.
 lmuqv::benchmark::Transport benchmarkTransport;
 lmuqv::benchmark::Overlay benchmarkOverlay;
 lmuqv::benchmark::GpuSpan<> benchmarkGpu;
@@ -567,6 +569,7 @@ XrResult XRAPI_CALL layerCreateSession(XrInstance instance,const XrSessionCreate
     }
     XrResult r=next.CreateSession(instance,info,session);if(XR_FAILED(r)){logf("Downstream xrCreateSession failed result=%d",r);return r;}
     s.session=*session;s.system=info->systemId;
+    s.inputSessionSerial=inputSessionSerial==UINT64_MAX?0:++inputSessionSerial;
     if(s.vrs&&s.requestEyeTracking)logf("vrs gaze initialized=%d; invalid/unavailable gaze uses fixed focus",vrsGaze.initialize(*session));
     for(auto chain=static_cast<const XrBaseInStructure*>(info->next);chain;chain=chain->next) {
         if(chain->type==XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
@@ -1199,6 +1202,20 @@ bool xr_frame_views(XrView (&views)[4]) {
     if(!s.quad||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
     s.renderViewsLocked=true;
     std::copy(std::begin(s.views),std::end(s.views),std::begin(views));return true;
+}
+bool xr_frame_inputs(QuadFrameInputs& out) {
+    std::lock_guard<std::recursive_mutex> lock(stateMutex);out={};
+    ensureQuadRenderFrame();
+    if(!s.quad||!s.session||!s.frame||!s.shouldRender||!s.located||
+       s.locateTime!=s.predictedTime||!s.inputSessionSerial)return false;
+    QuadFrameInputs frame;
+    frame.identity={s.inputSessionSerial,s.frames,uint64_t(reinterpret_cast<uintptr_t>(s.locateSpace)),
+        s.predictedTime,GetCurrentThreadId()};
+    if(!frame.identity.valid())return false;
+    s.renderViewsLocked=true;
+    std::copy(std::begin(s.views),std::end(s.views),frame.views.begin());
+    for(auto& view:frame.views)view.next=nullptr;
+    out=frame;return true;
 }
 bool xr_frame_full_outer_fov(XrFovf (&fov)[2]) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);

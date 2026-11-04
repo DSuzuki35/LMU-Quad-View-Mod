@@ -22,6 +22,7 @@ bool xr_frame_views(XrView (&views)[4]) {
     if(!testQuadFrame)return false;
     std::copy_n(testFrameViews,4,views);return true;
 }
+bool xr_frame_inputs(QuadFrameInputs& out){out={};return false;}
 bool xr_frame_full_outer_fov(XrFovf (&fov)[2]) {
     if(!testQuadFrame||!testFullFovAvailable)return false;
     std::copy_n(testFullFov,2,fov);return true;
