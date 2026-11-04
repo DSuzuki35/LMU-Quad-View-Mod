@@ -200,6 +200,25 @@ void hookTargetTest(){
     require(!hookTargetPlausible(0x557811)&&!hookTargetPlausible(fovScaleRva+1),"leaf interior accepted");
     image[0x557841]=0x90;image[fovScaleRva+7]=0x90;
     require(!hookTargetPlausible(0x557810)&&!hookTargetPlausible(fovScaleRva),"partial leaf signatures accepted");
+    // A familiar classifier prologue/call site must not admit an interior
+    // address after a game update. Exercise the policy used to install the hook.
+    const unsigned char classifyCall[]{0xe8,0xec,0x3d,0x11,0x00,0x0f,0xba,0xe0,0x11};
+    std::memcpy(image.data()+nativeClassifyRva,nativeClassifyAnchor.data(),nativeClassifyAnchor.size());
+    std::memcpy(image.data()+0x41c8af,classifyCall,sizeof(classifyCall));
+    function->BeginAddress=static_cast<DWORD>(nativeClassifyRva);
+    function->EndAddress=function->BeginAddress+0x100;
+    require(nativeClassifyTargetVerified(),"verified classifier target rejected");
+    --function->BeginAddress;
+    require(!nativeClassifyTargetVerified(),"classifier anchor inside another function accepted");
+    ++function->BeginAddress;
+    image[0x41c8af]^=1;
+    require(!nativeClassifyTargetVerified(),"classifier hook accepted a changed call site");
+    image[0x41c8af]^=1;image[nativeClassifyRva]^=1;
+    require(!nativeClassifyTargetVerified(),"classifier hook accepted a changed prologue");
+    image[nativeClassifyRva]^=1;
+    section->Characteristics=IMAGE_SCN_MEM_READ;
+    require(!nativeClassifyTargetVerified(),"classifier hook accepted a non-executable section");
+    section->Characteristics=IMAGE_SCN_MEM_EXECUTE;
     nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].Size=0xffffffff;
     require(!hookTargetPlausible(0x1000),"out-of-image exception directory accepted");
     base=saved;

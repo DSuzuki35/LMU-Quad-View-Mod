@@ -1,6 +1,11 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "stereo_audit.hpp"
+#include "stereo_audit_trigger.hpp"
+#include "stereo_resource_trace.hpp"
+#include "native_stereo_packets.hpp"
+#include "native_stereo_camera.hpp"
+#include "native_stereo_source.hpp"
 #include "stereo_instancing.hpp"
 #include "stereo_draw_proof.hpp"
 #include "diagnostics.hpp"
@@ -15,6 +20,7 @@
 #include <cstring>
 #include <cwchar>
 #include <filesystem>
+#include <iomanip>
 #include <limits>
 #include <locale>
 #include <memory>
@@ -41,7 +47,7 @@ struct Record {
     std::array<Tag,28> constants{};uint64_t targetSignature=0;
     uint64_t pixelResources=0,pixelSamplers=0;uint32_t predicate=0,predicateValue=0;
     uint32_t rtWidth=0,rtHeight=0,rtFormat=0,rtSamples=0,rtCount=0,blend=0,classes=0;
-    uint32_t nativeMesh=0,activeQueries=0,activeQueryMask=0;uint64_t nativeBindTicks=0,nativePrepareTicks=0,proofTicks=0;
+    uint32_t nativeMesh=0,activeQueries=0,activeQueryMask=0;uint64_t nativeBindTicks=0,nativePrepareTicks=0,proofTicks=0,sequence=0;
 };
 struct Pass {uint64_t calls=0,dropped=0,wallTicks=0,snapshotTicks=0,apiTicks=0,maps=0,unmaps=0,updates=0,copies=0,dispatches=0,commandLists=0,nativeBinds=0,nativeBindTicks=0;};
 // LMU creates many shader objects containing identical DXBC. Keep reflection
@@ -67,9 +73,135 @@ uint32_t query_mask(ID3D11Asynchronous* asynchronous){
     D3D11_QUERY_DESC desc{};query->GetDesc(&desc);query->Release();return unsigned(desc.Query)<31?1u<<unsigned(desc.Query):1u<<31;
 }
 std::unordered_map<const void*,uint32_t> nativeMeshes;
+constexpr unsigned maxNativeScopes = 128, maxNativePackets = 32768,
+                   maxNativeObjects = 65536;
+struct NativeTarget {
+  uint32_t view = 0, resource = 0, width = 0, height = 0, depth = 0, format = 0,
+           samples = 0, sampleQuality = 0;
+  uint32_t dimension = 0, mip = 0, firstSlice = 0, slices = 0;
+};
+struct NativeTargets {
+  std::array<NativeTarget, 8> rt{};
+  NativeTarget depth;
+};
+// Source records own scalars and an anonymized array ID only. The lazy-state
+// bit observes one known refresh path, not general staticness or eligibility.
+struct NativeSourceRecord {
+  bool complete = false, lazyStatePresent = false;
+  const char *reason = "incomplete snapshot";
+  size_t bytesRead = 0;
+  uint32_t array = 0;
+  int32_t count = 0;
+  unsigned index = 0;
+  float sortDistance = 0;
+};
+struct NativePacketRecord {
+  uint32_t mesh = 0, geometry = 0, meshFlags = 0, geometryFlags = 0;
+  unsigned bucket = 0, item = 0, index = 0;
+  bool callback = false;
+  NativeSourceRecord source;
+};
+struct NativePassRecord {
+  unsigned slot = 0;
+  uint32_t scene = 0, view = 0, caller = 0, flags = 0;
+  bool lastMainPass = false, complete = false, ended = false;
+  uint64_t beginSequence = 0, endSequence = 0;
+  NativeStereoCaptureReason reason = NativeStereoCaptureReason::complete;
+  unsigned buckets = 0, items = 0, meshes = 0, work = 0;
+  size_t bytesRead = 0;
+  NativeTargets before, after;
+  uint64_t generation = 0;
+  NativeStereoCameraSnapshot camera;
+  std::vector<NativePacketRecord> packets;
+};
+struct NativePrepareRecord {
+  unsigned slot = 0;
+  uint32_t mesh = 0, suppliedFlags = 0, shaderFlags = 0, effectiveFlags = 0,
+           meshFlags = 0;
+  bool reset = false, complete = false, shaderCallback = false,
+       meshCallback = false, shaderCallbackTested = false;
+  uint64_t beginSequence = 0, endSequence = 0;
+  NativeStereoCaptureReason reason = NativeStereoCaptureReason::complete;
+};
+std::vector<NativePassRecord> nativePasses;
+std::vector<NativePrepareRecord> nativePreparations;
+struct NativeTransformRecord {
+  unsigned slot=0,entryMxcsr=0,postMxcsr=0;
+  uint64_t generation=0;
+  bool ended=false;
+  NativeStereoTransformSnapshot pre,post;
+  NativeStereoTransformObserved actual;
+};
+constexpr unsigned maxTransformsPerSlot=128;
+std::array<NativeTransformRecord,framesWanted*4*maxTransformsPerSlot> nativeTransforms;
+std::array<unsigned,framesWanted*4> transformAttempts{};
+unsigned transformCount=0,transformDrops=0,transformExcludedViews=0,transformMissingViews=0;
+uint64_t transformScopeEpoch=0;
+struct NativeClassifyRecord {
+  unsigned slot = 0;
+  uint64_t generation = 0;
+  uint32_t candidate = 0, view = 0, entryMxcsr = 0, postMxcsr = 0, returned = 0;
+  uint32_t stored = 0;
+  bool ended = false, storedAvailable = false;
+  size_t bytesRead = 0;
+  NativeStereoClassifySnapshot pre, post;
+};
+std::vector<NativeClassifyRecord> nativeClassifications;
+std::array<uint64_t, framesWanted * 4> classifyAttempts{}, classifyDrops{};
+uint64_t classifyTotalAttempts = 0, classifyTotalDrops = 0;
+std::array<uint64_t, framesWanted * 4> classifyExcludedViews{}, classifyMissingExpectedViews{};
+uint64_t classifyTotalExcludedViews = 0, classifyTotalMissingExpectedViews = 0;
+// Identity selection only: snapshot reads still prove current main/null parent.
+thread_local const void* expectedClassifyMainView = nullptr;
+thread_local uint64_t expectedClassifyGeneration = 0;
+bool classifyFailed = false;
+std::atomic<bool> classifyHookAvailable{false};
+std::unordered_map<const void *, uint32_t> nativeObjects;
+uint64_t nativeGeneration = 0, auditSequence = 0;
+unsigned nativePacketCount = 0, nativeScopesDropped = 0, nativePreparationsDropped = 0;
+bool nativeDiagnosticsFailed = false;
+StereoResourceTrace resourceTrace;
+void reset_native_capture() {
+  resourceTrace.reset();
+  ++nativeGeneration;
+  auditSequence = 0;
+  nativePacketCount = 0;
+  nativeScopesDropped = 0;
+  nativePreparationsDropped = 0;
+  nativeDiagnosticsFailed = false;
+  nativePasses.clear();
+  nativePreparations.clear();
+  transformAttempts={};transformCount=transformDrops=transformExcludedViews=transformMissingViews=0;
+  nativeObjects.clear();
+  nativeMeshes.clear();
+  nativeClassifications.clear();
+  classifyAttempts = {};
+  classifyDrops = {};
+  classifyTotalAttempts = classifyTotalDrops = 0;
+  classifyFailed = false;
+  classifyExcludedViews = {};
+  classifyMissingExpectedViews = {};
+  classifyTotalExcludedViews = classifyTotalMissingExpectedViews = 0;
+  expectedClassifyMainView = nullptr;
+  expectedClassifyGeneration = 0;
+}
+uint32_t native_identity(std::unordered_map<const void *, uint32_t> &identities,
+                         const void *pointer, size_t limit) {
+  if (!pointer)
+    return 0;
+  const auto known = identities.find(pointer);
+  if (known != identities.end())
+    return known->second;
+  if (identities.size() >= limit)
+    throw std::bad_alloc();
+  const auto id = uint32_t(identities.size() + 1);
+  identities.emplace(pointer, id);
+  return id;
+}
 std::atomic<ID3D11DeviceContext*> watchedContext{nullptr};std::atomic<ID3D11Device*> watchedDevice{nullptr};
 std::atomic<bool> capturing{false};bool keyWasDown=false,sawScene=false,deferredStop=false;
 long long started=0,frequency=0;std::filesystem::path directory;
+StereoAuditTrigger requestTrigger;const char* captureTrigger="hotkey";
 void(*logger)(const char*)=nullptr;
 StereoCapabilities capabilities;
 std::array<Pass,framesWanted*4> passes{};std::vector<Record> records;
@@ -80,7 +212,7 @@ thread_local int activeSlot=-1,group=-1;thread_local bool suspended=false;
 thread_local uint32_t nativeMesh=0;thread_local long long nativeStarted=0;
 thread_local uint64_t nativeBindTicks=0;thread_local bool nativeFirstDraw=false;
 // Context methods followed by device shader/input-layout creation methods.
-constexpr unsigned contextCount=14,totalHooks=24;
+constexpr unsigned contextCount=14,totalHooks=25;
 constexpr auto indices=stereo_audit_vtable;
 std::array<void*,totalHooks> targets{},originals{};
 std::array<void*,2> factoryTargets{},factoryOriginals{};
@@ -92,6 +224,25 @@ void emit(const char* s){if(logger)logger(s);}
 struct Suspend {bool prior=suspended;Suspend(){suspended=true;}~Suspend(){suspended=prior;}};
 template<class Fn,unsigned Index> Fn original(){return reinterpret_cast<Fn>(originals[Index]);}
 bool watched(ID3D11DeviceContext* c){return !suspended&&activeSlot>=0&&enabled.load(std::memory_order_relaxed)&&c==watchedContext.load(std::memory_order_relaxed);}
+uint64_t trace_resources(ID3D11DeviceContext* context, StereoResourceTrace::Event event,
+                         ID3D11Resource* source=nullptr, ID3D11Resource* destination=nullptr, const D3D11_BOX* box=nullptr) noexcept {
+    if(suspended||!enabled.load(std::memory_order_relaxed)||!capturing.load(std::memory_order_relaxed)||
+       GetCurrentThreadId()!=owner.load(std::memory_order_relaxed)||context!=watchedContext.load(std::memory_order_relaxed))return 0;
+    try {
+        std::lock_guard<std::recursive_mutex> lock(mutex);
+        if(!enabled||!capturing||!resourceTrace.available())return 0;
+        Suspend pause;
+        if(box){event.hasBox=true;event.box=*box;}
+        event.sequence=++auditSequence;event.frame=completedFrames;event.slot=activeSlot;
+        resourceTrace.observe(event,context,capabilities.featureLevel,[](ID3D11Resource* resource){
+            return native_identity(nativeObjects,resource,maxNativeObjects);
+        },source,destination);
+        return event.sequence;
+    } catch(...) {resourceTrace.abort();return 0;}
+}
+StereoResourceTrace::Event resource_event(StereoResourceTrace::Operation operation) {
+    StereoResourceTrace::Event event;event.operation=operation;return event;
+}
 uint64_t mix(uint64_t h,uint64_t v){for(unsigned i=0;i<8;++i){h^=v&255;h*=1099511628211ull;v>>=8;}return h;}
 Tag tag(ID3D11DeviceChild* child,bool write=false){
     if(!child)return {};
@@ -100,10 +251,432 @@ Tag tag(ID3D11DeviceChild* child,bool write=false){
     if(write){++value.version;child->SetPrivateData(resourceGuid,sizeof(value),&value);}return value;
 }
 template<class T> void drop(T*& p){if(p){p->Release();p=nullptr;}}
+template <class T> struct NativeCom {
+  T *value = nullptr;
+  ~NativeCom() { drop(value); }
+};
+void native_target_resource(NativeTarget &target, ID3D11Resource *resource) {
+  target.resource = native_identity(nativeObjects, resource, maxNativeObjects);
+  if (!resource)
+    return;
+  D3D11_RESOURCE_DIMENSION dimension{};
+  resource->GetType(&dimension);
+  if (dimension == D3D11_RESOURCE_DIMENSION_TEXTURE2D) {
+    NativeCom<ID3D11Texture2D> texture;
+    if (SUCCEEDED(resource->QueryInterface(
+            __uuidof(ID3D11Texture2D),
+            reinterpret_cast<void **>(&texture.value)))) {
+      D3D11_TEXTURE2D_DESC desc{};
+      texture.value->GetDesc(&desc);
+      target.width = desc.Width;
+      target.height = desc.Height;
+      target.depth = desc.ArraySize;
+      target.samples = desc.SampleDesc.Count;
+      target.sampleQuality = desc.SampleDesc.Quality;
+    }
+  } else if (dimension == D3D11_RESOURCE_DIMENSION_TEXTURE1D) {
+    NativeCom<ID3D11Texture1D> texture;
+    if (SUCCEEDED(resource->QueryInterface(
+            __uuidof(ID3D11Texture1D),
+            reinterpret_cast<void **>(&texture.value)))) {
+      D3D11_TEXTURE1D_DESC desc{};
+      texture.value->GetDesc(&desc);
+      target.width = desc.Width;
+      target.height = 1;
+      target.depth = desc.ArraySize;
+      target.samples = 1;
+    }
+  } else if (dimension == D3D11_RESOURCE_DIMENSION_TEXTURE3D) {
+    NativeCom<ID3D11Texture3D> texture;
+    if (SUCCEEDED(resource->QueryInterface(
+            __uuidof(ID3D11Texture3D),
+            reinterpret_cast<void **>(&texture.value)))) {
+      D3D11_TEXTURE3D_DESC desc{};
+      texture.value->GetDesc(&desc);
+      target.width = desc.Width;
+      target.height = desc.Height;
+      target.depth = desc.Depth;
+      target.samples = 1;
+    }
+  } else if (dimension == D3D11_RESOURCE_DIMENSION_BUFFER) {
+    NativeCom<ID3D11Buffer> buffer;
+    if (SUCCEEDED(resource->QueryInterface(
+            __uuidof(ID3D11Buffer),
+            reinterpret_cast<void **>(&buffer.value)))) {
+      D3D11_BUFFER_DESC desc{};
+      buffer.value->GetDesc(&desc);
+      target.width = desc.ByteWidth;
+    }
+  }
+}
+NativeTargets snapshot_native_targets() {
+  Suspend pause;
+  struct Bindings {
+    ID3D11RenderTargetView *rt[8]{};
+    ID3D11DepthStencilView *depth = nullptr;
+    ~Bindings() {
+      for (auto *&view : rt)
+        drop(view);
+      drop(depth);
+    }
+  } bindings;
+  NativeTargets result;
+  selected->OMGetRenderTargets(8, bindings.rt, &bindings.depth);
+  for (unsigned i = 0; i < 8; ++i) {
+    auto *view = bindings.rt[i];
+    if (!view)
+      continue;
+    auto &target = result.rt[i];
+    target.view = native_identity(nativeObjects, view, maxNativeObjects);
+    NativeCom<ID3D11Resource> resource;
+    view->GetResource(&resource.value);
+    native_target_resource(target, resource.value);
+    D3D11_RENDER_TARGET_VIEW_DESC desc{};
+    view->GetDesc(&desc);
+    target.format = unsigned(desc.Format);
+    target.dimension = unsigned(desc.ViewDimension);
+    switch (desc.ViewDimension) {
+    case D3D11_RTV_DIMENSION_TEXTURE1D:
+      target.mip = desc.Texture1D.MipSlice;
+      break;
+    case D3D11_RTV_DIMENSION_TEXTURE1DARRAY:
+      target.mip = desc.Texture1DArray.MipSlice;
+      target.firstSlice = desc.Texture1DArray.FirstArraySlice;
+      target.slices = desc.Texture1DArray.ArraySize;
+      break;
+    case D3D11_RTV_DIMENSION_TEXTURE2D:
+      target.mip = desc.Texture2D.MipSlice;
+      break;
+    case D3D11_RTV_DIMENSION_TEXTURE2DARRAY:
+      target.mip = desc.Texture2DArray.MipSlice;
+      target.firstSlice = desc.Texture2DArray.FirstArraySlice;
+      target.slices = desc.Texture2DArray.ArraySize;
+      break;
+    case D3D11_RTV_DIMENSION_TEXTURE2DMSARRAY:
+      target.firstSlice = desc.Texture2DMSArray.FirstArraySlice;
+      target.slices = desc.Texture2DMSArray.ArraySize;
+      break;
+    case D3D11_RTV_DIMENSION_TEXTURE3D:
+      target.mip = desc.Texture3D.MipSlice;
+      target.firstSlice = desc.Texture3D.FirstWSlice;
+      target.slices = desc.Texture3D.WSize;
+      break;
+    case D3D11_RTV_DIMENSION_BUFFER:
+      target.firstSlice = desc.Buffer.FirstElement;
+      target.slices = desc.Buffer.NumElements;
+      break;
+    default:
+      break;
+    }
+  }
+  if (bindings.depth) {
+    auto &target = result.depth;
+    target.view =
+        native_identity(nativeObjects, bindings.depth, maxNativeObjects);
+    NativeCom<ID3D11Resource> resource;
+    bindings.depth->GetResource(&resource.value);
+    native_target_resource(target, resource.value);
+    D3D11_DEPTH_STENCIL_VIEW_DESC desc{};
+    bindings.depth->GetDesc(&desc);
+    target.format = unsigned(desc.Format);
+    target.dimension = unsigned(desc.ViewDimension);
+    switch (desc.ViewDimension) {
+    case D3D11_DSV_DIMENSION_TEXTURE1D:
+      target.mip = desc.Texture1D.MipSlice;
+      break;
+    case D3D11_DSV_DIMENSION_TEXTURE1DARRAY:
+      target.mip = desc.Texture1DArray.MipSlice;
+      target.firstSlice = desc.Texture1DArray.FirstArraySlice;
+      target.slices = desc.Texture1DArray.ArraySize;
+      break;
+    case D3D11_DSV_DIMENSION_TEXTURE2D:
+      target.mip = desc.Texture2D.MipSlice;
+      break;
+    case D3D11_DSV_DIMENSION_TEXTURE2DARRAY:
+      target.mip = desc.Texture2DArray.MipSlice;
+      target.firstSlice = desc.Texture2DArray.FirstArraySlice;
+      target.slices = desc.Texture2DArray.ArraySize;
+      break;
+    case D3D11_DSV_DIMENSION_TEXTURE2DMSARRAY:
+      target.firstSlice = desc.Texture2DMSArray.FirstArraySlice;
+      target.slices = desc.Texture2DMSArray.ArraySize;
+      break;
+    default:
+      break;
+    }
+  }
+  return result;
+}
 std::string quoted(const char* value){
     std::string s="\"";for(const unsigned char* p=reinterpret_cast<const unsigned char*>(value?value:"");*p;++p){
         if(*p=='"'||*p=='\\'){s+='\\';s+=char(*p);}else if(*p<32){char b[7]{};std::snprintf(b,sizeof(b),"\\u%04x",unsigned(*p));s+=b;}else s+=char(*p);
     }return s+'"';
+}
+void write_native_target(std::ostringstream &out, const NativeTarget &target) {
+  out << "{\"view\":" << target.view << ",\"resource\":" << target.resource
+      << ",\"width\":" << target.width << ",\"height\":" << target.height
+      << ",\"format\":" << target.format << ",\"samples\":" << target.samples
+      << ",\"sample_quality\":" << target.sampleQuality
+      << ",\"depth_or_array_size\":" << target.depth
+      << ",\"view_dimension\":" << target.dimension << ",\"mip\":" << target.mip
+      << ",\"first_slice\":" << target.firstSlice
+      << ",\"slices\":" << target.slices << '}';
+}
+void write_native_targets(std::ostringstream &out,
+                          const NativeTargets &targets) {
+  out << "{\"rt\":[";
+  for (unsigned i = 0; i < targets.rt.size(); ++i) {
+    if (i)
+      out << ',';
+    write_native_target(out, targets.rt[i]);
+  }
+  out << "],\"dsv\":";
+  write_native_target(out, targets.depth);
+  out << '}';
+}
+template<class T> void write_camera_numbers(std::ostringstream& out,const T& numbers) {
+  out << '[';
+  bool first = true;
+  for (const auto value : numbers) {
+    if (!first)
+      out << ',';
+    first = false;
+    out << value;
+  }
+  out << ']';
+}
+template <class T>
+void write_camera_eyes(std::ostringstream &out, const T &eyes) {
+  out << '[';
+  write_camera_numbers(out, eyes[0]);
+  out << ',';
+  write_camera_numbers(out, eyes[1]);
+  out << ']';
+}
+void write_native_camera(std::ostringstream &out,
+                         const NativeStereoCameraSnapshot &camera) {
+  out << "{\"complete\":" << (camera.complete ? "true" : "false")
+      << ",\"reason\":" << quoted(camera.reason)
+      << ",\"bytes_read\":" << camera.bytesRead << ",\"values\":";
+  if (!camera.complete) {
+    out << "null}";
+    return;
+  }
+  out << "{\"flags\":" << camera.flags << ",\"eye\":" << camera.eye
+      << ",\"transform_mode\":" << camera.transformMode
+      << ",\"camera_mode\":" << camera.cameraMode << ",\"current\":";
+  write_camera_numbers(out, camera.current);
+  out << ",\"projection\":";
+  write_camera_numbers(out, camera.projection);
+  out << ",\"far_projection\":";
+  write_camera_numbers(out, camera.farProjection);
+  out << ",\"derived\":";
+  write_camera_numbers(out, camera.derived);
+  out << ",\"translation\":";
+  write_camera_numbers(out, camera.translation);
+  out << ",\"euler\":";
+  write_camera_numbers(out, camera.euler);
+  out << ",\"relative_eye\":";
+  write_camera_eyes(out, camera.relativeEye);
+  out << ",\"engine_projection\":";
+  write_camera_eyes(out, camera.engineProjection);
+  out << ",\"engine_far_projection\":";
+  write_camera_eyes(out, camera.engineFarProjection);
+  out << ",\"scalars\":";
+  write_camera_eyes(out, camera.scalars);
+  out << "}}";
+}
+void write_native_source(std::ostringstream &out,
+                         const NativeSourceRecord &source) {
+  out << "{\"complete\":" << (source.complete ? "true" : "false")
+      << ",\"reason\":" << quoted(source.reason)
+      << ",\"bytes_read\":" << source.bytesRead << ",\"values\":";
+  if (!source.complete) {
+    out << "null}";
+    return;
+  }
+  out << "{\"array\":" << source.array << ",\"count\":" << source.count
+      << ",\"index\":" << source.index
+      << ",\"sort_distance\":" << double(source.sortDistance)
+      << ",\"lazy_state_present\":"
+      << (source.lazyStatePresent ? "true" : "false") << "}}";
+}
+void write_camera_comparisons(std::ostringstream &out) {
+  // This operates only on owned copies, including when a close saves from a
+  // different thread. Native state is never read or reconstructed here.
+  std::vector<NativeStereoCameraObservation> observations;
+  observations.reserve(nativePasses.size());
+  for (const auto &record : nativePasses)
+    observations.push_back({record.generation, record.slot, record.scene,
+                            record.view, record.ended, record.camera});
+  // A dropped/aborted or still-open original sequence could conceal another
+  // same-eye scope. Never establish uniqueness from that truncated capture.
+  const bool completeCapture = !nativeScopesDropped && !nativeDiagnosticsFailed &&
+                               !openScopes && !sawScene;
+  out << ",\"camera_comparisons\":[";
+  bool first = true;
+  for (size_t i = 0; i < observations.size(); ++i) {
+    const auto &key = observations[i];
+    bool seen = false;
+    for (size_t j = 0; j < i; ++j) {
+      const auto &prior = observations[j];
+      if (key.generation == prior.generation &&
+          key.slot / 4 == prior.slot / 4 &&
+          (key.slot % 4) / 2 == (prior.slot % 4) / 2 &&
+          key.scene == prior.scene && key.view == prior.view) {
+        seen = true;
+        break;
+      }
+    }
+    if (seen)
+      continue;
+    const auto comparison = compare_native_stereo_cameras(
+        observations.data(), observations.size(), i, completeCapture);
+    if (!first)
+      out << ',';
+    first = false;
+    out << "{\"generation\":" << key.generation << ",\"frame\":" << key.slot / 4
+        << ",\"focus\":" << ((key.slot % 4) >= 2 ? "true" : "false")
+        << ",\"scene\":" << key.scene << ",\"view\":" << key.view
+        << ",\"available\":" << (comparison.available ? "true" : "false")
+        << ",\"reason\":" << quoted(comparison.reason)
+        << ",\"scheduling_eligible\":false";
+    if (!comparison.available) {
+      out << ",\"current_error\":null,\"projection_error\":null,\"far_"
+             "projection_error\":null,\"derived_error\":null,\"predicted\":"
+             "null}";
+      continue;
+    }
+    out << ",\"current_error\":" << comparison.currentError
+        << ",\"projection_error\":" << comparison.projectionError
+        << ",\"far_projection_error\":" << comparison.farProjectionError
+        << ",\"derived_error\":" << comparison.derivedError
+        << ",\"predicted\":{\"current\":";
+    write_camera_numbers(out, comparison.current);
+    out << ",\"projection\":";
+    write_camera_numbers(out, comparison.projection);
+    out << ",\"far_projection\":";
+    write_camera_numbers(out, comparison.farProjection);
+    out << ",\"derived\":";
+    write_camera_numbers(out, comparison.derived);
+    out << "}}";
+  }
+  out << ']';
+}
+void write_native_capture(std::ostringstream &out) {
+  if (nativePasses.empty() && nativePreparations.empty() &&
+      !nativeScopesDropped && !nativePreparationsDropped &&
+      !nativeDiagnosticsFailed)
+    return;
+  const auto priorPrecision = out.precision();
+  out << std::setprecision(std::numeric_limits<double>::max_digits10);
+  out << ",\"native_passes\":{\"observation\":\"Ordered scalar observations "
+         "only; copying identities does not preserve contents or native "
+         "lifetimes; no consumer boundary or SPS eligibility is established\""
+      << ",\"scope_limit\":" << maxNativeScopes
+      << ",\"packets_per_scope_limit\":" << nativeStereoPacketLimit
+      << ",\"total_packet_limit\":" << maxNativePackets
+      << ",\"pointer_work_per_scope_limit\":" << nativeStereoWorkLimit
+      << ",\"native_bytes_per_scope_bound\":" << nativeStereoReadByteLimit
+      << ",\"camera_bytes_per_scope_bound\":" << nativeStereoCameraReadByteLimit
+      << ",\"source_bytes_per_packet_bound\":" << nativeStereoSourceReadByteLimit
+      << ",\"scheduling_eligible\":false"
+      << ",\"scopes_dropped\":" << nativeScopesDropped
+      << ",\"preparations_dropped\":" << nativePreparationsDropped
+      << ",\"scopes_copied\":" << nativePasses.size()
+      << ",\"packets_copied\":" << nativePacketCount
+      << ",\"aborted\":" << (nativeDiagnosticsFailed ? "true" : "false")
+      << ",\"abort_reason\":"
+      << (nativeDiagnosticsFailed ? "\"diagnostic allocation or reader exception\"" : "null")
+      << ",\"scopes\":[";
+  bool first = true;
+  for (const auto &record : nativePasses) {
+    if (!first)
+      out << ',';
+    first = false;
+    out << "{\"slot\":" << record.slot
+        << ",\"begin_sequence\":" << record.beginSequence
+        << ",\"end_sequence\":" << record.endSequence
+        << ",\"ended\":" << (record.ended ? "true" : "false")
+        << ",\"complete\":"
+        << (record.complete && record.ended ? "true" : "false")
+        << ",\"reason\":"
+        << quoted(!record.ended ? "scope end not observed"
+                                : native_stereo_capture_reason(record.reason))
+        << ",\"reusable\":false,\"sps_eligible\":false,\"scene\":"
+        << record.scene << ",\"view\":" << record.view
+        << ",\"caller_rva\":" << record.caller
+        << ",\"group\":31,\"flags\":" << record.flags
+        << ",\"last_main_pass\":" << (record.lastMainPass ? "true" : "false")
+        << ",\"buckets\":" << record.buckets << ",\"items\":" << record.items
+        << ",\"meshes\":" << record.meshes
+        << ",\"pointer_work\":" << record.work
+        << ",\"bytes_read\":" << record.bytesRead << ",\"targets_begin\":";
+    write_native_targets(out, record.before);
+    out << ",\"targets_end\":";
+    write_native_targets(out, record.after);
+    out << ",\"camera\":";
+    write_native_camera(out,record.camera);
+    out << ",\"packets\":[";
+    bool firstPacket = true;
+    for (const auto &packet : record.packets) {
+      if (!firstPacket)
+        out << ',';
+      firstPacket = false;
+      out << "{\"mesh\":" << packet.mesh << ",\"geometry\":" << packet.geometry
+          << ",\"mesh_flags\":" << packet.meshFlags << ",\"geometry_flags\":";
+      if (packet.geometry)
+        out << packet.geometryFlags;
+      else
+        out << "null";
+      out << ",\"mesh_callback\":" << (packet.callback ? "true" : "false")
+          << ",\"special_0x400000\":"
+          << ((packet.meshFlags & 0x400000) ? "true" : "false")
+          << ",\"bucket_index\":" << packet.bucket
+          << ",\"item_index\":" << packet.item
+          << ",\"mesh_index\":" << packet.index << ",\"source_containment\":";
+      write_native_source(out, packet.source);
+      out << '}';
+    }
+    out << "]}";
+  }
+  out << "],\"preparations\":[";
+  first = true;
+  for (const auto &record : nativePreparations) {
+    if (!first)
+      out << ',';
+    first = false;
+    out << "{\"slot\":" << record.slot << ",\"mesh\":" << record.mesh
+        << ",\"begin_sequence\":" << record.beginSequence
+        << ",\"end_sequence\":" << record.endSequence << ",\"complete\":"
+        << (record.complete && record.endSequence ? "true" : "false")
+        << ",\"reason\":"
+        << quoted(!record.endSequence
+                      ? "preparation end not observed"
+                      : native_stereo_capture_reason(record.reason))
+        << ",\"supplied_flags\":" << record.suppliedFlags
+        << ",\"reset\":" << (record.reset ? "true" : "false");
+    if (record.complete) {
+      out << ",\"shader_flags\":" << record.shaderFlags
+          << ",\"effective_flags\":" << record.effectiveFlags
+          << ",\"mesh_flags\":" << record.meshFlags
+          << ",\"mesh_callback\":" << (record.meshCallback ? "true" : "false")
+          << ",\"special_0x400000\":"
+          << ((record.meshFlags & 0x400000) ? "true" : "false")
+          << ",\"shader_callback\":"
+          << (record.shaderCallbackTested
+                  ? (record.shaderCallback ? "true" : "false")
+                  : "null");
+    } else
+      out << ",\"shader_flags\":null,\"effective_flags\":null,\"mesh_flags\":"
+             "null,\"mesh_callback\":null,\"special_0x400000\":null,\"shader_"
+             "callback\":null";
+    out << '}';
+  }
+  out << ']';
+  write_camera_comparisons(out);
+  out << '}';
+  out.precision(priorPrecision);
 }
 std::string sha256(const void* data,SIZE_T size){
     if(!data||!size||size>16*1024*1024)return {};
@@ -143,9 +716,9 @@ void remember_shader(ID3D11DeviceChild* child,const void* data,SIZE_T size,const
     }
     programs.emplace(key,program);shaders.emplace(id,std::move(program));
 }
-Record snapshot(ID3D11DeviceContext* c,unsigned kind,const std::array<UINT,5>& args){
+Record snapshot(ID3D11DeviceContext* c,unsigned kind,const std::array<UINT,5>& args,uint64_t sequence){
     Suspend pause;Record r;r.slot=unsigned(activeSlot);r.kind=kind;r.group=group;r.bufferEpoch=bufferEpoch;std::copy(args.begin(),args.end(),r.args);
-    r.nativeMesh=nativeMesh;r.nativeBindTicks=nativeBindTicks;r.activeQueries=unsigned(activeQueries.size());r.activeQueryMask=active_query_mask();
+    r.sequence=sequence?sequence:++auditSequence;r.nativeMesh=nativeMesh;r.nativeBindTicks=nativeBindTicks;r.activeQueries=unsigned(activeQueries.size());r.activeQueryMask=active_query_mask();
     ID3D11VertexShader* vs=nullptr;ID3D11PixelShader* ps=nullptr;ID3D11GeometryShader* gs=nullptr;ID3D11HullShader* hs=nullptr;ID3D11DomainShader* ds=nullptr;
     UINT count=0;c->VSGetShader(&vs,nullptr,&count);r.classes+=count;count=0;c->PSGetShader(&ps,nullptr,&count);r.classes+=count;
     count=0;c->GSGetShader(&gs,nullptr,&count);r.classes+=count;count=0;c->HSGetShader(&hs,nullptr,&count);r.classes+=count;count=0;c->DSGetShader(&ds,nullptr,&count);r.classes+=count;
@@ -183,15 +756,19 @@ void inspect_pair(ID3D11DeviceContext* c,const Record& r){
     pairProof.observe(c,r.slot%4==3,d,earlyDevice&&!(r.activeQueryMask&~timingQueryMask),bool(r.activeQueryMask&timingQueryMask));
 }
 template<class Call> void draw(ID3D11DeviceContext* c,unsigned kind,std::array<UINT,5> args,Call call){
+    const auto sequence=trace_resources(c,resource_event(StereoResourceTrace::Operation::draw));
     if(!watched(c)){call();return;}
     std::lock_guard<std::recursive_mutex> lock(mutex);
     if(!capturing||!enabled){call();return;}
     auto& p=passes[unsigned(activeSlot)];++p.calls;
     if(p.calls>maxDrawsPerPass){++p.dropped;Suspend pause;call();return;}
-    const auto before=ticks();auto record=snapshot(c,kind,args);
+    const auto before=ticks();Record record;
+    try {record=snapshot(c,kind,args,sequence);
     if(nativeFirstDraw&&nativeStarted){record.nativePrepareTicks=uint64_t(before-nativeStarted);nativeFirstDraw=false;}
-    const auto proofStart=ticks();inspect_pair(c,record);const auto ready=ticks();record.proofTicks=uint64_t(ready-proofStart);
-    {Suspend pause;call();}const auto after=ticks();record.snapshotTicks=uint64_t(ready-before);record.apiTicks=uint64_t(after-ready);p.snapshotTicks+=record.snapshotTicks;p.apiTicks+=record.apiTicks;records.push_back(record);
+    const auto proofStart=ticks();inspect_pair(c,record);record.proofTicks=uint64_t(ticks()-proofStart);
+    } catch(...) {nativeDiagnosticsFailed=true;resourceTrace.abort();Suspend pause;call();return;}
+    const auto ready=ticks();
+    {Suspend pause;call();}const auto after=ticks();record.snapshotTicks=uint64_t(ready-before);record.apiTicks=uint64_t(after-ready);p.snapshotTicks+=record.snapshotTicks;p.apiTicks+=record.apiTicks;try{records.push_back(record);}catch(...){++p.dropped;resourceTrace.abort();}
 }
 void STDMETHODCALLTYPE indexed(ID3D11DeviceContext* c,UINT n,UINT start,INT base){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,UINT,UINT,INT);draw(c,0,{n,start,UINT(base),0,0},[&]{original<Fn,0>()(c,n,start,base);});}
 void STDMETHODCALLTYPE plain(ID3D11DeviceContext* c,UINT n,UINT start){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,UINT,UINT);draw(c,1,{n,start,0,0,0},[&]{original<Fn,1>()(c,n,start);});}
@@ -204,16 +781,25 @@ void note(ID3D11DeviceContext* c,ID3D11Resource* resource,unsigned kind){
     std::lock_guard<std::recursive_mutex> lock(mutex);if(!capturing)return;
     if(resource)tag(resource,true);if(activeSlot>=0){auto& p=passes[unsigned(activeSlot)];if(kind==0)++p.maps;else if(kind==1)++p.unmaps;else if(kind==2)++p.updates;else if(kind==3)++p.copies;else ++p.dispatches;}
 }
-void STDMETHODCALLTYPE dispatch(ID3D11DeviceContext* c,UINT x,UINT y,UINT z){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,UINT,UINT,UINT);note(c,nullptr,4);original<Fn,7>()(c,x,y,z);}
-void STDMETHODCALLTYPE dispatch_indirect(ID3D11DeviceContext* c,ID3D11Buffer* args,UINT offset){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Buffer*,UINT);note(c,nullptr,4);original<Fn,8>()(c,args,offset);}
+void STDMETHODCALLTYPE dispatch(ID3D11DeviceContext* c,UINT x,UINT y,UINT z){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,UINT,UINT,UINT);trace_resources(c,resource_event(StereoResourceTrace::Operation::dispatch));note(c,nullptr,4);original<Fn,7>()(c,x,y,z);}
+void STDMETHODCALLTYPE dispatch_indirect(ID3D11DeviceContext* c,ID3D11Buffer* args,UINT offset){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Buffer*,UINT);trace_resources(c,resource_event(StereoResourceTrace::Operation::dispatchIndirect));note(c,nullptr,4);original<Fn,8>()(c,args,offset);}
 HRESULT STDMETHODCALLTYPE map(ID3D11DeviceContext* c,ID3D11Resource* resource,UINT sub,D3D11_MAP type,UINT flags,D3D11_MAPPED_SUBRESOURCE* result){
     using Fn=HRESULT(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,D3D11_MAP,UINT,D3D11_MAPPED_SUBRESOURCE*);
     const auto hr=original<Fn,9>()(c,resource,sub,type,flags,result);if(SUCCEEDED(hr)&&type!=D3D11_MAP_READ)note(c,resource,0);return hr;
 }
 void STDMETHODCALLTYPE unmap(ID3D11DeviceContext* c,ID3D11Resource* resource,UINT sub){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT);note(c,nullptr,1);original<Fn,10>()(c,resource,sub);}
 void STDMETHODCALLTYPE update(ID3D11DeviceContext* c,ID3D11Resource* resource,UINT sub,const D3D11_BOX* box,const void* data,UINT row,UINT depth){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,const D3D11_BOX*,const void*,UINT,UINT);original<Fn,11>()(c,resource,sub,box,data,row,depth);note(c,resource,2);}
-void STDMETHODCALLTYPE copy(ID3D11DeviceContext* c,ID3D11Resource* dst,ID3D11Resource* src){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,ID3D11Resource*);original<Fn,12>()(c,dst,src);note(c,dst,3);}
-void STDMETHODCALLTYPE copy_region(ID3D11DeviceContext* c,ID3D11Resource* dst,UINT sub,UINT x,UINT y,UINT z,ID3D11Resource* src,UINT srcSub,const D3D11_BOX* box){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,UINT,UINT,UINT,ID3D11Resource*,UINT,const D3D11_BOX*);original<Fn,13>()(c,dst,sub,x,y,z,src,srcSub,box);note(c,dst,3);}
+void STDMETHODCALLTYPE copy(ID3D11DeviceContext* c,ID3D11Resource* dst,ID3D11Resource* src){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,ID3D11Resource*);trace_resources(c,resource_event(StereoResourceTrace::Operation::copyResource),src,dst);original<Fn,12>()(c,dst,src);note(c,dst,3);}
+void STDMETHODCALLTYPE copy_region(ID3D11DeviceContext* c,ID3D11Resource* dst,UINT sub,UINT x,UINT y,UINT z,ID3D11Resource* src,UINT srcSub,const D3D11_BOX* box){using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,UINT,UINT,UINT,ID3D11Resource*,UINT,const D3D11_BOX*);auto event=resource_event(StereoResourceTrace::Operation::copyRegion);event.sourceSubresource=srcSub;event.destinationSubresource=sub;event.destination={x,y,z};trace_resources(c,event,src,dst,box);original<Fn,13>()(c,dst,sub,x,y,z,src,srcSub,box);note(c,dst,3);}
+void STDMETHODCALLTYPE resolve_subresource(ID3D11DeviceContext* context, ID3D11Resource* destination,
+        UINT destinationSubresource, ID3D11Resource* source, UINT sourceSubresource, DXGI_FORMAT format) {
+    using Fn=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,ID3D11Resource*,UINT,DXGI_FORMAT);
+    auto event=resource_event(StereoResourceTrace::Operation::resolve);
+    event.sourceSubresource=sourceSubresource;event.destinationSubresource=destinationSubresource;event.format=unsigned(format);
+    trace_resources(context,event,source,destination);
+    original<Fn,24>()(context,destination,destinationSubresource,source,sourceSubresource,format);
+    note(context,destination,3);
+}
 template<class T,unsigned I> HRESULT STDMETHODCALLTYPE create_shader(ID3D11Device* d,const void* data,SIZE_T bytes,ID3D11ClassLinkage* linkage,T** result){
     using Fn=HRESULT(STDMETHODCALLTYPE*)(ID3D11Device*,const void*,SIZE_T,ID3D11ClassLinkage*,T**);
     const auto hr=original<Fn,I>()(d,data,bytes,linkage,result);
@@ -250,7 +836,7 @@ void STDMETHODCALLTYPE end_query(ID3D11DeviceContext* c,ID3D11Asynchronous* quer
 }
 const std::array<void*,totalHooks> detours{
     reinterpret_cast<void*>(&indexed),reinterpret_cast<void*>(&plain),reinterpret_cast<void*>(&indexed_instanced),reinterpret_cast<void*>(&instanced),reinterpret_cast<void*>(&automatic),reinterpret_cast<void*>(&indirect<5>),reinterpret_cast<void*>(&indirect<6>),reinterpret_cast<void*>(&dispatch),reinterpret_cast<void*>(&dispatch_indirect),reinterpret_cast<void*>(&map),reinterpret_cast<void*>(&unmap),reinterpret_cast<void*>(&update),reinterpret_cast<void*>(&copy),reinterpret_cast<void*>(&copy_region),
-    reinterpret_cast<void*>(&create_shader<ID3D11VertexShader,14>),reinterpret_cast<void*>(&create_shader<ID3D11PixelShader,15>),reinterpret_cast<void*>(&create_shader<ID3D11GeometryShader,16>),reinterpret_cast<void*>(&create_shader<ID3D11HullShader,17>),reinterpret_cast<void*>(&create_shader<ID3D11DomainShader,18>),reinterpret_cast<void*>(&create_shader<ID3D11ComputeShader,19>),reinterpret_cast<void*>(&create_layout),reinterpret_cast<void*>(&execute),reinterpret_cast<void*>(&begin_query),reinterpret_cast<void*>(&end_query)};
+    reinterpret_cast<void*>(&create_shader<ID3D11VertexShader,14>),reinterpret_cast<void*>(&create_shader<ID3D11PixelShader,15>),reinterpret_cast<void*>(&create_shader<ID3D11GeometryShader,16>),reinterpret_cast<void*>(&create_shader<ID3D11HullShader,17>),reinterpret_cast<void*>(&create_shader<ID3D11DomainShader,18>),reinterpret_cast<void*>(&create_shader<ID3D11ComputeShader,19>),reinterpret_cast<void*>(&create_layout),reinterpret_cast<void*>(&execute),reinterpret_cast<void*>(&begin_query),reinterpret_cast<void*>(&end_query),reinterpret_cast<void*>(&resolve_subresource)};
 bool main_caller(const void* caller){
     HMODULE module=nullptr;
     return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(caller),&module)&&module==GetModuleHandleW(nullptr);
@@ -299,7 +885,209 @@ bool export_program(const Program& p,std::string& relative){
     }
     DWORD written=0;const bool okay=WriteFile(file,p.bytecode.data(),DWORD(p.bytecode.size()),&written,nullptr)&&written==p.bytecode.size()&&FlushFileBuffers(file);CloseHandle(file);return okay;
 }
+void write_classify_input(std::ostringstream &out, const NativeStereoClassifySnapshot &snapshot) {
+  const auto priorPrecision = out.precision();
+  const auto &in = snapshot.input;
+  const auto mask = snapshot.copiedFields;
+  const auto number = [&](float value, unsigned bit) {
+    uint32_t bits = 0;
+    std::memcpy(&bits, &value, 4);
+    if (!(mask & (1u << bit)) || (bits & 0x7f800000u) == 0x7f800000u)
+      out << "null";
+    else
+      out << std::setprecision(9) << value;
+  };
+  const auto integer = [&](auto value, unsigned bit) {
+    if (mask & (1u << bit))
+      out << value;
+    else
+      out << "null";
+  };
+  out << "{\"copied_fields\":" << mask << ",\"candidate_flags\":";
+  integer(in.candidateFlags, 0);
+  out << ",\"owner_flags\":";
+  integer(in.ownerFlags, 5);
+  out << ",\"owner_scale\":";
+  number(in.ownerScale, 6);
+  out << ",\"radius\":";
+  number(in.radius, 1);
+  out << ",\"near_coefficient\":";
+  number(in.nearCoefficient, 2);
+  out << ",\"far_coefficient\":";
+  number(in.farCoefficient, 3);
+  out << ",\"plane_count\":";
+  integer(in.planeCount, 4);
+  out << ",\"position\":[";
+  number(in.position.x, 7);
+  out << ',';
+  number(in.position.y, 7);
+  out << ',';
+  number(in.position.z, 7);
+  out << "],\"view_position\":[";
+  number(in.viewPosition.x, 8);
+  out << ',';
+  number(in.viewPosition.y, 8);
+  out << ',';
+  number(in.viewPosition.z, 8);
+  out << "],\"view_scale\":";
+  number(in.viewScale, 9);
+  out << ",\"bias\":";
+  number(in.bias, nativeStereoClassifyBiasBit);
+  out << ",\"view_mode\":";
+  integer(in.viewMode, nativeStereoClassifyViewModeBit);
+  out << ",\"secondary_view_position\":[";
+  number(in.secondaryViewPosition.x, nativeStereoClassifySecondaryPositionBit);
+  out << ',';
+  number(in.secondaryViewPosition.y, nativeStereoClassifySecondaryPositionBit);
+  out << ',';
+  number(in.secondaryViewPosition.z, nativeStereoClassifySecondaryPositionBit);
+  out << "],\"secondary_view_radius\":";
+  number(in.secondaryViewRadius, nativeStereoClassifySecondaryRadiusBit);
+  out << ",\"skip_distance_bounds\":" << (in.skipDistanceBounds ? "true" : "false")
+      << ",\"planes\":[";
+  for (unsigned i = 0; i < in.planes.size(); ++i) {
+    if (i)
+      out << ',';
+    out << '[';
+    const auto &p = in.planes[i];
+    number(p.x, native_stereo_classify_plane_bit(i));
+    out << ',';
+    number(p.y, native_stereo_classify_plane_bit(i));
+    out << ',';
+    number(p.z, native_stereo_classify_plane_bit(i));
+    out << ',';
+    number(p.w, native_stereo_classify_plane_bit(i));
+    out << ']';
+  }
+  out << "]}";
+  out.precision(priorPrecision);
+}
+NativeStereoClassifyComparison classification_comparison(const NativeClassifyRecord &record) {
+  if (!record.ended) {
+    NativeStereoClassifyComparison out;
+    out.reason = "invocation incomplete";
+    return out;
+  }
+  return compare_native_stereo_classify(record.pre, record.post, record.entryMxcsr,
+                                        record.postMxcsr, record.returned);
+}
+void write_native_classification(std::ostringstream &out) {
+  NativeStereoFpGuard defaults(true);
+  const auto priorPrecision = out.precision();
+  uint64_t available = 0, refused = 0, returnedMismatch = 0, storedMismatch = 0;
+  uint64_t unfinishedInvocations = 0, incompleteSnapshots = 0;
+  for (const auto &record : nativeClassifications) {
+    const auto c = classification_comparison(record);
+    if (c.available)
+      ++available;
+    else
+      ++refused;
+    returnedMismatch += c.returnedMismatch;
+    storedMismatch += c.storedMismatch;
+    unfinishedInvocations += !record.ended;
+    incompleteSnapshots += !record.pre.complete || !record.post.complete;
+  }
+  const bool captureIncomplete = !classifyHookAvailable || classifyFailed || classifyTotalDrops ||
+                                 classifyTotalMissingExpectedViews ||
+                                 unfinishedInvocations || incompleteSnapshots || openScopes ||
+                                 completedFrames < framesWanted;
+  out << ",\"native_classification\":{\"hook_available\":"
+      << (classifyHookAvailable ? "true" : "false")
+      << ",\"scheduling_eligible\":false,\"visibility_validated\":false,\"bounded_observation\":true"
+      << ",\"capture_incomplete\":" << (captureIncomplete ? "true" : "false")
+      << ",\"unfinished_invocations\":" << unfinishedInvocations
+      << ",\"incomplete_snapshots\":" << incompleteSnapshots
+      << ",\"coverage\":\"bounded "
+         "original-invocation observations only; visibility and lifetime unproven\""
+      << ",\"attempt_limit_per_slot\":" << nativeStereoClassifySlotLimit
+      << ",\"attempt_limit_total\":" << nativeStereoClassifyTotalLimit
+      << ",\"native_byte_limit_per_attempt\":" << nativeStereoClassifyReadByteLimit
+      << ",\"diagnostic_failed\":" << (classifyFailed ? "true" : "false")
+      << ",\"attempts\":" << classifyTotalAttempts << ",\"dropped\":" << classifyTotalDrops
+      << ",\"excluded_view_calls\":" << classifyTotalExcludedViews
+      << ",\"missing_expected_view_calls\":" << classifyTotalMissingExpectedViews
+      << ",\"available\":" << available << ",\"refused\":" << refused
+      << ",\"returned_mismatch\":" << returnedMismatch << ",\"stored_mismatch\":" << storedMismatch
+      << ",\"slots\":[";
+  for (unsigned i = 0; i < classifyAttempts.size(); ++i) {
+    if (i)
+      out << ',';
+    out << "{\"slot\":" << i << ",\"attempts\":" << classifyAttempts[i]
+        << ",\"dropped\":" << classifyDrops[i]
+        << ",\"excluded_view_calls\":" << classifyExcludedViews[i]
+        << ",\"missing_expected_view_calls\":" << classifyMissingExpectedViews[i] << '}';
+  }
+  out << "],\"records\":[";
+  bool first = true;
+  for (const auto &r : nativeClassifications) {
+    if (!first)
+      out << ',';
+    first = false;
+    const auto c = classification_comparison(r);
+    out << "{\"slot\":" << r.slot << ",\"generation\":" << r.generation
+        << ",\"candidate\":" << r.candidate << ",\"view\":" << r.view
+        << ",\"entry_mxcsr\":" << r.entryMxcsr << ",\"post_mxcsr\":";
+    if (r.ended)
+      out << r.postMxcsr;
+    else
+      out << "null";
+    out << ",\"native_return\":";
+    if (r.ended)
+      out << r.returned;
+    else
+      out << "null";
+    out << ",\"native_store\":";
+    if (r.storedAvailable)
+      out << r.stored;
+    else
+      out << "null";
+    out << ",\"available\":" << (c.available ? "true" : "false")
+        << ",\"returned_mismatch\":" << (c.returnedMismatch ? "true" : "false")
+        << ",\"stored_mismatch\":" << (c.storedMismatch ? "true" : "false")
+        << ",\"reason\":" << quoted(c.reason) << ",\"bytes_read\":" << r.bytesRead
+        << ",\"predicted_return\":";
+    if (c.available)
+      out << c.predicted.returnedFlags;
+    else
+      out << "null";
+    out << ",\"predicted_store\":";
+    if (c.available)
+      out << c.predicted.storedCandidateFlags;
+    else
+      out << "null";
+    out << ",\"pre\":";
+    write_classify_input(out, r.pre);
+    out << ",\"post\":";
+    write_classify_input(out, r.post);
+    out << '}';
+  }
+  out << "]}";
+  out.precision(priorPrecision);
+}
+void write_native_transforms(std::ostringstream& out) {
+  out<<",\"native_transforms\":{\"scheduling_eligible\":false,\"attempts\":"<<transformCount
+     <<",\"dropped\":"<<transformDrops<<",\"excluded_views\":"<<transformExcludedViews
+     <<",\"missing_expected_views\":"<<transformMissingViews
+     <<",\"scope\":\"bounded original-invocation VS c0-c8/c16-c19 bit-exact comparison; not a pass replacement\",\"records\":[";
+  for(unsigned i=0;i<transformCount;++i){
+    if(i)out<<',';
+    const auto& r=nativeTransforms[i];
+    NativeStereoTransformComparison comparison;
+    if(r.ended)comparison=compare_native_stereo_transform(r.pre,r.post,r.actual,r.entryMxcsr,r.postMxcsr);
+    out<<"{\"slot\":"<<r.slot<<",\"ended\":"<<(r.ended?"true":"false")
+       <<",\"available\":"<<(comparison.available?"true":"false")
+       <<",\"reason\":"<<quoted(comparison.reason)
+       <<",\"bytes_read\":"<<(r.pre.bytesRead+r.post.bytesRead+r.actual.bytesRead)
+       <<",\"compared_scalars\":"<<comparison.comparedScalars
+       <<",\"mismatched_scalars\":"<<comparison.mismatchedScalars;
+    if(comparison.mismatchedScalars)out<<",\"first_mismatch_register\":"<<comparison.firstMismatchRegister
+                                      <<",\"first_mismatch_component\":"<<comparison.firstMismatchComponent;
+    out<<'}';
+  }
+  out<<"]}";
+}
 void save_impl(const char* reason){
+    NativeStereoFpGuard defaultFp(true);
     if(!capturing)return;capturing=false;pairProof.finish();
     SYSTEMTIME time{};GetSystemTime(&time);wchar_t name[128]{};std::swprintf(name,std::size(name),L"stereo-audit-%04u%02u%02u-%02u%02u%02u-%llx.json",time.wYear,time.wMonth,time.wDay,time.wHour,time.wMinute,time.wSecond,static_cast<unsigned long long>(started));
     const auto path=directory/name;
@@ -308,19 +1096,19 @@ void save_impl(const char* reason){
     std::unordered_map<const Program*,std::string> exported;unsigned exportFailures=0;
     if(captureBytecode)for(auto id:focusShaders){const auto found=shaders.find(id);if(found==shaders.end())continue;const auto* p=found->second.get();if(exported.find(p)!=exported.end())continue;
         std::string relative;if(!export_program(*p,relative)){relative.clear();++exportFailures;}exported.emplace(p,std::move(relative));}
-    std::ostringstream out;out.imbue(std::locale::classic());out<<"{\"schema\":1,\"rendering\":\"legacy\",\"reason\":"<<quoted(reason)<<",\"frequency\":"<<frequency<<",\"scene_frames\":"<<completedFrames<<",\"open_scopes_at_save\":"<<openScopes<<",\"capacity_per_pass\":"<<maxDrawsPerPass<<",\"shader_definitions_dropped\":"<<shaderDefinitionsDropped<<",\"layout_definitions_dropped\":"<<layoutDefinitionsDropped<<",\"metadata_cache\":{\"shader_aliases\":"<<shaders.size()<<",\"unique_programs\":"<<programs.size()<<",\"reflection_bytes\":"<<reflectionBytes<<",\"early_device\":"<<unsigned(earlyDevice)<<"},\"shader_export\":{\"enabled\":"<<unsigned(captureBytecode)<<",\"cached_bytes\":"<<bytecodeBytes<<",\"programs_dropped\":"<<bytecodeProgramsDropped<<",\"write_failures\":"<<exportFailures<<"},\"capabilities\":{\"feature_level\":"<<unsigned(capabilities.featureLevel)<<",\"vprt\":"<<unsigned(capabilities.vertexArrayIndex)<<",\"route\":"<<quoted(stereo_route_name(capabilities.route))<<"},\"tracking\":\"owner-thread observed writes; CB signatures are resource identities and versions, not content hashes; existing shaders may lack definitions; indirect arguments are not read; PS SRVs/samplers cover slots 0-15; other-stage SRVs, UAV writes and mapped contents are not observed\",\"layouts\":[";
+    std::ostringstream out;out.imbue(std::locale::classic());out<<"{\"schema\":1,\"rendering\":\"legacy\",\"reason\":"<<quoted(reason)<<",\"trigger\":"<<quoted(captureTrigger)<<",\"frequency\":"<<frequency<<",\"scene_frames\":"<<completedFrames<<",\"open_scopes_at_save\":"<<openScopes<<",\"capacity_per_pass\":"<<maxDrawsPerPass<<",\"shader_definitions_dropped\":"<<shaderDefinitionsDropped<<",\"layout_definitions_dropped\":"<<layoutDefinitionsDropped<<",\"metadata_cache\":{\"shader_aliases\":"<<shaders.size()<<",\"unique_programs\":"<<programs.size()<<",\"reflection_bytes\":"<<reflectionBytes<<",\"early_device\":"<<unsigned(earlyDevice)<<"},\"shader_export\":{\"enabled\":"<<unsigned(captureBytecode)<<",\"cached_bytes\":"<<bytecodeBytes<<",\"programs_dropped\":"<<bytecodeProgramsDropped<<",\"write_failures\":"<<exportFailures<<"},\"capabilities\":{\"feature_level\":"<<unsigned(capabilities.featureLevel)<<",\"vprt\":"<<unsigned(capabilities.vertexArrayIndex)<<",\"route\":"<<quoted(stereo_route_name(capabilities.route))<<"},\"tracking\":\"owner-thread observed writes; CB signatures are resource identities and versions, not content hashes; existing shaders may lack definitions; indirect arguments are not read; legacy draw signatures cover PS SRVs/samplers 0-15; resource_uses separately records potential bindings; mapped contents are not observed\",\"layouts\":[";
     bool firstLayout=true;for(const auto& l:layouts){if(!usedLayouts.count(l.id))continue;if(!firstLayout)out<<',';firstLayout=false;out<<"{\"id\":"<<l.id<<",\"elements\":"<<l.elements<<'}';}out<<"],\"shaders\":[";
     bool first=true;for(auto id:usedShaders){const auto found=shaders.find(id);if(found==shaders.end())continue;const auto& s=*found->second;if(!first)out<<',';first=false;out<<"{\"id\":"<<id<<",\"stage\":"<<quoted(s.stage.c_str())<<",\"sha256\":"<<quoted(s.sha.c_str())<<",\"reflection\":"<<s.reflection;
         const auto file=exported.find(&s);if(focusShaders.count(id)&&file!=exported.end()&&!file->second.empty())out<<",\"bytecode_file\":"<<quoted(file->second.c_str());out<<'}';}out<<"],\"passes\":[";
     for(unsigned i=0;i<passes.size();++i){if(i)out<<',';const auto& p=passes[i];out<<"{\"slot\":"<<i<<",\"draw_calls\":"<<p.calls<<",\"dropped\":"<<p.dropped<<",\"wall_ticks\":"<<p.wallTicks<<",\"snapshot_ticks\":"<<p.snapshotTicks<<",\"api_ticks\":"<<p.apiTicks<<",\"maps\":"<<p.maps<<",\"unmaps\":"<<p.unmaps<<",\"updates\":"<<p.updates<<",\"copies\":"<<p.copies<<",\"dispatches\":"<<p.dispatches<<",\"command_lists\":"<<p.commandLists<<",\"native_mesh_preparations\":"<<p.nativeBinds<<",\"native_prepare_ticks\":"<<p.nativeBindTicks<<'}';}
     out<<"],\"draws\":[";first=true;
-    for(const auto& r:records){if(!first)out<<',';first=false;out<<"{\"slot\":"<<r.slot<<",\"kind\":"<<r.kind<<",\"group\":"<<r.group<<",\"args\":[";for(unsigned i=0;i<5;++i){if(i)out<<',';out<<r.args[i];}
+    for(const auto& r:records){if(!first)out<<',';first=false;out<<"{\"slot\":"<<r.slot<<",\"sequence\":"<<r.sequence<<",\"kind\":"<<r.kind<<",\"group\":"<<r.group<<",\"args\":[";for(unsigned i=0;i<5;++i){if(i)out<<',';out<<r.args[i];}
         out<<"],\"shaders\":[";for(unsigned i=0;i<5;++i){if(i)out<<',';out<<r.shaders[i];}
         out<<"],\"layout\":"<<r.layout<<",\"layout_known\":"<<r.layoutKnown<<",\"instance_slots\":"<<r.instanceSlots<<",\"layout_steps\":"<<r.layoutSteps<<",\"vertex_signature\":"<<r.vertexSignature<<",\"index\":["<<r.index.id<<','<<r.index.version<<','<<r.indexFormat<<','<<r.indexOffset<<"],\"topology\":"<<r.topology<<",\"buffer_epoch\":"<<r.bufferEpoch<<",\"ps_srv_signature\":"<<r.pixelResources<<",\"ps_sampler_signature\":"<<r.pixelSamplers<<",\"predicate\":["<<r.predicate<<','<<r.predicateValue<<"],\"cb\":[";
         for(unsigned i=0;i<r.constants.size();++i){if(i)out<<',';out<<'['<<r.constants[i].id<<','<<r.constants[i].version<<']';}
         out<<"],\"target_signature\":"<<r.targetSignature<<",\"rt\":["<<r.rtWidth<<','<<r.rtHeight<<','<<r.rtFormat<<','<<r.rtSamples<<','<<r.rtCount<<"],\"blend\":"<<r.blend<<",\"class_instances\":"<<r.classes<<",\"api_ticks\":"<<r.apiTicks<<",\"snapshot_ticks\":"<<r.snapshotTicks<<",\"native_mesh\":"<<r.nativeMesh<<",\"native_prepare_ticks\":"<<r.nativeBindTicks<<",\"native_to_draw_ticks\":"<<r.nativePrepareTicks<<",\"active_queries\":"<<r.activeQueries<<",\"active_query_mask\":"<<r.activeQueryMask<<",\"proof_ticks\":"<<r.proofTicks<<'}';}
-    const auto& proof=pairProof.result();
-    out<<"],\"stereo_pair_proof\":{\"requested\":"<<unsigned(proofRequested)<<",\"status\":"<<quoted(proof.status.c_str())<<",\"reason\":"<<quoted(proof.reason.c_str())<<",\"route\":"<<quoted(proof.route.c_str());
+    out<<']';write_native_capture(out);write_native_classification(out);write_native_transforms(out);resourceTrace.write(out);const auto& proof=pairProof.result();
+    out<<",\"stereo_pair_proof\":{\"requested\":"<<unsigned(proofRequested)<<",\"status\":"<<quoted(proof.status.c_str())<<",\"reason\":"<<quoted(proof.reason.c_str())<<",\"route\":"<<quoted(proof.route.c_str());
     out<<",\"key\":"<<proof.key<<",\"observed\":"<<proof.observed<<",\"query_skips\":"<<proof.querySkips<<",\"timing_query_overlaps\":"<<proof.timingQueryOverlaps<<",\"opaque_candidates\":"<<proofCandidates<<",\"shader_rejections\":"<<proofShaderRejected;
     out<<",\"eligible_draws\":["<<proofEligible[0]<<','<<proofEligible[1]<<"],\"used_sampler_masks\":["<<proof.samplerSlots[0]<<','<<proof.samplerSlots[1]<<"],\"width\":"<<proof.width<<",\"height\":"<<proof.height<<",\"reference_depth_format\":"<<proof.depthFormat<<",\"native_cpu_preparation_shared\":false";
     out<<",\"depth_snapshots_queued\":["<<(proof.depthCopied[0]?"true":"false")<<','<<(proof.depthCopied[1]?"true":"false")<<"],\"native_depth\":[";
@@ -334,11 +1122,20 @@ void save_impl(const char* reason){
     char line[640]{};std::snprintf(line,sizeof(line),"stereo_audit %s reason=%s frames=%u records=%zu file=%s; diagnostic overhead is included; game rendering remains legacy",okay?"complete":"save_failed",reason,completedFrames,records.size(),path.filename().u8string().c_str());emit(line);
     if(proofRequested){std::snprintf(line,sizeof(line),"stereo_pair_proof status=%s route=%s covered=%llu/%llu color_different=%llu/%llu depth_different=%llu/%llu reason=%s; private targets only; native CPU sharing disabled",proof.status.c_str(),proof.route.c_str(),static_cast<unsigned long long>(proof.covered[0]),static_cast<unsigned long long>(proof.covered[1]),static_cast<unsigned long long>(proof.colorDifferent[0]),static_cast<unsigned long long>(proof.colorDifferent[1]),static_cast<unsigned long long>(proof.depthDifferent[0]),static_cast<unsigned long long>(proof.depthDifferent[1]),proof.reason.c_str());emit(line);}
 }
-void save(const char* reason){try{save_impl(reason);}catch(...){capturing=false;emit("stereo_audit save failed: serialization allocation error; rendering remains legacy");}}
+void save(const char *reason) {
+  NativeStereoFpGuard preserve;
+  try {
+    save_impl(reason);
+  } catch (...) {
+    capturing = false;
+    emit("stereo_audit save failed: serialization allocation error; rendering remains legacy");
+  }
+}
 void cleanup_methods(){
+    requestTrigger.reset();
     watchedContext=nullptr;watchedDevice=nullptr;for(unsigned i=0;i<installed;++i)MH_DisableHook(targets[i]);for(unsigned i=0;i<installed;++i)MH_RemoveHook(targets[i]);installed=0;drop(selected);drop(device);deferredStop=false;
     shaders.clear();programs.clear();layouts.clear();records.clear();earlyDevice=false;
-    pairProof.reset();activeQueries.clear();nativeMeshes.clear();
+    pairProof.reset();activeQueries.clear();reset_native_capture();
 }
 void cleanup_factories(){
     factoryReady=false;for(unsigned i=0;i<factoryInstalled;++i)MH_DisableHook(factoryTargets[i]);for(unsigned i=0;i<factoryInstalled;++i)MH_RemoveHook(factoryTargets[i]);factoryInstalled=0;
@@ -346,7 +1143,164 @@ void cleanup_factories(){
 }
 void cleanup(){cleanup_methods();cleanup_factories();}
 } // namespace
+StereoNativeTransformToken stereo_audit_native_transform_begin(
+    const StereoNativeTransformInfo& info,unsigned entryMxcsr) noexcept {
+  NativeStereoFpGuard preserve;
+  if(!enabled.load(std::memory_order_relaxed)||!capturing.load(std::memory_order_relaxed)||
+     GetCurrentThreadId()!=owner.load(std::memory_order_relaxed)||activeSlot<0||
+     activeSlot>=int(framesWanted*4)||group!=31||suspended)return {};
+  try {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if(!enabled||!capturing)return {};
+    if(!expectedClassifyMainView||expectedClassifyGeneration!=nativeGeneration){++transformMissingViews;return {};}
+    if(info.args.view!=expectedClassifyMainView){++transformExcludedViews;return {};}
+    const unsigned slot=unsigned(activeSlot);
+    if(transformAttempts[slot]>=maxTransformsPerSlot||transformCount>=nativeTransforms.size()){
+      ++transformDrops;return {};
+    }
+    ++transformAttempts[slot];
+    const unsigned index=transformCount++;
+    auto& record=nativeTransforms[index];record={};
+    record.slot=slot;record.generation=nativeGeneration;record.entryMxcsr=entryMxcsr;
+    Suspend pause;
+    record.pre=capture_native_stereo_transform(info.args,info.readable);
+    return {true,index,slot,nativeGeneration,transformScopeEpoch,info};
+  } catch(...) {return {};}
+}
+void stereo_audit_native_transform_end(const StereoNativeTransformToken& token,unsigned postMxcsr) noexcept {
+  NativeStereoFpGuard preserve;
+  if(!token.entered||GetCurrentThreadId()!=owner.load(std::memory_order_relaxed)||suspended)return;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    if(!enabled||!capturing||token.generation!=nativeGeneration||token.scopeEpoch!=transformScopeEpoch||activeSlot!=int(token.slot)||
+       group!=31||token.index>=transformCount)return;
+    auto& record=nativeTransforms[token.index];
+    if(record.ended||record.generation!=token.generation||record.slot!=token.slot)return;
+    record.ended=true;record.postMxcsr=postMxcsr;
+    if(!record.pre.complete)return;
+    Suspend pause;
+    record.post=capture_native_stereo_transform(token.invocation.args,token.invocation.readable);
+    if(record.post.complete)
+      record.actual=capture_native_stereo_transform_constants(token.invocation.args.vsShadow,token.invocation.readable);
+  } catch(...) {}
+}
 bool stereo_audit_enabled(){return enabled.load(std::memory_order_relaxed);}
+void stereo_audit_native_classify_hook_available(bool available) noexcept {
+  classifyHookAvailable = available;
+}
+StereoNativeClassifyToken stereo_audit_native_classify_begin(const StereoNativeClassifyInfo &info,
+                                                             uint32_t entryMxcsr) noexcept {
+  NativeStereoFpGuard preserve;
+  if (!enabled.load(std::memory_order_relaxed) || !capturing.load(std::memory_order_relaxed) ||
+      GetCurrentThreadId() != owner.load(std::memory_order_relaxed) || activeSlot < 0 ||
+      activeSlot >= int(framesWanted * 4) || suspended || info.callerRva != 0x41c8b4)
+    return {};
+  try {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    try {
+      if (!enabled || !capturing)
+        return {};
+      const unsigned slot = unsigned(activeSlot);
+      if (!expectedClassifyMainView || expectedClassifyGeneration != nativeGeneration) {
+        ++classifyMissingExpectedViews[slot];
+        ++classifyTotalMissingExpectedViews;
+        return {};
+      }
+      if (info.args.view != expectedClassifyMainView) {
+        ++classifyExcludedViews[slot];
+        ++classifyTotalExcludedViews;
+        return {};
+      }
+      if (classifyFailed || classifyAttempts[slot] >= nativeStereoClassifySlotLimit ||
+          classifyTotalAttempts >= nativeStereoClassifyTotalLimit) {
+        ++classifyDrops[slot];
+        ++classifyTotalDrops;
+        return {};
+      }
+      ++classifyAttempts[slot];
+      ++classifyTotalAttempts;
+      Suspend pause;
+      NativeClassifyRecord record;
+      record.slot = slot;
+      record.generation = nativeGeneration;
+      record.entryMxcsr = entryMxcsr;
+      record.candidate = native_identity(nativeObjects, info.args.candidate, maxNativeObjects);
+      record.view = native_identity(nativeObjects, info.args.view, maxNativeObjects);
+      record.pre = capture_native_stereo_classify(info.args, info.readable, record.bytesRead);
+      StereoNativeClassifyToken token{true,
+                                      unsigned(nativeClassifications.size()),
+                                      slot,
+                                      nativeGeneration,
+                                      info,
+                                      record.pre.positionIdentity,
+                                      record.pre.ownerIdentity};
+      record.pre.positionIdentity = record.pre.ownerIdentity = 0;
+      nativeClassifications.push_back(record);
+      return token;
+    } catch (...) {
+      classifyFailed = true;
+      return {};
+    }
+  } catch (...) {
+    // Lock acquisition failed; no capture transaction was entered. Never
+    // publish an unsynchronized failure into a possibly different generation.
+    return {};
+  }
+}
+void stereo_audit_native_classify_end(const StereoNativeClassifyToken &token, uint32_t returned,
+                                      uint32_t postMxcsr) noexcept {
+  NativeStereoFpGuard preserve;
+  if (!token.entered || !enabled.load(std::memory_order_relaxed) ||
+      !capturing.load(std::memory_order_relaxed) || suspended ||
+      GetCurrentThreadId() != owner.load(std::memory_order_relaxed))
+    return;
+  try {
+    std::lock_guard<std::recursive_mutex> lock(mutex);
+    try {
+      if (!enabled || !capturing || token.generation != nativeGeneration ||
+          token.index >= nativeClassifications.size())
+        return;
+      auto &record = nativeClassifications[token.index];
+      if (record.ended || activeSlot != int(record.slot) || record.slot != token.slot)
+        return;
+      Suspend pause;
+      record.ended = true;
+      record.returned = returned;
+      record.postMxcsr = postMxcsr;
+      if (!record.pre.complete) {
+        record.post.reason = "pre snapshot refused";
+        return;
+      }
+      native_classify_detail::Reader reader(token.invocation.readable, record.bytesRead,
+                                            record.post.reason);
+      try {
+        record.storedAvailable = reader.read(
+            reinterpret_cast<uintptr_t>(token.invocation.args.candidate), 0, record.stored);
+      } catch (...) {
+        record.post.reason = "post reader exception";
+        return;
+      }
+      if (!record.storedAvailable)
+        return;
+      record.post = capture_native_stereo_classify(token.invocation.args, token.invocation.readable,
+                                                   record.bytesRead);
+      if (record.post.complete && (record.post.positionIdentity != token.positionIdentity ||
+                                   record.post.ownerIdentity != token.ownerIdentity)) {
+        record.post.complete = false;
+        record.post.reason = "pointer chain changed during native invocation";
+      }
+      if (record.post.complete && record.post.input.candidateFlags != record.stored) {
+        record.post.complete = false;
+        record.post.reason = "candidate stored flags changed during post snapshot";
+      }
+      record.post.positionIdentity = record.post.ownerIdentity = 0;
+    } catch (...) {
+      classifyFailed = true;
+    }
+  } catch (...) {
+    // No state was touched when lock acquisition failed.
+  }
+}
 bool stereo_audit_prepare(bool enable,const wchar_t* output,void(*log)(const char*)){
     stereo_audit_stop();std::lock_guard<std::recursive_mutex> lock(mutex);logger=log;
     if(installed||factoryInstalled||!enable||!diagnostics_enabled())return false;
@@ -367,7 +1321,7 @@ bool stereo_audit_configure(ID3D11DeviceContext* context,bool enable,const wchar
     if(enabled&&context==selected&&output&&directory==std::filesystem::path(output)){
         logger=log;emit("stereo_audit session confirmed existing device; preserving early shader/layout definitions");return true;
     }
-    enabled=false;save("reconfigure");logger=log;
+    enabled=false;requestTrigger.reset();save("reconfigure");logger=log;
     if(openScopes){deferredStop=true;return false;}cleanup_methods();
     std::error_code error;directory=output?output:L"";
     if(!context||context->GetType()!=D3D11_DEVICE_CONTEXT_IMMEDIATE||!directory.is_absolute()||!std::filesystem::is_directory(directory,error)||error){emit("stereo_audit unavailable: immediate context and existing absolute output directory required");return false;}
@@ -382,42 +1336,267 @@ bool stereo_audit_configure(ID3D11DeviceContext* context,bool enable,const wchar
     for(unsigned i=0;i<totalHooks;++i){targets[i]=(i<contextCount||i>=21?contextTable:deviceTable)[indices[i]];for(unsigned j=0;j<i;++j)if(targets[j]==targets[i]){emit("stereo_audit unavailable: aliased method targets");cleanup_methods();return false;}}
     for(unsigned i=0;i<totalHooks;++i){if(MH_CreateHook(targets[i],detours[i],&originals[i])!=MH_OK){emit("stereo_audit unavailable: method hook creation failed");cleanup_methods();return false;}++installed;}
     for(unsigned i=0;i<totalHooks;++i)if(MH_EnableHook(targets[i])!=MH_OK){emit("stereo_audit unavailable: method hook activation failed");cleanup_methods();return false;}
-    watchedContext=selected;watchedDevice=device;enabled=true;emit("stereo_audit armed hotkey=Ctrl+Alt+F8 scene_frames=2 max_draws_per_pass=4096; heavy diagnostic capture, not a performance benchmark; rendering remains legacy");return true;
+    requestTrigger.configure(true,directory);
+    watchedContext=selected;watchedDevice=device;enabled=true;emit("stereo_audit armed hotkey=Ctrl+Alt+F8 request=stereo-audit.request scene_frames=2 max_draws_per_pass=4096; heavy diagnostic capture, not a performance benchmark; rendering remains legacy");return true;
 }
 void stereo_audit_frame(bool keyDown){
     if(!enabled)return;std::lock_guard<std::recursive_mutex> lock(mutex);if(!enabled)return;
     if(!owner)owner=GetCurrentThreadId();if(owner!=GetCurrentThreadId()||openScopes)return;
-    const bool pressed=keyDown&&!keyWasDown;keyWasDown=keyDown;if(!pressed)return;
-    if(capturing){save("hotkey");return;}
+    const bool pressed=keyDown&&!keyWasDown;keyWasDown=keyDown;
+    if(capturing){if(pressed)save("hotkey");return;}
+    const bool requested=requestTrigger.poll();if(!pressed&&!requested)return;
     try{records.clear();records.reserve(framesWanted*4*maxDrawsPerPass);}catch(...){enabled=false;emit("stereo_audit disabled: capture allocation failed; rendering remains legacy");return;}
-    passes={};completedFrames=0;sawScene=false;started=ticks();nativeMeshes.clear();proofCandidates=proofShaderRejected=0;proofEligible={};capturing=true;
+    captureTrigger=pressed?"hotkey":"file";
+    passes={};completedFrames=0;sawScene=false;started=ticks();reset_native_capture();proofCandidates=proofShaderRejected=0;proofEligible={};capturing=true;
     if(proofRequested)try{pairProof.begin();}catch(...){proofRequested=false;emit("stereo_pair_proof unavailable: allocation failed; ordinary audit retained");}
-    emit("stereo_audit start; collecting two scene frames, no game draw suppression or stereo conversion");
+    emit(pressed?"stereo_audit start trigger=hotkey; collecting two scene frames, no game draw suppression or stereo conversion":"stereo_audit start trigger=file; collecting two scene frames, no game draw suppression or stereo conversion");
 }
-StereoAuditToken stereo_audit_begin(StereoAuditPass pass){
-    if(!enabled||unsigned(pass)>=4||suspended)return {};
-    std::lock_guard<std::recursive_mutex> lock(mutex);
-    if(!capturing||GetCurrentThreadId()!=owner||completedFrames>=framesWanted||activeSlot>=0)return {};
-    activeSlot=int(completedFrames*4+unsigned(pass));group=-1;nativeMesh=0;nativeStarted=0;nativeBindTicks=0;nativeFirstDraw=false;++openScopes;sawScene=true;
-    return {true,unsigned(activeSlot),ticks()};
+StereoAuditToken stereo_audit_begin(StereoAuditPass pass, const void* expectedMainView){
+  if (!enabled || unsigned(pass) >= 4 || suspended)
+    return {};
+  std::lock_guard<std::recursive_mutex> lock(mutex);
+  if (!capturing || GetCurrentThreadId() != owner ||
+      completedFrames >= framesWanted || activeSlot >= 0)
+    return {};
+  activeSlot = int(completedFrames * 4 + unsigned(pass));
+  group = -1;
+  nativeMesh = 0;
+  nativeStarted = 0;
+  nativeBindTicks = 0;
+  nativeFirstDraw = false;
+  ++openScopes;
+  sawScene = true;
+  expectedClassifyMainView = expectedMainView;
+  expectedClassifyGeneration = nativeGeneration;
+  ++transformScopeEpoch;
+  return {true, unsigned(activeSlot), ticks(), nativeGeneration};
 }
-void stereo_audit_end(StereoAuditToken& token){
-    if(!token.entered)return;std::lock_guard<std::recursive_mutex> lock(mutex);
-    if(capturing)passes[token.slot].wallTicks+=uint64_t(ticks()-token.started);
-    activeSlot=-1;group=-1;if(openScopes)--openScopes;token.entered=false;
-    if(deferredStop&&!openScopes)cleanup();
+void stereo_audit_end(StereoAuditToken &token) {
+  if (!token.entered)
+    return;
+  std::lock_guard<std::recursive_mutex> lock(mutex);
+  if (GetCurrentThreadId() != owner || token.generation != nativeGeneration ||
+      activeSlot != int(token.slot))
+    return;
+  expectedClassifyMainView = nullptr;
+  expectedClassifyGeneration = 0;
+  if (capturing)
+    passes[token.slot].wallTicks += uint64_t(ticks() - token.started);
+  activeSlot = -1;
+  group = -1;
+  if (openScopes)
+    --openScopes;
+  token.entered = false;
+  if (deferredStop && !openScopes)
+    cleanup();
 }
 int stereo_audit_group(int value){if(!enabled)return -1;const auto previous=group;group=value;nativeMesh=0;nativeStarted=0;nativeBindTicks=0;nativeFirstDraw=false;return previous;}
-StereoNativePrepareToken stereo_audit_native_prepare_begin(const void* mesh){
-    if(!capturing.load(std::memory_order_relaxed)||activeSlot<0||suspended||!mesh||GetCurrentThreadId()!=owner)return {};
-    std::lock_guard<std::recursive_mutex> lock(mutex);if(!enabled||!capturing)return {};
-    try{const auto known=nativeMeshes.find(mesh);if(known!=nativeMeshes.end())nativeMesh=known->second;else{if(nativeMeshes.size()>=32768)return {};nativeMesh=uint32_t(nativeMeshes.size()+1);nativeMeshes.emplace(mesh,nativeMesh);}}
-    catch(...){nativeMesh=0;return {};}
-    nativeStarted=ticks();nativeBindTicks=0;nativeFirstDraw=true;return {true,unsigned(activeSlot),nativeStarted};
+StereoNativePassToken
+stereo_audit_native_pass_begin(const StereoNativePassInfo &info) {
+  if (!enabled || !capturing.load(std::memory_order_relaxed) ||
+      activeSlot < 0 || group != 31 || suspended ||
+      GetCurrentThreadId() != owner || info.callerRva != 0x51df1d)
+    return {};
+  std::lock_guard<std::recursive_mutex> lock(mutex);
+  if (!enabled || !capturing || nativeDiagnosticsFailed)
+    return {};
+  if (nativePasses.size() >= maxNativeScopes) {
+    ++nativeScopesDropped;
+    return {};
+  }
+  try {
+    Suspend pause;
+    NativePassRecord record;
+    record.generation = nativeGeneration;
+    record.slot = unsigned(activeSlot);
+    record.beginSequence = ++auditSequence;
+    record.caller = info.callerRva;
+    record.flags = info.flags;
+    record.lastMainPass = info.lastMainPass;
+    record.scene = native_identity(nativeObjects, info.scene, maxNativeObjects);
+    record.view = native_identity(nativeObjects, info.view, maxNativeObjects);
+    record.before = snapshot_native_targets();
+    if (nativePacketCount == maxNativePackets) {
+      record.reason = NativeStereoCaptureReason::packetLimit;
+    } else if (!info.view) {
+      record.reason = NativeStereoCaptureReason::missingPointer;
+    } else {
+      record.camera = capture_native_stereo_camera(info.view,info.cameraState,
+          info.cameraMode,info.currentView,info.readable);
+      const auto capture =
+          capture_native_stereo_packets(info.scene, info.readable);
+      record.complete = capture.complete;
+      record.reason = capture.reason;
+      record.buckets = capture.buckets;
+      record.items = capture.items;
+      record.meshes = capture.meshes;
+      record.work = capture.work;
+      record.bytesRead = capture.bytesRead;
+      const auto available = maxNativePackets - nativePacketCount;
+      record.packets.reserve(
+          (std::min)(size_t(available), capture.packets.size()));
+      for (const auto &packet : capture.packets) {
+        if (record.packets.size() == available) {
+          record.complete = false;
+          record.reason = NativeStereoCaptureReason::packetLimit;
+          break;
+        }
+        NativePacketRecord copied;
+        const auto source = capture_native_stereo_source(
+            packet.mesh, packet.geometry, info.readable);
+        // Convert the ephemeral array key immediately through the same bounded
+        // object map. Exhaustion takes the existing diagnostic abort path.
+        if (source.complete) {
+          copied.source.array = native_identity(
+              nativeObjects, reinterpret_cast<const void *>(source.arrayIdentity),
+              maxNativeObjects);
+          copied.source.count = source.count;
+          copied.source.index = source.index;
+          copied.source.sortDistance = source.sortDistance;
+          copied.source.lazyStatePresent = source.lazyStatePresent;
+        }
+        copied.source.complete = source.complete;
+        copied.source.reason = source.reason;
+        copied.source.bytesRead = source.bytesRead;
+        copied.mesh = native_identity(
+            nativeMeshes, reinterpret_cast<const void *>(packet.mesh),
+            maxNativePackets);
+        copied.geometry = native_identity(
+            nativeObjects, reinterpret_cast<const void *>(packet.geometry),
+            maxNativeObjects);
+        copied.meshFlags = packet.meshFlags;
+        copied.geometryFlags = packet.geometryFlags;
+        copied.callback = packet.meshCallback;
+        copied.bucket = packet.bucketIndex;
+        copied.item = packet.itemIndex;
+        copied.index = packet.meshIndex;
+        record.packets.push_back(copied);
+      }
+      if (capture.reason == NativeStereoCaptureReason::allocationFailure)
+        nativeDiagnosticsFailed = true;
+    }
+    const auto index = unsigned(nativePasses.size());
+    const auto count = unsigned(record.packets.size());
+    nativePasses.push_back(std::move(record));
+    nativePacketCount += count;
+    return {true, index, nativeGeneration};
+  } catch (...) {
+    nativeDiagnosticsFailed = true;
+    emit("stereo_audit native diagnostics aborted: allocation/reader failure; "
+         "original rendering continues");
+    return {};
+  }
 }
-void stereo_audit_native_prepare_end(const StereoNativePrepareToken& token){
-    if(!token.entered)return;std::lock_guard<std::recursive_mutex> lock(mutex);if(!enabled||!capturing)return;
-    nativeBindTicks=uint64_t(ticks()-token.started);auto& p=passes[token.slot];++p.nativeBinds;p.nativeBindTicks+=nativeBindTicks;
+void stereo_audit_native_pass_end(const StereoNativePassToken &token) {
+  if (!token.entered || !enabled || !capturing || suspended ||
+      GetCurrentThreadId() != owner)
+    return;
+  std::lock_guard<std::recursive_mutex> lock(mutex);
+  if (!enabled || !capturing || token.generation != nativeGeneration ||
+      token.index >= nativePasses.size())
+    return;
+  auto &record = nativePasses[token.index];
+  if (record.ended || activeSlot != int(record.slot))
+    return;
+  record.endSequence = ++auditSequence;
+  record.ended = true;
+  if (nativeDiagnosticsFailed) {
+    record.complete = false;
+    record.reason = NativeStereoCaptureReason::allocationFailure;
+    return;
+  }
+  try {
+    record.after = snapshot_native_targets();
+  } catch (...) {
+    record.complete = false;
+    record.reason = NativeStereoCaptureReason::allocationFailure;
+    nativeDiagnosticsFailed = true;
+  }
+}
+StereoNativePrepareToken
+stereo_audit_native_prepare_begin(const void *mesh,
+                                  const StereoNativePrepareInfo *info) {
+  if (!capturing.load(std::memory_order_relaxed) || activeSlot < 0 ||
+      suspended || !mesh || GetCurrentThreadId() != owner)
+    return {};
+  std::lock_guard<std::recursive_mutex> lock(mutex);
+  if (!enabled || !capturing)
+    return {};
+  try {
+    nativeMesh = native_identity(nativeMeshes, mesh, maxNativePackets);
+  } catch (...) {
+    nativeMesh = 0;
+    nativeDiagnosticsFailed = true;
+    return {};
+  }
+  nativeStarted = ticks();
+  nativeBindTicks = 0;
+  nativeFirstDraw = true;
+  StereoNativePrepareToken token{true, unsigned(activeSlot), nativeStarted,
+                                 nativeGeneration, ~0u};
+  // The legacy one-argument API accepts opaque test/game identities. Only an
+  // explicit metadata request allows the bounded reader to inspect them.
+  if (info && !nativeDiagnosticsFailed) {
+    if (nativePreparations.size() >= maxNativePackets) {
+      ++nativePreparationsDropped;
+      return token;
+    }
+    try {
+      Suspend pause;
+      NativePrepareRecord record;
+      record.slot = unsigned(activeSlot);
+      record.mesh = nativeMesh;
+      record.beginSequence = ++auditSequence;
+      record.suppliedFlags = info->suppliedFlags;
+      record.reset = info->reset;
+      size_t bytes = 0;
+      native_stereo_detail::Reader reader(info->readable, record.reason, bytes);
+      uint64_t callback = 0;
+      bool valid = reader.read(reinterpret_cast<uintptr_t>(info->shader), 0xf8,
+                               record.shaderFlags);
+      if (valid) {
+        record.effectiveFlags = record.suppliedFlags;
+        if (!(record.suppliedFlags & 0x7fffffff))
+          record.effectiveFlags |= record.shaderFlags;
+      }
+      if (valid)
+        valid =
+            reader.read(reinterpret_cast<uintptr_t>(mesh), 0, record.meshFlags);
+      if (valid)
+        valid = reader.read(reinterpret_cast<uintptr_t>(mesh), 0xcc, callback);
+      record.meshCallback = valid && callback != 0;
+      if (valid && (record.effectiveFlags & 0x8000)) {
+        record.shaderCallbackTested = true;
+        valid = reader.read(reinterpret_cast<uintptr_t>(info->shader), 0x108,
+                            callback);
+        record.shaderCallback = valid && callback != 0;
+      }
+      record.complete = valid;
+      token.metadataIndex = unsigned(nativePreparations.size());
+      nativePreparations.push_back(record);
+    } catch (...) {
+      nativeDiagnosticsFailed = true;
+    }
+  }
+  return token;
+}
+void stereo_audit_native_prepare_end(const StereoNativePrepareToken &token) {
+  if (!token.entered || suspended || GetCurrentThreadId() != owner)
+    return;
+  std::lock_guard<std::recursive_mutex> lock(mutex);
+  if (!enabled || !capturing || token.generation != nativeGeneration ||
+      activeSlot != int(token.slot))
+    return;
+  if (token.metadataIndex < nativePreparations.size()) {
+    auto &record = nativePreparations[token.metadataIndex];
+    if (record.endSequence)
+      return;
+    record.endSequence = ++auditSequence;
+  }
+  nativeBindTicks = uint64_t(ticks() - token.started);
+  auto &p = passes[token.slot];
+  ++p.nativeBinds;
+  p.nativeBindTicks += nativeBindTicks;
 }
 void stereo_audit_frame_end(){
     if(!enabled)return;std::lock_guard<std::recursive_mutex> lock(mutex);if(!capturing||GetCurrentThreadId()!=owner)return;
@@ -425,7 +1604,7 @@ void stereo_audit_frame_end(){
     if(ticks()-started>10*frequency)save("timeout");
 }
 void stereo_audit_stop(){
-    std::lock_guard<std::recursive_mutex> lock(mutex);enabled=false;save("session_end");
+    std::lock_guard<std::recursive_mutex> lock(mutex);enabled=false;requestTrigger.reset();save("session_end");
     if(openScopes){deferredStop=true;emit("stereo_audit cleanup deferred until active render scope exits");return;}cleanup();
 }
 }

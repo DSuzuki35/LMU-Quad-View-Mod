@@ -95,7 +95,7 @@ class LaunchServiceTests {
             }
             var vrsPlan=LaunchService.MakeLayerPlan(root,"VRS",null,null);
             Check(vrsPlan.Layers=="XR_APILAYER_LMU_quadview"&&vrsPlan.ExplicitManifest==null,"VRS must use runtime stereo without quad providers");
-            var experiments=new LauncherSettings {Backend="Native",CpuOuterReuse=true,OuterSsr=true,NativeOuterResolution=true,DiagnosticsEnabled=false};
+            var experiments=new LauncherSettings {GameDirectory=settings.GameDirectory,Backend="Native",CpuOuterReuse=true,OuterSsr=true,NativeOuterResolution=true,DiagnosticsEnabled=false};
             var experimentInfo=LaunchService.MakeStartInfo(root,experiments,native,Path.Combine(root,"experiments.log"));
             Check(experimentInfo.EnvironmentVariables["LMU_QV_CPU_OUTER_REUSE"]=="1"&&experimentInfo.EnvironmentVariables["LMU_QV_CPU_UPLOAD_REUSE"]=="1","Outer CPU reuse must imply upload reuse even without diagnostics");
             Check(experimentInfo.EnvironmentVariables["LMU_QV_OUTER_SSR"]=="1","Outer SSR must work without diagnostics");

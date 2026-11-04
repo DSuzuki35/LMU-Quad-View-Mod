@@ -40,3 +40,4 @@ stereo-audit-*.json
 .agents/
 /test-artifacts/
 /benchmarks/
+.superpowers/

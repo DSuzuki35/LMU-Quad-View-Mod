@@ -1,16 +1,59 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "../stereo_audit.hpp"
+#include "../native_stereo_classify_capture.hpp"
+#include "../quad_math.hpp"
 #include <d3dcompiler.h>
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <locale>
+#include <new>
+#include <limits>
 #include <string>
 #include <thread>
 #include <vector>
+namespace allocation_failure_test {
+thread_local bool failNext = false;
+HANDLE failureCaught = nullptr, stopAttempted = nullptr, stopFinished = nullptr;
+bool stopCompletedDuringCatch = false;
+struct Failure : std::bad_alloc {
+  ~Failure() override {
+    // Exception destruction runs after the diagnostic catch body. Its lock
+    // must still protect that complete failure transaction against stop/save.
+    SetEvent(failureCaught);
+    assert(WaitForSingleObject(stopAttempted, 2000) == WAIT_OBJECT_0);
+    stopCompletedDuringCatch = WaitForSingleObject(stopFinished, 150) == WAIT_OBJECT_0;
+  }
+};
+} // namespace allocation_failure_test
+void *operator new(std::size_t bytes) {
+  if (allocation_failure_test::failNext) {
+    allocation_failure_test::failNext = false;
+    throw allocation_failure_test::Failure();
+  }
+  if (void *memory = std::malloc(bytes ? bytes : 1))
+    return memory;
+  throw std::bad_alloc();
+}
+void *operator new[](std::size_t bytes) {
+  return ::operator new(bytes);
+}
+void operator delete(void *memory) noexcept {
+  std::free(memory);
+}
+void operator delete[](void *memory) noexcept {
+  std::free(memory);
+}
+void operator delete(void *memory, std::size_t) noexcept {
+  std::free(memory);
+}
+void operator delete[](void *memory, std::size_t) noexcept {
+  std::free(memory);
+}
 namespace {
 template<class T> void drop(T*& p){if(p){p->Release();p=nullptr;}}
 std::vector<std::string> messages;
@@ -21,7 +64,410 @@ ID3DBlob* compile(const char* source,const char* target){ID3DBlob *code=nullptr,
 std::vector<std::filesystem::path> files(const std::filesystem::path& path){std::vector<std::filesystem::path> result;for(const auto& file:std::filesystem::directory_iterator(path))if(file.path().extension()==".json")result.push_back(file.path());return result;}
 std::string read(const std::filesystem::path& p){std::ifstream f(p);return {std::istreambuf_iterator<char>(f),std::istreambuf_iterator<char>()};}
 unsigned count(const std::string& s,const char* needle){unsigned n=0;size_t p=0;while((p=s.find(needle,p))!=std::string::npos){++n;p+=std::strlen(needle);}return n;}
+// Set explicit distinct timestamps rather than depending on filesystem clock
+// resolution. Contents are deliberately irrelevant to the request protocol.
+void touchRequest(const std::filesystem::path& marker,uint64_t timestamp){
+    const auto handle=CreateFileW(marker.c_str(),FILE_WRITE_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+    assert(handle!=INVALID_HANDLE_VALUE);const FILETIME time{DWORD(timestamp),DWORD(timestamp>>32)};
+    assert(SetFileTime(handle,nullptr,nullptr,&time));CloseHandle(handle);
 }
+void request_file_test(const std::filesystem::path& root){
+    using namespace lmuqv;
+    ID3D11Device* device=nullptr;ID3D11DeviceContext* context=nullptr;
+    assert(SUCCEEDED(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,nullptr,&context)));
+    auto draw=[&]{context->Draw(0,0);};
+    const auto directory=root/L"request-trigger";assert(std::filesystem::create_directory(directory));
+    const auto marker=directory/L"stereo-audit.request";touchRequest(marker,100);
+    assert(stereo_audit_configure(context,true,directory.c_str(),log));
+    stereo_audit_frame(false);Sleep(510);stereo_audit_frame(false);
+    auto idle=stereo_audit_begin(StereoAuditPass::focus0);assert(!idle.entered&&files(directory).empty());
+    touchRequest(marker,200);Sleep(510);
+    std::thread other([]{stereo_audit_frame(false);});other.join();
+    idle=stereo_audit_begin(StereoAuditPass::focus0);assert(!idle.entered); // wrong thread cannot consume request
+    stereo_audit_frame(false);
+    auto first=stereo_audit_begin(StereoAuditPass::focus0);assert(first.entered);draw();stereo_audit_end(first);stereo_audit_frame_end();
+    touchRequest(marker,300);Sleep(510);stereo_audit_frame(false); // pending request must not stop frame two
+    auto second=stereo_audit_begin(StereoAuditPass::focus0);assert(second.entered);draw();stereo_audit_end(second);stereo_audit_frame_end();
+    assert(files(directory).size()==1);auto data=read(files(directory)[0]);
+    assert(data.find("\"trigger\":\"file\"")!=std::string::npos&&data.find("\"reason\":\"frames\"")!=std::string::npos);
+    assert(data.find("\"scene_frames\":2")!=std::string::npos&&count(data,"\"kind\":")==2);
+    assert(contains("stereo_audit start trigger=file"));
+    stereo_audit_frame(false); // request changed during capture is consumed only after it completes
+    for(unsigned frame=0;frame<2;++frame){auto token=stereo_audit_begin(StereoAuditPass::focus0);assert(token.entered);draw();stereo_audit_end(token);stereo_audit_frame_end();}
+    assert(files(directory).size()==2);Sleep(510);stereo_audit_frame(false);
+    idle=stereo_audit_begin(StereoAuditPass::focus0);assert(!idle.entered); // unchanged cannot repeat
+    assert(std::filesystem::remove(marker));Sleep(510);stereo_audit_frame(false);
+    touchRequest(marker,300);Sleep(510);stereo_audit_frame(false);
+    idle=stereo_audit_begin(StereoAuditPass::focus0);assert(!idle.entered); // absence cannot replay
+    touchRequest(marker,400);Sleep(510);stereo_audit_frame(false);
+    auto stopped=stereo_audit_begin(StereoAuditPass::focus0);assert(stopped.entered);draw();stereo_audit_end(stopped);
+    stereo_audit_frame(true);assert(files(directory).size()==3); // hotkey still explicitly stops file capture
+    bool hotkeyStop=false;for(const auto& file:files(directory)){data=read(file);if(data.find("\"reason\":\"hotkey\"")!=std::string::npos){assert(data.find("\"trigger\":\"file\"")!=std::string::npos);hotkeyStop=true;}}
+    assert(hotkeyStop);stereo_audit_stop();
+    assert(stereo_audit_configure(context,true,directory.c_str(),log));Sleep(510);stereo_audit_frame(false);
+    idle=stereo_audit_begin(StereoAuditPass::focus0);assert(!idle.entered&&files(directory).size()==3);stereo_audit_stop();drop(context);drop(device);
+}
+struct NativeFixture {
+    alignas(8) std::array<unsigned char,0xdc8> scene{};
+    alignas(8) std::array<unsigned char,0x508> bucket{};
+    alignas(8) std::array<unsigned char,0x4a8> item{};
+    alignas(8) std::array<unsigned char,0x2a0> mesh{};
+    alignas(8) std::array<unsigned char,0x178> geometry{};
+    alignas(8) std::array<unsigned char,0x110> shader{};
+    alignas(8) std::array<unsigned char,0x5d0> view{};
+    alignas(8) std::array<unsigned char,0x418> camera{};
+    int32_t cameraMode=0;
+    uintptr_t currentView=0;
+    uint64_t bucketPointer=0,itemPointer=0,meshPointer=0;
+    template<class T,size_t N> static void put(std::array<unsigned char,N>& bytes,size_t offset,T value){std::memcpy(bytes.data()+offset,&value,sizeof(value));}
+    template<size_t N> static void vector(std::array<unsigned char,N>& bytes,size_t offset,uint64_t* pointer){
+        const auto begin=reinterpret_cast<uint64_t>(pointer);put(bytes,offset,begin);put(bytes,offset+8,begin+8);put(bytes,offset+16,begin+8);
+    }
+    NativeFixture(){
+        bucketPointer=reinterpret_cast<uint64_t>(bucket.data());itemPointer=reinterpret_cast<uint64_t>(item.data());meshPointer=reinterpret_cast<uint64_t>(mesh.data());
+        vector(scene,0xdb0,&bucketPointer);vector(bucket,0x4f0,&itemPointer);vector(item,0x490,&meshPointer);
+        put(mesh,0,uint32_t(0x400000));put(mesh,0xcc,uint64_t(1));put(shader,0xf8,uint32_t(0x8000));put(shader,0x108,uint64_t(1));
+        put(mesh,0x80,reinterpret_cast<uint64_t>(geometry.data()));
+        put(geometry,0,uint32_t(37));put(geometry,0x168,int32_t(3));put(geometry,0x170,reinterpret_cast<uint64_t>(mesh.data()));
+        put(geometry,0xf8,0.12345679f);put(geometry,0x138,uint64_t(1));
+        currentView=reinterpret_cast<uintptr_t>(view.data());
+        const lmuqv::Matrix identity{1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+        put(view,0x21c,int32_t(1));put(view,0x1dc,identity);put(view,0x360,identity);put(view,0x58c,identity);put(view,0x3a0,identity);
+        for(unsigned eye=0;eye<2;++eye){auto relative=identity;relative[12]=eye?0.03125f:-0.03125f;put(camera,0x70+eye*0x6c,relative);put(camera,0x148+eye*0x6c,identity);put(camera,0x220+eye*0x6c,identity);}
+    }
+    bool sameMemory(const NativeFixture& other)const{
+        return scene==other.scene&&bucket==other.bucket&&item==other.item&&mesh==other.mesh&&geometry==other.geometry&&shader==other.shader&&view==other.view&&camera==other.camera&&cameraMode==other.cameraMode&&currentView==other.currentView&&
+            bucketPointer==other.bucketPointer&&itemPointer==other.itemPointer&&meshPointer==other.meshPointer;
+    }
+};
+NativeFixture nativeFixture;
+std::array<uint64_t,4096> repeatedMeshes{};
+unsigned nativeReads=0,sourceReads=0;
+bool testSuspension=false,suspensionProbed=false;
+bool throwNativeReader=false;
+size_t unreadableSourceOffset=0,throwSourceOffset=0;
+bool nativeReadable(const void* p,size_t bytes){
+    ++nativeReads;
+    const auto source=reinterpret_cast<uintptr_t>(nativeFixture.geometry.data()),address=reinterpret_cast<uintptr_t>(p);
+    if(address==source+0x168||address==source+0x170||address==source+0xf8||address==source+0x138)++sourceReads;
+    if(unreadableSourceOffset&&address==source+unreadableSourceOffset)return false;
+    if(throwSourceOffset&&address==source+throwSourceOffset)throw std::bad_alloc();
+    if(throwNativeReader)throw std::bad_alloc();
+    if(testSuspension&&!suspensionProbed){
+        suspensionProbed=true;
+        const lmuqv::StereoNativePassInfo info{nativeFixture.scene.data(),nativeFixture.shader.data(),0x51df1d,0,false,nativeReadable};
+        assert(!lmuqv::stereo_audit_native_pass_begin(info).entered);
+        lmuqv::StereoNativePrepareInfo metadata{nativeFixture.shader.data(),0,false,nativeReadable};
+        assert(!lmuqv::stereo_audit_native_prepare_begin(nativeFixture.mesh.data(),&metadata).entered);
+        const lmuqv::StereoNativeClassifyInfo classify{{nativeFixture.mesh.data(), nativeFixture.view.data(), nullptr, false, 0, &nativeFixture.currentView}, 0x41c8b4, nativeReadable};
+        assert(!lmuqv::stereo_audit_native_classify_begin(classify, 0x1f80).entered);
+    }
+    const auto begin=reinterpret_cast<uintptr_t>(&nativeFixture);
+    if(address>=begin&&address-begin<=sizeof(nativeFixture)&&bytes<=sizeof(nativeFixture)-(address-begin))return true;
+    const auto extraBegin=reinterpret_cast<uintptr_t>(repeatedMeshes.data());
+    return address>=extraBegin&&address-extraBegin<=sizeof(repeatedMeshes)&&bytes<=sizeof(repeatedMeshes)-(address-extraBegin);
+}
+lmuqv::StereoNativePassInfo nativeInfo(){return {nativeFixture.scene.data(),nativeFixture.view.data(),0x51df1d,17,true,nativeReadable,nativeFixture.camera.data(),&nativeFixture.cameraMode,&nativeFixture.currentView};}
+void classifier_capture_test(const std::filesystem::path &root, ID3D11DeviceContext *context) {
+  using namespace lmuqv;
+  NativeStereoFpGuard callerFp;
+  const auto directory = root / L"classifier";
+  assert(std::filesystem::create_directory(directory));
+  auto &f = nativeFixture;
+  NativeFixture::put(f.mesh, 0, uint32_t(0x70020));
+  NativeFixture::put(f.mesh, 0xdc, 2.f);
+  NativeFixture::put(f.mesh, 0xfc, 0.f);
+  NativeFixture::put(f.mesh, 0x100, 10.f);
+  NativeFixture::put(f.mesh, 0x104, int32_t(0));
+  NativeFixture::put(f.mesh, 0x110, reinterpret_cast<uintptr_t>(f.geometry.data() + 0x20));
+  NativeFixture::put(f.mesh, 0x130, reinterpret_cast<uintptr_t>(f.shader.data()));
+  NativeFixture::put(f.shader, 0, uint32_t(0));
+  NativeFixture::put(f.shader, 0xec, 1.f);
+  NativeFixture::put(f.geometry, 0x20, NativeStereoClassifyFloat3{3, 4, 0});
+  NativeFixture::put(f.view, 0x34, NativeStereoClassifyFloat3{});
+  NativeFixture::put(f.view, 0x114, 1.f);
+  NativeFixture::put(f.view, 0x4b0, uintptr_t(0));
+  StereoNativeClassifyInfo info{{f.mesh.data(), f.view.data(),
+                                 reinterpret_cast<float *>(f.geometry.data() + 0x20), false, 0.f,
+                                 &f.currentView},
+                                0x41c8b4,
+                                nativeReadable};
+  nativeReads = 0;
+  assert(!stereo_audit_native_classify_begin(info, 0x1f80).entered && nativeReads == 0);
+  assert(stereo_audit_configure(context, true, directory.c_str(), log));
+  assert(!stereo_audit_native_classify_begin(info, 0x1f80).entered && nativeReads == 0);
+  stereo_audit_frame(false);
+  stereo_audit_frame(true);
+  // An unqualified scope must not inherit a previous expected-view identity.
+  {
+    auto unknown = stereo_audit_begin(StereoAuditPass::focus0);
+    assert(unknown.entered);
+    assert(!stereo_audit_native_classify_begin(info, 0x1f80).entered && nativeReads == 0);
+    stereo_audit_end(unknown);
+  }
+  StereoNativeClassifyToken stale;
+  unsigned originalCalls = 0;
+  for (unsigned frame = 0; frame < 2; ++frame) {
+    for (unsigned pass = 0; pass < 4; ++pass) {
+      auto scope = stereo_audit_begin(StereoAuditPass(pass), f.view.data());
+      assert(scope.entered);
+      if (frame == 0 && pass == 0) {
+        std::thread wrong(
+            [&] { assert(!stereo_audit_native_classify_begin(info, 0x1f80).entered); });
+        wrong.join();
+        assert(nativeReads == 0);
+        auto wrongCaller = info;
+        wrongCaller.callerRva = 0x41c997;
+        assert(!stereo_audit_native_classify_begin(wrongCaller, 0x1f80).entered &&
+               nativeReads == 0);
+      }
+      auto nested = stereo_audit_begin(StereoAuditPass::focus0, f.shader.data());
+      assert(!nested.entered); // Refusal must retain the active expected view.
+      auto foreign = info;
+      foreign.args.view = f.shader.data();
+      const auto beforeForeign = nativeReads;
+      for (unsigned n = 0; n < 512; ++n)
+        assert(!stereo_audit_native_classify_begin(foreign, 0x1f80).entered);
+      assert(nativeReads == beforeForeign);
+      for (unsigned n = 0; n < 512; ++n) {
+        NativeFixture::put(f.mesh, 0, uint32_t(0x70020));
+        _mm_setcsr(0x1f81);
+        const auto returned = invoke_native_stereo_classify(
+            [&](uint32_t entry) {
+              auto token = stereo_audit_native_classify_begin(info, entry);
+              assert(token.entered);
+              if (n == 0)
+                stale = token;
+              return token;
+            },
+            [&] {
+              ++originalCalls;
+              assert(_mm_getcsr() == 0x1f81);
+              NativeFixture::put(f.mesh, 0, uint32_t(0x20));
+              _mm_setcsr(0x1fa0);
+              return uint32_t(0x20);
+            },
+            [](const StereoNativeClassifyToken &token, uint32_t returned, uint32_t post) {
+              stereo_audit_native_classify_end(token, returned, post);
+            });
+        assert(returned == 0x20 && _mm_getcsr() == 0x1fa0);
+      }
+      const auto reads = nativeReads;
+      assert(invoke_native_stereo_classify(
+                 [&](uint32_t entry) {
+                   auto token = stereo_audit_native_classify_begin(info, entry);
+                   assert(!token.entered);
+                   return token;
+                 },
+                 [&] {
+                   ++originalCalls;
+                   return uint32_t(0x12345678);
+                 },
+                 [](const StereoNativeClassifyToken &token, uint32_t returned, uint32_t post) {
+                   stereo_audit_native_classify_end(token, returned, post);
+                 }) == 0x12345678);
+      assert(nativeReads == reads);
+      stereo_audit_end(scope);
+    }
+    stereo_audit_frame_end();
+  }
+  assert(originalCalls == 4104 && files(directory).size() == 1);
+  auto data = read(files(directory)[0]);
+  assert(data.find("\"native_classification\":") != std::string::npos);
+  assert(
+      data.find("\"available\":4096,\"refused\":0,\"returned_mismatch\":0,\"stored_mismatch\":0") !=
+      std::string::npos);
+  assert(data.find("\"attempts\":4096,\"dropped\":8") != std::string::npos &&
+         data.find("\"scheduling_eligible\":false") != std::string::npos);
+  assert(data.find("\"excluded_view_calls\":4096,\"missing_expected_view_calls\":1") != std::string::npos);
+  assert(data.find("\"attempts\":512,\"dropped\":1,\"excluded_view_calls\":512,\"missing_expected_view_calls\":0") != std::string::npos);
+  assert(data.find("\"view_mode\":null,\"secondary_view_position\":[null,null,null],\"secondary_view_radius\":null") != std::string::npos);
+  stereo_audit_frame(false);
+  stereo_audit_frame(true);
+  {
+    auto scope = stereo_audit_begin(StereoAuditPass::focus0, f.view.data());
+    assert(scope.entered);
+    const auto reads = nativeReads;
+    stereo_audit_native_classify_end(stale, 0, 0x1f80);
+    assert(nativeReads == reads);
+    auto wrongView = info;
+    wrongView.args.view = f.shader.data();
+    auto wrong = stereo_audit_native_classify_begin(wrongView, 0x1f80);
+    assert(!wrong.entered && nativeReads == reads);
+    stereo_audit_native_classify_end(wrong, 0, 0x1f80);
+    assert(nativeReads == reads);
+    auto token = stereo_audit_native_classify_begin(info, 0x9f80);
+    assert(token.entered);
+    stereo_audit_native_classify_end(token, 0x20, 0x1f80);
+    NativeFixture::put(f.mesh, 0x104, int32_t(8));
+    token = stereo_audit_native_classify_begin(info, 0x1f80);
+    assert(token.entered);
+    stereo_audit_native_classify_end(token, 0x20, 0x1f80);
+    NativeFixture::put(f.mesh, 0x104, int32_t(0));
+    throwNativeReader = true;
+    token = stereo_audit_native_classify_begin(info, 0x1f80);
+    throwNativeReader = false;
+    assert(token.entered);
+    stereo_audit_native_classify_end(token, 0x20, 0x1f80);
+    NativeFixture::put(f.mesh, 0xdc, uint32_t(0x7f800001));
+    token = stereo_audit_native_classify_begin(info, 0x1f80);
+    assert(token.entered);
+    stereo_audit_native_classify_end(token, 0x20, 0x1f80);
+    NativeFixture::put(f.mesh, 0xdc, 2.f);
+    token = stereo_audit_native_classify_begin(info, 0x1f80);
+    assert(token.entered);
+    stereo_audit_native_classify_end(token, 0x21, 0x1f80);
+    token = stereo_audit_native_classify_begin(info, 0x1f80);
+    assert(token.entered);
+    NativeFixture::put(f.mesh, 0, uint32_t(0x20020));
+    stereo_audit_native_classify_end(token, 0x20, 0x1f80);
+    token = stereo_audit_native_classify_begin(info, 0x1f80);
+    assert(token.entered);
+    throwNativeReader = true;
+    stereo_audit_native_classify_end(token, 0x20, 0x1f80);
+    throwNativeReader = false;
+    // Leave one invocation incomplete and save from a deferred owner cleanup.
+    token = stereo_audit_native_classify_begin(info, 0x1f80);
+    assert(token.entered);
+    std::thread stop([] { stereo_audit_stop(); });
+    stop.join();
+    stereo_audit_end(scope);
+  }
+  stereo_audit_frame_end();
+  assert(files(directory).size() == 2);
+  bool refusedFound = false;
+  for (const auto &file : files(directory)) {
+    data = read(file);
+    if (data.find("\"attempts\":8,") != std::string::npos) {
+      refusedFound = true;
+      assert(data.find("nondefault MXCSR controls") != std::string::npos &&
+             data.find("unsupported plane count") != std::string::npos &&
+             data.find("reader exception") != std::string::npos &&
+             data.find("post reader exception") != std::string::npos &&
+             data.find("invocation incomplete") != std::string::npos);
+      assert(data.find("\"plane_count\":8") != std::string::npos &&
+             data.find("\"radius\":null") != std::string::npos &&
+             data.find("nonfinite input") != std::string::npos);
+      assert(data.find("\"available\":2,\"refused\":6,\"returned_mismatch\":1,"
+                       "\"stored_mismatch\":1") != std::string::npos);
+    }
+  }
+  assert(refusedFound);
+  stereo_audit_stop();
+  stereo_audit_native_classify_hook_available(true);
+  assert(stereo_audit_configure(context, true, directory.c_str(), log));
+  stereo_audit_frame(false);
+  stereo_audit_frame(true);
+  NativeFixture::put(f.mesh, 0x104, int32_t(6));
+  NativeFixture::put(f.view, 0x58, NativeStereoClassifyFloat3{3, 4, 0});
+  NativeFixture::put(f.view, 0x100, 3.f);
+  for (unsigned i = 0; i < 6; ++i)
+    NativeFixture::put(f.view, 0x178 + i * 16,
+                       NativeStereoClassifyPlane{0, 0, 0, -3});
+  for (unsigned frame = 0; frame < 2; ++frame) {
+    auto scope = stereo_audit_begin(StereoAuditPass::focus0, f.view.data());
+    NativeFixture::put(f.mesh, 0, uint32_t(0x70020));
+    NativeFixture::put(f.view, 0x3e8, int32_t(frame == 0 ? 1 : -7));
+    NativeFixture::put(
+        f.view, 0x1b8,
+        NativeStereoClassifyPlane{0, 0, 0, frame == 0 ? 3.f : -3.f});
+    NativeFixture::put(
+        f.view, 0x58,
+        NativeStereoClassifyFloat3{frame == 0 ? 3.f : 30.f, 4, 0});
+    auto token = stereo_audit_native_classify_begin(info, 0x1fbf);
+    assert(token.entered);
+    // Independent native stub values: special reject stores cleared F; sphere
+    // reject stores F|0x40000. Neither stub calls the numeric model.
+    const uint32_t stored = frame == 0 ? 0x20 : 0x40020;
+    const uint32_t returned = frame == 0 ? 0x40000 : 0x40020;
+    NativeFixture::put(f.mesh, 0, stored);
+    stereo_audit_native_classify_end(token, returned, 0x1f80);
+    stereo_audit_end(scope);
+    _mm_setcsr(0x1f81);
+    stereo_audit_frame_end();
+    assert(_mm_getcsr() == 0x1f81);
+  }
+  assert(files(directory).size() == 3);
+  bool completeFound = false;
+  for (const auto &file : files(directory)) {
+    const auto data = read(file);
+    if (data.find("\"attempts\":2,\"dropped\":0") != std::string::npos) {
+      completeFound = true;
+      assert(data.find(
+                 "\"capture_incomplete\":false,\"unfinished_invocations\":0") !=
+             std::string::npos);
+      assert(data.find("\"available\":2,\"refused\":0,\"returned_mismatch\":0,"
+                       "\"stored_mismatch\":0") != std::string::npos);
+      assert(data.find("\"bytes_read\":412") != std::string::npos);
+      assert(data.find("\"view_mode\":-7") != std::string::npos);
+      assert(data.find("\"bounded_observation\":true") != std::string::npos);
+      assert(data.find("\"visibility_validated\":false") != std::string::npos);
+    }
+  }
+  assert(completeFound);
+  stereo_audit_stop();
+  stereo_audit_native_classify_hook_available(false);
+
+  NativeFixture::put(f.mesh, 0x104, int32_t(0));
+  NativeFixture::put(f.mesh, 0, uint32_t(0x20));
+  // Force identity allocation, rather than a reader refusal caught by the
+  // snapshot helper. The exception's lifetime probes the catch transaction
+  // while a different thread attempts the supported stop/save operation.
+  const auto failureDirectory = root / L"classifier-allocation-failure";
+  assert(std::filesystem::create_directory(failureDirectory));
+  assert(stereo_audit_configure(context, true, failureDirectory.c_str(), log));
+  stereo_audit_frame(false);
+  stereo_audit_frame(true);
+  auto failedScope = stereo_audit_begin(StereoAuditPass::focus0, f.view.data());
+  assert(failedScope.entered);
+  using namespace allocation_failure_test;
+  failureCaught = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  stopAttempted = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  stopFinished = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+  assert(failureCaught && stopAttempted && stopFinished);
+  stopCompletedDuringCatch = false;
+  std::thread concurrentStop([] {
+    assert(WaitForSingleObject(failureCaught, 2000) == WAIT_OBJECT_0);
+    SetEvent(stopAttempted);
+    stereo_audit_stop();
+    SetEvent(stopFinished);
+  });
+  failNext = true;
+  const auto failed = stereo_audit_native_classify_begin(info, 0x1f80);
+  assert(!failed.entered && !failNext);
+  concurrentStop.join();
+  assert(!stopCompletedDuringCatch);
+  for (HANDLE event : {failureCaught, stopAttempted, stopFinished})
+    assert(CloseHandle(event));
+  failureCaught = stopAttempted = stopFinished = nullptr;
+  assert(files(failureDirectory).size() == 1);
+  const auto failureData = read(files(failureDirectory)[0]);
+  assert(failureData.find("\"diagnostic_failed\":true,\"attempts\":1") != std::string::npos);
+  stereo_audit_end(failedScope);
+  // Cleanup/reset must not inherit a delayed failure from the previous capture.
+  assert(stereo_audit_configure(context, true, failureDirectory.c_str(), log));
+  stereo_audit_frame(false);
+  stereo_audit_frame(true);
+  const auto resetReads = nativeReads;
+  auto resetUnknown = stereo_audit_begin(StereoAuditPass::focus0);
+  assert(resetUnknown.entered);
+  assert(!stereo_audit_native_classify_begin(info, 0x1f80).entered && nativeReads == resetReads);
+  stereo_audit_end(resetUnknown);
+  auto recoveredScope = stereo_audit_begin(StereoAuditPass::focus0, f.view.data());
+  auto recovered = stereo_audit_native_classify_begin(info, 0x1f80);
+  assert(recovered.entered);
+  stereo_audit_native_classify_end(recovered, 0x20, 0x1f80);
+  stereo_audit_end(recoveredScope);
+  const auto afterEndReads = nativeReads;
+  assert(!stereo_audit_native_classify_begin(info, 0x1f80).entered && nativeReads == afterEndReads);
+  auto missingExpected = stereo_audit_begin(StereoAuditPass::focus0);
+  assert(missingExpected.entered);
+  assert(!stereo_audit_native_classify_begin(info, 0x1f80).entered && nativeReads == afterEndReads);
+  stereo_audit_end(missingExpected);
+  stereo_audit_stop();
+}
+}
+#include "stereo_resource_trace_test.hpp"
 int main(int argc,char** argv){
     using namespace lmuqv;
     std::locale::global(std::locale(std::locale::classic(),new GroupedNumbers));
@@ -35,11 +481,14 @@ int main(int argc,char** argv){
     const auto directory=std::filesystem::path(executable).parent_path()/("stereo-audit-test-"+std::to_string(GetTickCount64()));assert(std::filesystem::create_directory(directory));
     assert(!stereo_audit_prepare(false,directory.c_str(),log));
     assert(!stereo_audit_configure(nullptr,false,directory.c_str(),log)&&!stereo_audit_enabled());
+    auto info=nativeInfo();assert(!stereo_audit_native_pass_begin(info).entered&&nativeReads==0);
+    const StereoNativeClassifyInfo disabledClassify{{nativeFixture.mesh.data(), nativeFixture.view.data(), nullptr, false, 0, &nativeFixture.currentView}, 0x41c8b4, nativeReadable};
+    assert(!stereo_audit_native_classify_begin(disabledClassify, 0x1f80).entered && nativeReads == 0);
     if(!quiet){assert(!stereo_audit_configure(nullptr,true,directory.c_str(),log));assert(stereo_audit_prepare(true,directory.c_str(),log));}
     else assert(!stereo_audit_prepare(true,directory.c_str(),log));
     ID3D11Device* device=nullptr;ID3D11DeviceContext* context=nullptr;D3D_FEATURE_LEVEL level{};
     assert(SUCCEEDED(D3D11CreateDevice(nullptr,hardware?D3D_DRIVER_TYPE_HARDWARE:D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,&level,&context)));
-    if(quiet){assert(!stereo_audit_configure(context,true,directory.c_str(),log));stereo_audit_frame(true);{StereoAuditScope pass(StereoAuditPass::focus0);}stereo_audit_frame_end();stereo_audit_stop();assert(files(directory).empty()&&messages.empty());drop(context);drop(device);std::cout<<"Stereo audit diagnostics-off: no hooks/capture/files\n";return 0;}
+    if(quiet){assert(!stereo_audit_configure(context,true,directory.c_str(),log));stereo_audit_frame(true);{StereoAuditScope pass(StereoAuditPass::focus0);StereoAuditGroup group(31);assert(!stereo_audit_native_pass_begin(info).entered);StereoNativePrepareInfo metadata{nativeFixture.shader.data(),0,true,nativeReadable};assert(!stereo_audit_native_prepare_begin(nativeFixture.mesh.data(),&metadata).entered);}assert(nativeReads==0);stereo_audit_frame_end();stereo_audit_stop();assert(files(directory).empty()&&messages.empty());drop(context);drop(device);std::cout<<"Stereo audit diagnostics-off: no hooks/capture/files/native reads\n";return 0;}
     assert(stereo_audit_enabled()&&contains("early device interception active"));
     auto* code=compile("cbuffer C:register(b2){float4 offset;} float4 main(float2 p:POSITION):SV_Position{return float4(p+offset.xy,0.5,1);}","vs_5_0");
     ID3D11VertexShader* vs=nullptr;assert(SUCCEEDED(device->CreateVertexShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&vs)));
@@ -59,6 +508,7 @@ int main(int argc,char** argv){
     int nativeMeshIdentity=0;
     auto draw=[&]{const auto native=stereo_audit_native_prepare_begin(&nativeMeshIdentity);context->UpdateSubresource(cb,0,nullptr,zero,0,0);stereo_audit_native_prepare_end(native);context->DrawIndexed(3,0,0);};
     draw();assert(files(directory).empty()); // All ordinary draws are forwarded.
+    assert(!stereo_audit_native_pass_begin(info).entered&&nativeReads==0);
     ID3D11Query *query=nullptr,*timer=nullptr;D3D11_QUERY_DESC queryDesc{D3D11_QUERY_OCCLUSION,0};assert(SUCCEEDED(device->CreateQuery(&queryDesc,&query)));
     queryDesc.Query=D3D11_QUERY_TIMESTAMP_DISJOINT;assert(SUCCEEDED(device->CreateQuery(&queryDesc,&timer)));context->Begin(timer);context->Begin(query);
     for(unsigned frame=0;frame<2;++frame){
@@ -104,14 +554,157 @@ int main(int argc,char** argv){
     for(const auto& file:files(directory)){const auto data=read(file);if(data.find("\"reason\":\"hotkey\"")!=std::string::npos){assert(count(data,"\"kind\":")==4096&&data.find("\"dropped\":4")!=std::string::npos);
         assert(data.find("\"shader_definitions_dropped\":0")!=std::string::npos&&data.find("\"unique_programs\":1102")!=std::string::npos&&count(data,"\"sha256\":\"")==2);bounded=true;}}
     assert(bounded);
+    // Native scope observation correlates packets/preparation/draw identities,
+    // but only while the original group-31 call is on the capture owner thread.
+    const auto fixtureBefore=nativeFixture;
+    auto expectedFixture=fixtureBefore;
+    ID3D11Texture2D *depthTexture=nullptr,*secondTexture=nullptr;
+    auto depthDesc=td;depthDesc.Format=DXGI_FORMAT_D32_FLOAT;depthDesc.BindFlags=D3D11_BIND_DEPTH_STENCIL;
+    ID3D11DepthStencilView* dsv=nullptr;ID3D11RenderTargetView* secondRtv=nullptr;
+    assert(SUCCEEDED(device->CreateTexture2D(&depthDesc,nullptr,&depthTexture))&&SUCCEEDED(device->CreateDepthStencilView(depthTexture,nullptr,&dsv)));
+    assert(SUCCEEDED(device->CreateTexture2D(&td,nullptr,&secondTexture))&&SUCCEEDED(device->CreateRenderTargetView(secondTexture,nullptr,&secondRtv)));
+    stereo_audit_frame(false);stereo_audit_frame(true);
+    StereoNativePassToken stale;
+    {
+        StereoAuditScope scope(StereoAuditPass::focus0);
+        {StereoAuditGroup wrongGroup(7);assert(!stereo_audit_native_pass_begin(info).entered&&nativeReads==0);}
+        StereoAuditGroup group(31);auto wrong=info;wrong.callerRva=0;
+        assert(!stereo_audit_native_pass_begin(wrong).entered&&nativeReads==0);
+        std::thread other([&]{assert(!stereo_audit_native_pass_begin(info).entered);StereoNativePrepareInfo metadata{nativeFixture.shader.data(),0,false,nativeReadable};assert(!stereo_audit_native_prepare_begin(nativeFixture.mesh.data(),&metadata).entered);stereo_audit_native_pass_end({true,0,0});});other.join();assert(nativeReads==0);
+        ID3D11RenderTargetView* boundTargets[2]{rtv,secondRtv};context->OMSetRenderTargets(2,boundTargets,dsv);
+        testSuspension=true;stale=stereo_audit_native_pass_begin(info);testSuspension=false;assert(stale.entered&&nativeReads>0&&suspensionProbed);
+        context->OMSetRenderTargets(1,&rtv,nullptr);
+        StereoNativePrepareInfo metadata{nativeFixture.shader.data(),0x80000000,true,nativeReadable};
+        const auto preparation=stereo_audit_native_prepare_begin(nativeFixture.mesh.data(),&metadata);assert(preparation.entered);
+        stereo_audit_native_prepare_end(preparation);context->DrawIndexed(3,0,0);
+        stereo_audit_native_pass_end(stale);
+        stereo_audit_native_pass_end(stale);stereo_audit_native_prepare_end(preparation);
+        // Supplied low-31 flags bypass the shader OR and do not inspect its
+        // callback field when the resulting flags omit bit 0x8000.
+        metadata.suppliedFlags=1;metadata.reset=false;const auto beforeExplicitFlags=nativeReads;
+        const auto explicitFlags=stereo_audit_native_prepare_begin(nativeFixture.mesh.data(),&metadata);
+        stereo_audit_native_prepare_end(explicitFlags);assert(nativeReads==beforeExplicitFlags+3);
+        assert(nativeFixture.sameMemory(fixtureBefore));
+        // Reusing the same array identity is no content-version claim. The
+        // first packet must retain its copied values after these source edits.
+        NativeFixture::put(nativeFixture.geometry,0x168,int32_t(1));NativeFixture::put(nativeFixture.geometry,0xf8,9876.5f);NativeFixture::put(nativeFixture.geometry,0x138,uint64_t(0));
+        NativeFixture::put(expectedFixture.geometry,0x168,int32_t(1));NativeFixture::put(expectedFixture.geometry,0xf8,9876.5f);NativeFixture::put(expectedFixture.geometry,0x138,uint64_t(0));
+        // Preserve the first observed metadata, then fill the global packet
+        // budget with duplicate identities. Exhaustion performs no native reads.
+        repeatedMeshes.fill(reinterpret_cast<uint64_t>(nativeFixture.mesh.data()));
+        const auto begin=reinterpret_cast<uint64_t>(repeatedMeshes.data());
+        NativeFixture::put(nativeFixture.item,0x490,begin);NativeFixture::put(nativeFixture.item,0x498,begin+sizeof(repeatedMeshes));NativeFixture::put(nativeFixture.item,0x4a0,begin+sizeof(repeatedMeshes));
+        // Account for only the three intentional test edits. Deriving the
+        // expectation from the original prevents capture mutations being hidden.
+        NativeFixture::put(expectedFixture.item,0x490,begin);NativeFixture::put(expectedFixture.item,0x498,begin+sizeof(repeatedMeshes));NativeFixture::put(expectedFixture.item,0x4a0,begin+sizeof(repeatedMeshes));
+        for(unsigned i=0;i<8;++i){const auto token=stereo_audit_native_pass_begin(info);assert(token.entered);stereo_audit_native_pass_end(token);}
+        const auto exhaustedReads=nativeReads;
+        for(unsigned i=9;i<128;++i){const auto token=stereo_audit_native_pass_begin(info);assert(token.entered);stereo_audit_native_pass_end(token);}
+        assert(nativeReads==exhaustedReads&&!stereo_audit_native_pass_begin(info).entered&&nativeReads==exhaustedReads);
+        assert(sourceReads==32768*4); // Includes only packets accepted by the global cap.
+    }
+    assert(nativeFixture.sameMemory(expectedFixture));
+    nativeFixture=fixtureBefore;
+    stereo_audit_frame_end();stereo_audit_frame(false);stereo_audit_frame(true);
+    assert(files(directory).size()==3);
+    std::string nativeJson;
+    for(const auto& file:files(directory)){const auto data=read(file);if(data.find("\"native_passes\":{")!=std::string::npos)nativeJson=data;}
+    assert(!nativeJson.empty()&&nativeJson.find("\"native_mesh\":1")!=std::string::npos);
+    assert(nativeJson.find("\"packets\":[{\"mesh\":1")!=std::string::npos);
+    assert(nativeJson.find("\"shader_flags\":32768,\"effective_flags\":2147516416")!=std::string::npos);
+    assert(nativeJson.find("\"shader_flags\":32768,\"effective_flags\":1,")!=std::string::npos);
+    assert(nativeJson.find("\"mesh_callback\":true,\"special_0x400000\":true")!=std::string::npos);
+    assert(nativeJson.find("\"width\":8,\"height\":8,\"format\":28,\"samples\":1")!=std::string::npos);
+    assert(nativeJson.find("\"width\":8,\"height\":8,\"format\":40,\"samples\":1")!=std::string::npos);
+    assert(count(nativeJson,"\"mesh_index\":")==32768&&count(nativeJson,"\"targets_begin\":")==128&&nativeJson.find("\"scopes_dropped\":1")!=std::string::npos);
+    assert(nativeJson.find("\"begin_sequence\":1,\"end_sequence\":5")!=std::string::npos&&nativeJson.find("\"sequence\":4")!=std::string::npos);
+    assert(nativeJson.find("does not preserve contents or native lifetimes")!=std::string::npos);
+    assert(nativeJson.find("\"source_bytes_per_packet_bound\":24")!=std::string::npos&&nativeJson.find("\"total_packet_limit\":32768")!=std::string::npos);
+    const auto arrayStart=nativeJson.find("\"source_containment\":{\"complete\":true,\"reason\":\"complete\",\"bytes_read\":24,\"values\":{\"array\":");
+    assert(arrayStart!=std::string::npos);
+    const auto idStart=nativeJson.find("\"array\":",arrayStart)+8;
+    const auto arrayId=std::stoul(nativeJson.substr(idStart));assert(arrayId>0&&arrayId<=65536);
+    const auto arrayField="\"array\":"+std::to_string(arrayId);
+    assert(nativeJson.find(arrayField+",\"count\":3,\"index\":0,\"sort_distance\":0.12345679104328156,\"lazy_state_present\":true")!=std::string::npos);
+    assert(count(nativeJson,(arrayField+",\"count\":1,\"index\":0,\"sort_distance\":9876.5,\"lazy_state_present\":false").c_str())==32767);
+    assert(nativeJson.find(std::to_string(reinterpret_cast<uintptr_t>(nativeFixture.mesh.data())))==std::string::npos&&nativeJson.find(std::to_string(reinterpret_cast<uintptr_t>(nativeFixture.geometry.data())))==std::string::npos);
+    drop(dsv);drop(depthTexture);drop(secondRtv);drop(secondTexture);
+    // One native main-view observation per eye, copied before consumers. A
+    // source mutation after capture must not alter the serialized left camera.
+    stereo_audit_frame(false);stereo_audit_frame(true);
+    NativeFixture::put(nativeFixture.camera,0x3f0,0.12345679f);
+    auto captureCameraPair=[&]{for(unsigned eye=0;eye<2;++eye){
+        StereoAuditScope scope{StereoAuditPass(eye)};StereoAuditGroup group(31);
+        NativeFixture::put(nativeFixture.view,0x5cc,int32_t(eye));
+        lmuqv::Matrix current{1,0,0,0,0,1,0,0,0,0,1,0,eye?0.0625f:0,0,0,1};
+        NativeFixture::put(nativeFixture.view,0x1dc,current);NativeFixture::put(nativeFixture.view,0x3a0,current);
+        const auto token=stereo_audit_native_pass_begin(info);assert(token.entered);draw();stereo_audit_native_pass_end(token);
+    }};
+    captureCameraPair();
+    NativeFixture::put(nativeFixture.camera,0x70,float(1234));
+    stereo_audit_frame_end();
+    // A second frame's non-finite input must serialize no invalid number and
+    // cannot reuse the preceding frame's right camera.
+    {StereoAuditScope scope{StereoAuditPass::outer0};StereoAuditGroup group(31);
+        NativeFixture::put(nativeFixture.camera,0x70,std::numeric_limits<float>::infinity());
+        NativeFixture::put(nativeFixture.geometry,0x168,int32_t(0));
+        const auto token=stereo_audit_native_pass_begin(info);assert(token.entered);draw();stereo_audit_native_pass_end(token);}
+    {StereoAuditScope scope{StereoAuditPass::outer0};StereoAuditGroup group(31);
+        NativeFixture::put(nativeFixture.geometry,0x168,int32_t(3));
+        unreadableSourceOffset=0xf8;auto token=stereo_audit_native_pass_begin(info);unreadableSourceOffset=0;assert(token.entered);draw();stereo_audit_native_pass_end(token);
+        throwSourceOffset=0x138;token=stereo_audit_native_pass_begin(info);throwSourceOffset=0;assert(token.entered);draw();stereo_audit_native_pass_end(token);}
+    stereo_audit_frame_end();
+    std::string cameraJson;for(const auto& file:files(directory)){const auto data=read(file);if(data.find("\"camera_comparisons\":[{\"generation\"")!=std::string::npos&&data.find("\"available\":true")!=std::string::npos)cameraJson=data;}
+    assert(!cameraJson.empty()&&cameraJson.find("\"relative_eye\":[[1,0,0,0,0,1,0,0,0,0,1,0,-0.03125")!=std::string::npos);
+    assert(cameraJson.find("\"current_error\":0,\"projection_error\":0,\"far_projection_error\":0,\"derived_error\":0")!=std::string::npos);
+    assert(cameraJson.find("\"scheduling_eligible\":false")!=std::string::npos&&cameraJson.find("\"relative_eye\":[[1234")==std::string::npos);
+    assert(cameraJson.find("0.12345679104328156")!=std::string::npos&&cameraJson.find("non-finite camera numbers")!=std::string::npos);
+    assert(cameraJson.find("\"values\":null")!=std::string::npos&&cameraJson.find("\"current_error\":null")!=std::string::npos);
+    // Invalid geometry-source metadata does not invalidate ordinary packets.
+    assert(cameraJson.find("\"source_containment\":{\"complete\":false,\"reason\":\"invalid source record count\",\"bytes_read\":12,\"values\":null}")!=std::string::npos);
+    assert(cameraJson.find("\"source_containment\":{\"complete\":false,\"reason\":\"unreadable native span\",\"bytes_read\":12,\"values\":null}")!=std::string::npos);
+    assert(cameraJson.find("\"source_containment\":{\"complete\":false,\"reason\":\"diagnostic allocation or reader exception\",\"bytes_read\":16,\"values\":null}")!=std::string::npos);
+    assert(cameraJson.find("\"aborted\":false")!=std::string::npos&&count(cameraJson,"\"packets\":[{\"mesh\":1")==5&&count(cameraJson,"\"complete\":true,\"reason\":\"complete\",\"reusable\":false")==5);
+    nativeFixture=fixtureBefore;
+    // A captured valid pair cannot establish uniqueness if the scope cap hides
+    // a later duplicate, even when other retained scopes use a different kind.
+    stereo_audit_frame(false);stereo_audit_frame(true);captureCameraPair();
+    {StereoAuditScope scope{StereoAuditPass::focus0};StereoAuditGroup group(31);
+        for(unsigned i=0;i<126;++i){const auto token=stereo_audit_native_pass_begin(info);assert(token.entered);stereo_audit_native_pass_end(token);}
+        assert(!stereo_audit_native_pass_begin(info).entered);}
+    stereo_audit_frame_end();stereo_audit_frame(false);stereo_audit_frame(true);
+    std::string truncatedJson;for(const auto& file:files(directory)){const auto data=read(file);if(data.find("\"scopes_copied\":128")!=std::string::npos&&data.find("\"packets_copied\":128")!=std::string::npos)truncatedJson=data;}
+    assert(truncatedJson.find("capture incomplete")!=std::string::npos&&truncatedJson.find("\"available\":true")==std::string::npos);
+    assert(truncatedJson.find("\"current_error\":null")!=std::string::npos);
     // A normal close on another thread saves stable buffered records, without
     // D3D context calls there; hook/resource cleanup waits for the open scope.
     stereo_audit_frame(false);stereo_audit_frame(true);
-    {StereoAuditScope scope(StereoAuditPass::focus0);draw();std::thread close([]{stereo_audit_stop();});close.join();assert(!stereo_audit_enabled());}
-    assert(files(directory).size()==3&&contains("cleanup deferred"));draw();
+    captureCameraPair();
+    {StereoAuditScope scope(StereoAuditPass::focus0);StereoAuditGroup group(31);
+        // A stale token must not close a scope in this generation.
+        auto invalid=info;invalid.readable=nullptr;const auto invalidToken=stereo_audit_native_pass_begin(invalid);assert(invalidToken.entered);stereo_audit_native_pass_end(stale);
+        stereo_audit_native_pass_end(invalidToken);
+        StereoNativePrepareInfo invalidMetadata{nativeFixture.shader.data(),0,false,nullptr};
+        auto preparation=stereo_audit_native_prepare_begin(nativeFixture.mesh.data(),&invalidMetadata);stereo_audit_native_prepare_end(preparation);
+        throwNativeReader=true;auto aborted=stereo_audit_native_pass_begin(info);throwNativeReader=false;assert(aborted.entered);stereo_audit_native_pass_end(aborted);
+        const auto afterAbort=nativeReads;assert(!stereo_audit_native_pass_begin(info).entered&&nativeReads==afterAbort);
+        draw();std::thread close([]{stereo_audit_stop();});close.join();assert(!stereo_audit_enabled());}
+    assert(files(directory).size()==6&&contains("cleanup deferred"));draw();
+    std::string invalidJson;for(const auto& file:files(directory)){const auto data=read(file);if(data.find("\"reason\":\"session_end\"")!=std::string::npos)invalidJson=data;}
+    assert(invalidJson.find("\"aborted\":true")!=std::string::npos&&invalidJson.find("missing readable callback")!=std::string::npos);
+    assert(invalidJson.find("\"begin_sequence\":7,\"end_sequence\":8")!=std::string::npos&&invalidJson.find("\"shader_flags\":null")!=std::string::npos);
+    assert(invalidJson.find("\"camera\":{\"complete\":false")!=std::string::npos&&invalidJson.find("\"current_error\":null")!=std::string::npos);
+    assert(invalidJson.find("capture incomplete")!=std::string::npos&&invalidJson.find("\"available\":true")==std::string::npos);
     // Confirm capture hooks never changed the resulting image.
     auto readDesc=td;readDesc.BindFlags=0;readDesc.Usage=D3D11_USAGE_STAGING;readDesc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;ID3D11Texture2D* staging=nullptr;assert(SUCCEEDED(device->CreateTexture2D(&readDesc,nullptr,&staging)));
     context->CopyResource(staging,texture);D3D11_MAPPED_SUBRESOURCE map{};assert(SUCCEEDED(context->Map(staging,0,D3D11_MAP_READ,0,&map)));uint32_t pixel=0;std::memcpy(&pixel,static_cast<const char*>(map.pData)+4*map.RowPitch+4*4,4);assert(pixel==0xff00ff00u);context->Unmap(staging,0);drop(staging);
-    stereo_audit_stop();context->ClearState();for(auto*& shader:extra)drop(shader);drop(duplicate);drop(cb);drop(ib);drop(vb);drop(rtv);drop(texture);drop(layout);drop(ps);drop(vs);drop(context);drop(device);
+    stereo_audit_stop();
+    request_file_test(directory);
+    // Keep the resource trace fixture's original absent-geometry setup and
+    // deterministic resource IDs. Source containment is exercised above.
+    NativeFixture::put(nativeFixture.mesh,0x80,uint64_t(0));
+    resource_trace_test(directory);
+    classifier_capture_test(directory, context);
+    context->ClearState();for(auto*& shader:extra)drop(shader);drop(duplicate);drop(cb);drop(ib);drop(vb);drop(rtv);drop(texture);drop(layout);drop(ps);drop(vs);drop(context);drop(device);
     std::cout<<"Stereo draw audit "<<(hardware?"hardware":"WARP")<<" passed: early device capture, preserved layouts, >1024 programs, deduplicated/used-only definitions, opt-in shader export, transparent draws, reflection/SHA, CB updates, frame limits, held key, file saving, pixel readback and cross-thread deferred cleanup\n";
 }

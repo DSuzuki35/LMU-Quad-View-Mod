@@ -48,6 +48,13 @@ using NativePrepareFn=int(*)(void*,void*,void*,std::uint32_t,bool);
 NativePrepareFn nativePrepareOriginal{};bool nativePrepareHooked=false;
 constexpr std::uintptr_t nativePrepareRva=0x5629e0;
 constexpr std::array<std::uint8_t,20> nativePrepareAnchor{0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x30};
+using NativeClassifyFn = uint32_t(__fastcall *)(void *, void *, const float *, bool, float);
+NativeClassifyFn nativeClassifyOriginal{};
+bool nativeClassifyHooked = false;
+constexpr uintptr_t nativeClassifyRva = 0x5306a0;
+constexpr std::array<uint8_t, 24> nativeClassifyAnchor{
+    0x48, 0x8b, 0xc4, 0x48, 0x89, 0x58, 0x08, 0x48, 0x89, 0x68, 0x10, 0x48,
+    0x89, 0x70, 0x18, 0x57, 0x41, 0x56, 0x41, 0x57, 0x48, 0x83, 0xec, 0x60};
 using NativeUploadFn=void(*)(void*,void*,ID3D11DeviceContext*,void*);
 NativeUploadFn nativeUploadOriginal{};std::atomic<bool> nativeUploadHooked{false},nativeUploadOptIn{false},nativeUploadOuterOptIn{false};
 constexpr std::uintptr_t nativeUploadRva=0x5cac50;
@@ -502,6 +509,17 @@ void mainPassHook(void* renderer,void* scene,void* view,std::uint32_t flags,bool
 void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
                    std::uint32_t flags,bool lastMainPass,void* optionalMaterial) {
     StereoAuditGroup auditGroup(group);
+    const auto caller = reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
+    const auto callerRva = caller >= base ? caller - base : 0;
+    // Capture the ordered opaque inputs before native last-pass cleanup releases
+    // their lists. This observes scalars only; it does not retain or skip a draw.
+    const StereoNativePassInfo nativePassInfo{
+        scene, view, callerRva <= UINT32_MAX ? uint32_t(callerRva) : 0,
+        flags, lastMainPass, readable,
+        reinterpret_cast<const void*>(base+0x1B1BE30),
+        reinterpret_cast<const void*>(base+0x1A51400),
+        reinterpret_cast<const void*>(base+0x1A51370)};
+    const auto nativePass = stereo_audit_native_pass_begin(nativePassInfo);
     const auto savedUploadCache=selectedUploadCache;const auto savedUploadContext=selectedUploadContext;
     std::unique_lock<std::recursive_mutex> uploadLock(nativeUploadMutex,std::defer_lock);
     bool uploadScope=false;
@@ -548,8 +566,6 @@ void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
             }
         }
     }
-    const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
-    const auto callerRva=caller>=base?caller-base:0;
     bool targetMatches=true;
     if(stereoVrsMode&&outerVrsContext){
         UINT count=1;D3D11_VIEWPORT viewport{};outerVrsContext->RSGetViewports(&count,&viewport);
@@ -573,6 +589,7 @@ void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
     const auto generation=vrsInterruptionGeneration;
     ++outerSortDepth;
     worldSortOriginal(renderer,scene,view,group,flags,lastMainPass,optionalMaterial);
+    stereo_audit_native_pass_end(nativePass);
     if(uploadScope){nativeUploadBatch.end();nativeUploadReuse.end();}selectedUploadCache=savedUploadCache;selectedUploadContext=savedUploadContext;
     --outerSortDepth;
     if(began && generation==vrsInterruptionGeneration) {
@@ -580,14 +597,47 @@ void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
         else failWorldVrs("end_failure; feature disabled; scope not applied; restoration not confirmed");
     }
 }
+uint32_t __fastcall nativeClassifyHook(void *candidate, void *view, const float *position,
+                                       bool skipDistanceBounds, float bias) {
+  const auto caller = reinterpret_cast<uintptr_t>(LMU_CALLER_ADDRESS);
+  // Entry MXCSR is saved before begin; post-call MXCSR and EAX32 are
+  // captured before any end bookkeeping. Original arguments stay untouched.
+  return invoke_native_stereo_classify(
+      [&](uint32_t entry) {
+        const StereoNativeClassifyInfo info{
+            {candidate, view, position, skipDistanceBounds, bias, address<void>(0x1a51370)},
+            caller == base + 0x41c8b4 ? 0x41c8b4u : 0u,
+            readable};
+        return stereo_audit_native_classify_begin(info, entry);
+      },
+      [&] { return nativeClassifyOriginal(candidate, view, position, skipDistanceBounds, bias); },
+      [](const StereoNativeClassifyToken &token, uint32_t returned, uint32_t post) {
+        stereo_audit_native_classify_end(token, returned, post);
+      });
+}
 int nativePrepareHook(void* shader,void* view,void* mesh,std::uint32_t flags,bool reset){
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     // Two verified world-sort submission sites. This hook observes the complete
     // original preparation and forwards its exact result; no setup is skipped.
     const bool known=caller==base+0x51f67e||caller==base+0x51f5c4;
-    const auto token=known?stereo_audit_native_prepare_begin(mesh):StereoNativePrepareToken{};
-    const int result=nativePrepareOriginal(shader,view,mesh,flags,reset);
-    stereo_audit_native_prepare_end(token);return result;
+    const StereoNativePrepareInfo preparation{shader, flags, reset, readable};
+    struct Tokens {StereoNativePrepareToken preparation;StereoNativeTransformToken transform;};
+    return invoke_native_stereo_transform(
+        [&](unsigned entry){
+            Tokens tokens;
+            if(known){
+                const StereoNativeTransformInfo info{
+                    {shader,view,mesh,address<void>(0x1b13630),flags,reset},readable};
+                tokens.transform=stereo_audit_native_transform_begin(info,entry);
+                tokens.preparation=stereo_audit_native_prepare_begin(mesh,&preparation);
+            }
+            return tokens;
+        },
+        [&]{return nativePrepareOriginal(shader,view,mesh,flags,reset);},
+        [](const Tokens& tokens,unsigned post){
+            stereo_audit_native_transform_end(tokens.transform,post);
+            stereo_audit_native_prepare_end(tokens.preparation);
+        });
 }
 void nativeUploadHook(void* cache,void* device,ID3D11DeviceContext* context,void* bindings){
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
@@ -732,6 +782,7 @@ void renderHook(void* unknown, bool laterPass) {
     suspendUnexpectedVrs();
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     ID3D11DeviceContext* profileContext=nullptr;
+    ViewSnapshot* auditExpectedView=nullptr;
     unsigned profileEye=0;
     if((renderProfile.enabled()||stereo_audit_enabled())&&!insideHook&&installed.load()&&caller==base+0xcd1763&&(xr_quad_active()||xr_vrs_active())){
         auto* before=*address<ViewSnapshot*>(0x1a51370);
@@ -741,6 +792,7 @@ void renderHook(void* unknown, bool laterPass) {
             auto* context=*reinterpret_cast<ID3D11DeviceContext**>(renderer+0x76f68);
             if(readable(context,sizeof(void*))){
                 profileContext=context;profileEye=unsigned(before->eye_index);
+                auditExpectedView=before;
                 if(profileEye==0){
                     const bool key=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F9)&0x8000);
                     renderProfile.frame(context,key);
@@ -802,7 +854,7 @@ void renderHook(void* unknown, bool laterPass) {
     }
     const bool profileOuterGpu=profileContext&&renderProfile.gpu_start(profileContext,profileEye);
     ProfileScope outerProfile(profile_eye(ProfileSlot::outer0,profileEye),profileContext!=nullptr);
-    StereoAuditScope outerAudit(profileContext?stereo_audit_eye(false,profileEye):StereoAuditPass::none);
+    StereoAuditScope outerAudit(profileContext?stereo_audit_eye(false,profileEye):StereoAuditPass::none,auditExpectedView);
     renderOriginal(unknown,laterPass);
     if(stereoVrsMode&&!insideHook&&caller==base+0xcd1763){
         auto* renderedView=*address<ViewSnapshot*>(0x1a51370);
@@ -885,7 +937,7 @@ void renderHook(void* unknown, bool laterPass) {
     const bool focusCounted=measureFocus&&benchmark&&pipelineStats.start(timingContext,eye+2);
     const bool profileFocusGpu=profileContext&&renderProfile.gpu_start(profileContext,eye+2);
     ProfileScope focusSceneProfile(profile_eye(ProfileSlot::focus_scene0,eye));
-    StereoAuditScope focusAudit(stereo_audit_eye(true,eye));
+    StereoAuditScope focusAudit(stereo_audit_eye(true,eye),view);
     reinterpret_cast<SceneFn>(base+0x5de200)(scene,false,true);
     focusAudit.end();
     focusSceneProfile.end();
@@ -1089,6 +1141,11 @@ bool hookTargetPlausible(std::uintptr_t rva) {
     }
     return knownLeafTarget(rva);
 }
+bool nativeClassifyTargetVerified() {
+    const std::array<uint8_t,9> call{0xe8,0xec,0x3d,0x11,0x00,0x0f,0xba,0xe0,0x11};
+    return matches(nativeClassifyRva,nativeClassifyAnchor)&&
+        hookTargetPlausible(nativeClassifyRva)&&matches(0x41c8af,call);
+}
 }
 
 unsigned engine_game_eye(XrSwapchain chain){
@@ -1258,7 +1315,24 @@ bool engine_start(ID3D11DeviceContext* context) {
             else MH_RemoveHook(address<void>(nativePrepareRva));
         }
     }
-    if(auditRequested&&!nativePrepareHooked)log_line("stereo_audit native preparation hook unavailable; paired private proof requires this identity source");
+    if (auditRequested && !nativePrepareHooked)
+      log_line("stereo_audit native preparation hook unavailable; paired private proof requires "
+               "this identity source");
+    if (stereo_audit_enabled() && nativeClassifyTargetVerified()) {
+      if (MH_CreateHook(address<void>(nativeClassifyRva),
+                        reinterpret_cast<void *>(&nativeClassifyHook),
+                        reinterpret_cast<void **>(&nativeClassifyOriginal)) == MH_OK) {
+        if (MH_EnableHook(address<void>(nativeClassifyRva)) == MH_OK) {
+          nativeClassifyHooked = true;
+          log_line("stereo_audit original classifier diagnostic hook enabled; copied numeric "
+                   "export only; native invocation retained");
+        } else
+          MH_RemoveHook(address<void>(nativeClassifyRva));
+      }
+    }
+    stereo_audit_native_classify_hook_available(nativeClassifyHooked);
+    if (auditRequested && !nativeClassifyHooked)
+      log_line("stereo_audit native classifier diagnostic hook unavailable");
     const std::array<std::uint8_t,5> uploadCall{0xe8,0x1c,0x4c,0x01,0x00};
     const std::array<std::uint8_t,15> uploadBindAnchor{0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x20,0x57,0x48,0x83,0xec,0x20};
     const std::array<std::uint8_t,6> lightUploadSize{0x41,0xb8,0x80,0x0a,0x00,0x00};
@@ -1291,6 +1365,12 @@ bool engine_start(ID3D11DeviceContext* context) {
 }
 void engine_stop() {
     stereo_audit_stop();
+    if (nativeClassifyHooked) {
+      MH_DisableHook(address<void>(nativeClassifyRva));
+      MH_RemoveHook(address<void>(nativeClassifyRva));
+      nativeClassifyHooked = false;
+    }
+    stereo_audit_native_classify_hook_available(false);
     if(nativePrepareHooked){MH_DisableHook(address<void>(nativePrepareRva));MH_RemoveHook(address<void>(nativePrepareRva));nativePrepareHooked=false;}
     {std::lock_guard<std::recursive_mutex> uploadLock(nativeUploadMutex);
     const bool uploadWasEnabled=nativeUploadOptIn.exchange(false),batchWasEnabled=nativeUploadBatchOptIn.exchange(false);

@@ -41,11 +41,11 @@ try {
     }
     & gcc -O2 -c vendor/minhook-1.3.4/src/hde/hde64.c -o build/mh_hde64.o
     if ($LASTEXITCODE -ne 0) { throw 'MinHook decoder compilation failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/engine_hooks_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/engine_hooks_test.exe
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/engine_hooks_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/engine_hooks_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Engine hook tests compilation failed' }
     & .\build\engine_hooks_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Engine hook tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/native_outer_fallback_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/native_outer_fallback_test.exe
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/native_outer_fallback_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/native_outer_fallback_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native fallback tests compilation failed' }
     & .\build\native_outer_fallback_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native fallback tests failed' }
@@ -53,13 +53,35 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'GPU timing tests compilation failed' }
     & .\build\gpu_timing_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'GPU timing tests failed' }
-    foreach ($test in @('pipeline_stats','benchmark_control','render_profile','swapchain_sampling','stereo_audit_abi')) {
+    foreach ($test in @('pipeline_stats','benchmark_control','render_profile','swapchain_sampling','stereo_audit_abi','stereo_audit_trigger','native_stereo_packets','native_stereo_camera','native_stereo_source')) {
         & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" -ld3d11 -o "build/${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests compilation failed" }
         & ".\build\${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests failed" }
     }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/stereo_audit_test.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/stereo_audit_test.exe
+    foreach ($optimization in @('O0','O2')) {
+        & g++ -std=c++17 "-$optimization" -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static tests/native_stereo_transform_test.cpp -o "build/native_stereo_transform_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native transform $optimization compilation failed" }
+        & ".\build\native_stereo_transform_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native transform $optimization tests failed" }
+        & g++ -std=c++17 "-$optimization" -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static tests/native_stereo_owner_plan_test.cpp -o "build/native_stereo_owner_plan_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native owner plan $optimization compilation failed" }
+        & ".\build\native_stereo_owner_plan_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native owner plan $optimization tests failed" }
+    }
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static tests/native_stereo_classify_test.cpp -o build/native_stereo_classify_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native classifier model compilation failed' }
+    & .\build\native_stereo_classify_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native classifier model tests failed' }
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static tests/native_stereo_classify_capture_test.cpp -o build/native_stereo_classify_capture_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native classifier capture compilation failed' }
+    & .\build\native_stereo_classify_capture_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native classifier capture tests failed' }
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/native_stereo_transform_audit_test.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/native_stereo_transform_audit_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native transform audit compilation failed' }
+    & .\build\native_stereo_transform_audit_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native transform audit tests failed' }
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/stereo_audit_test.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/stereo_audit_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Stereo audit tests compilation failed' }
     & .\build\stereo_audit_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Stereo audit tests failed' }
@@ -93,7 +115,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Frame submission tests failed' }
     & .\build\frame_submission_test.exe --profile
     if ($LASTEXITCODE -ne 0) { throw 'Frame submission profiling tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/benchmark_engine_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/benchmark_engine_test.exe
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/benchmark_engine_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/benchmark_engine_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Benchmark engine tests compilation failed' }
     & .\build\benchmark_engine_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Benchmark engine tests failed' }
@@ -158,7 +180,7 @@ try {
         & .\build\xr_layer_tests.exe @testArgs
         if($LASTEXITCODE -ne 0){throw 'Rendered crop XR tests failed'}
     }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -shared -I ../prototype/third_party xr_layer.cpp engine_bridge.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o build/version.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o $LayerOutput
+    & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -shared -I ../prototype/third_party xr_layer.cpp engine_bridge.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o build/version.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o $LayerOutput
     if ($LASTEXITCODE -ne 0) { throw 'Layer compilation failed' }
     Get-FileHash -LiteralPath $LayerOutput -Algorithm SHA256 | Select-Object Hash
 } finally { Pop-Location }

@@ -1,5 +1,9 @@
 # LMU Quad View Mod
 
+**SPS integration diagnostic:** this branch combines the v0.3.3 fixes with newer
+SPS research. It retains native rendering and has no measured SPS speedup.
+See [the validation results and next live capture](docs/SPS-INTEGRATION.md).
+
 A free Windows x64 / D3D11 mod that adds two outer and two focus views to
 **Le Mans Ultimate** through OpenXR. Use a native quad-view runtime, or install
 Quad-Views-Foveated (QVFR) or VectorXR separately to provide quad views on a
