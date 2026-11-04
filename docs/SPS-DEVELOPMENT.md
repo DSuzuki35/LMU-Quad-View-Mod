@@ -722,5 +722,21 @@ removal. CLI configuration/diagnostics-off tests and four analyzer tests passed.
 Compiled MSVC inspection confirms the transform hook's unrecognized-caller path
 still changes only RSP/RBP after the original call before returning.
 
-No live CPU cost capture, owned producer or performance gain is established by
-this change. See [run instructions and decision gate](SPS-CPU-PROFILING.md).
+At implementation time, no live CPU cost capture, owned producer or performance
+gain was established. See [run instructions and decision gate](SPS-CPU-PROFILING.md).
+
+## Live CPU profile: coverage passes, attribution remains open (2026-11-04)
+
+The `af50e53` package completed one 120-second VectorXR run. All four eyes supplied
+317 coarse and 317 detailed opaque-group samples, with no drops/invalid ranges or
+failed cycle queries. Coarse focus means were 0.424316 and 0.416565 ms/group.
+Detailed focus means rose to 0.785400 and 0.780540 ms/group. The 85–87% difference
+is too large to use detailed categories as reliable savings forecasts; phases use
+different frames and do not provide an automatic exact overhead correction.
+
+Detailed Draw API means were only 0.013590/0.013498 ms per focus group. Setup,
+uploads and surrounding state work warrant investigation before assuming a large
+benefit from fewer Draw calls. The native work-removal and measured-performance
+gates remain open. The analyzer now separates large-control-gap warnings from
+capture coverage, with a regression for complete coverage and excessive timing
+perturbation. See the [results and next measurement gate](SPS-CPU-PROFILE-RESULTS-20261104.md).

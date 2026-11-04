@@ -61,6 +61,13 @@ Direct CLI alternative:
   cost is still real; inspect the coarse control before drawing conclusions.
 - Both phases report coverage/capacity. Missing focus slots, invalid/dropped
   ranges, insufficient samples or large control differences require investigation.
+  The analyzer reports `attribution_warnings` and `requires_timing_followup` for
+  an absolute coarse/detailed difference of at least 10%. This is a diagnostic
+  policy, not statistical confidence or permission to subtract estimated overhead.
+
+The [first live capture](SPS-CPU-PROFILE-RESULTS-20261104.md) passed coverage and
+accounting checks, but its detailed groups took about 80–88% longer than coarse
+controls. Reliable detailed attribution remains open; no saving is established.
 
 The native source producer, opposite focus camera, target/consumer integration
 and remaining preparation effects remain open. This profile estimates where to

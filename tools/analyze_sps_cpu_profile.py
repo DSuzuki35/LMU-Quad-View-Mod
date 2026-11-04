@@ -5,6 +5,9 @@ import math
 from pathlib import Path
 import re
 
+# Diagnostic follow-up policy, not a statistical confidence or overhead estimate.
+CONTROL_GAP_WARNING_PERCENT = 10
+
 
 def fields(line):
     result = {}
@@ -43,7 +46,7 @@ def summarize(text):
         summary = capture["summary"]
         if summary is None:
             raise ValueError("Missing capture summary")
-        warnings, comparisons = [], []
+        warnings, attribution_warnings, comparisons = [], [], []
         for name in ("invalid_ranges", "cycle_failures"):
             if summary[name]:
                 warnings.append(f"{name}={summary[name]}")
@@ -64,14 +67,26 @@ def summarize(text):
                 raise ValueError(f"{slot}: invalid nested accounting")
             for value in work.values():
                 value["calls_per_recorded_group"] = value["calls"] / detailed["samples"]
+            gap = (
+                100 * (detailed["wall_mean_ms"] / coarse["wall_mean_ms"] - 1)
+                if coarse["wall_mean_ms"] > 0 else None
+            )
+            if gap is None or abs(gap) >= CONTROL_GAP_WARNING_PERCENT:
+                attribution_warnings.append(
+                    f"{slot}: large/undefined coarse-detailed wall difference; "
+                    "individual timings need lower-overhead follow-up; "
+                    "different frames prevent automatic overhead subtraction"
+                )
             comparisons.append({
                 "slot": slot, "coarse": coarse, "detailed": detailed,
-                "detailed_minus_coarse_wall_percent": (
-                    100 * (detailed["wall_mean_ms"] / coarse["wall_mean_ms"] - 1)
-                    if coarse["wall_mean_ms"] > 0 else None
-                ), "work": work,
+                "detailed_minus_coarse_wall_percent": gap, "work": work,
             })
-        results.append({"summary": summary, "slots": comparisons, "coverage_warnings": warnings})
+        results.append({
+            "summary": summary, "slots": comparisons, "coverage_warnings": warnings,
+            "attribution_warnings": attribution_warnings,
+            "requires_timing_followup": bool(warnings or attribution_warnings),
+            "control_gap_warning_threshold_percent": CONTROL_GAP_WARNING_PERCENT,
+        })
     return {
         "rendering": "legacy", "native_work_removed": False, "speedup_established": False,
         "unit": "wall milliseconds per recorded group invocation; not per frame",

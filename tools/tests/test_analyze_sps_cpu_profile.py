@@ -25,6 +25,8 @@ class AnalysisTest(unittest.TestCase):
         self.assertFalse(result["native_work_removed"])
         report = result["captures"][0]
         self.assertEqual(report["coverage_warnings"], [])
+        self.assertEqual(report["attribution_warnings"], [])
+        self.assertFalse(report["requires_timing_followup"])
         self.assertEqual(report["slots"][2]["work"]["draw"]["calls_per_recorded_group"], 2)
         self.assertEqual(report["slots"][2]["detailed_minus_coarse_wall_percent"], 0)
 
@@ -41,6 +43,19 @@ class AnalysisTest(unittest.TestCase):
 
     def test_multiple_captures(self):
         self.assertEqual(len(profile.summarize(capture() + "\n" + capture())["captures"]), 2)
+
+    def test_large_control_gap_is_not_a_clean_timing_result(self):
+        lines = [
+            line.replace("wall_mean_ms=1.0", "wall_mean_ms=1.8").replace(
+                "remainder_mean_ms=0.3", "remainder_mean_ms=1.1")
+            if "phase=detailed" in line else line
+            for line in capture().splitlines()
+        ]
+        report = profile.summarize("\n".join(lines))["captures"][0]
+        self.assertEqual(report["coverage_warnings"], [])
+        self.assertEqual(len(report["attribution_warnings"]), 4)
+        self.assertTrue(report["requires_timing_followup"])
+        self.assertAlmostEqual(report["slots"][0]["detailed_minus_coarse_wall_percent"], 80)
 
 
 if __name__ == "__main__":

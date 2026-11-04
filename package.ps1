@@ -38,6 +38,7 @@ $files = @{
     'mod/launch.ps1' = 'launch.ps1'
     'mod/portable-launch.ps1' = 'portable-launch.ps1'
     'docs/SPS-CPU-PROFILING.md' = 'docs/SPS-CPU-PROFILING.md'
+    'docs/SPS-CPU-PROFILE-RESULTS-20261104.md' = 'docs/SPS-CPU-PROFILE-RESULTS-20261104.md'
     'tools/start-frame-capture.ps1' = 'tools/start-frame-capture.ps1'
     'tools/start-frame-capture.cmd' = 'tools/start-frame-capture.cmd'
     'tools/check-hardware-stereo.cmd' = 'tools/check-hardware-stereo.cmd'
