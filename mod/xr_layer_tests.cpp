@@ -766,6 +766,24 @@ int main(int argc,char** argv) {
         assert(reinterpret_cast<PFN_xrReleaseSwapchainImage>(load("xrReleaseSwapchainImage"))(appChain,&ri)==XR_SUCCESS);
     }
     finish();assert(frameCalls=="WBLE"&&submittedViews==4&&acquireCount==successfulReleases);
+    if(runtimeSettings){
+        // Pimax report: the app delays Begin until after rendering/releasing.
+        // Exercise real D3D outer copies; the app Begin must not erase them.
+        frameCalls.clear();XrFrameState fs{XR_TYPE_FRAME_STATE};
+        assert(reinterpret_cast<PFN_xrWaitFrame>(load("xrWaitFrame"))(session,nullptr,&fs)==XR_SUCCESS);
+        li.displayTime=fs.predictedDisplayTime;
+        assert(locateViews(session,&li,&state,2,&count,located.views)==XR_SUCCESS);
+        assert(frameCalls=="WL");
+        XrFovf full[2]{};assert(lmuqv::xr_frame_full_outer_fov(full));
+        XrView rendered[4]{};assert(lmuqv::xr_frame_views(rendered));
+        for(unsigned eye=0;eye<2;++eye){
+            pv[eye].pose=located.views[eye].pose;pv[eye].fov=located.views[eye].fov;
+            assert(lmuqv::xr_copy_outer(eye,source));assertRenderPixels(eye);
+        }
+        assert(frameCalls=="WLB");
+        assert(reinterpret_cast<PFN_xrBeginFrame>(load("xrBeginFrame"))(session,nullptr)==XR_SUCCESS);
+        finish();assert(frameCalls=="WLBE"&&submittedViews==4&&acquireCount==successfulReleases);
+    }
     for(unsigned frame=0;frame<25;++frame){begin();finish();}
     assert(currentLog().find("pixel_stats frame=")==std::string::npos);
     // A timed-out app wait must never trigger readback or permit release.

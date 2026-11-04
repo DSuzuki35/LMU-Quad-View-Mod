@@ -118,6 +118,8 @@ struct State {
     unsigned blurEncodingWarnings=0;
     bool debugDrawn[4]{};
     bool waitPending=false, waitShouldRender=false;
+    bool earlyBeginPending=false; // Runtime begin performed for LMU before its late app call.
+    XrResult earlyBeginResult=XR_SUCCESS;
     XrTime pendingTime{};
     XrDuration pendingPeriod{},framePeriod{};
     bool engineGpuTimingArmed=false;
@@ -208,6 +210,7 @@ bool trackAppImages(){return s.pixelEnabled||s.debugFocus||s.focusOwnership;}
 bool heldFocusImages(){for(const auto& pair:s.appChains)if(pair.second.focusLease)return true;return false;}
 void clearFrame() {
     s.frame=false;s.shouldRender=false;s.located=false;s.captures[0]=s.captures[1]=false;
+    s.earlyBeginPending=false;
     s.renderViewsLocked=false;
     s.sceneFocus[0]=s.sceneFocus[1]=false;
     std::fill(std::begin(s.debugDrawn),std::end(s.debugDrawn),false);
@@ -616,7 +619,16 @@ XrResult XRAPI_CALL layerWaitFrame(XrSession session,const XrFrameWaitInfo* info
 }
 XrResult XRAPI_CALL layerBeginFrame(XrSession session,const XrFrameBeginInfo* info) {
     {std::lock_guard<std::recursive_mutex> lock(stateMutex);
-        if(s.focusOwnership){if(heldFocusImages()){logf("stereo_pass begin-frame refused: prior focus lease unresolved");return XR_ERROR_CALL_ORDER_INVALID;}s.focusBeginInFlight=true;}}
+        if(s.earlyBeginPending){
+            if(session!=s.session)return XR_ERROR_HANDLE_INVALID;
+            if(info&&(info->type!=XR_TYPE_FRAME_BEGIN_INFO||info->next))return XR_ERROR_VALIDATION_FAILURE;
+            const auto result=s.earlyBeginResult;s.earlyBeginPending=false;
+            if(s.frames<10||s.frames%120==0)logf("xrBeginFrame late app call acknowledged frame=%llu result=%d; rendered captures preserved",static_cast<unsigned long long>(s.frames),result);
+            return result;
+        }
+        if(s.focusBeginInFlight)return XR_ERROR_CALL_ORDER_INVALID;
+        if(s.focusOwnership&&heldFocusImages()){logf("stereo_pass begin-frame refused: prior focus lease unresolved");return XR_ERROR_CALL_ORDER_INVALID;}
+        s.focusBeginInFlight=true;}
     XrResult r=next.BeginFrame(session,info);
     const int64_t benchmarkStart=benchmarkEnabled?lmuqv::benchmark::ticks():0;
     lmuqv::renderProfile.xr_frame_begin();
@@ -640,6 +652,18 @@ XrResult XRAPI_CALL layerBeginFrame(XrSession session,const XrFrameBeginInfo* in
     if(XR_FAILED(r))s.located=false;
     if(XR_FAILED(r)||!s.frame||s.frames<10||s.frames%120==0)logf("xrBeginFrame mode=%s frame=%llu pendingWait=%d renderable=%d shouldRender=%d result=%d",s.quad?"quad":"trace",static_cast<unsigned long long>(s.frames),hadWait,s.frame,s.shouldRender,r);
     return r;
+}
+// Some LMU/runtime combinations call Begin only after rendering and releasing
+// their eye images. Normalize that order only when the engine needs a valid
+// quad rendering frame. Never invent a Wait/Locate or borrow a future frame.
+// Caller holds stateMutex; Begin is not a runtime throttling/synchronization call.
+void ensureQuadRenderFrame() {
+    if(s.frame||s.earlyBeginPending||!s.quad||!s.runtimeSettings||!s.session||!s.running||
+       !s.waitPending||!s.waitShouldRender||!s.located||s.locateTime!=s.pendingTime||s.focusBeginInFlight)return;
+    s.earlyBeginResult=layerBeginFrame(s.session,nullptr);
+    s.earlyBeginPending=true;
+    if(s.frames<10||s.frames%120==0||XR_FAILED(s.earlyBeginResult))
+        logf("xrBeginFrame normalized before engine rendering frame=%llu time=%lld result=%d; waiting for late app begin",static_cast<unsigned long long>(s.frames),static_cast<long long>(s.predictedTime),s.earlyBeginResult);
 }
 XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* info,XrViewState* state,uint32_t cap,uint32_t* count,XrView* out) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
@@ -854,6 +878,7 @@ bool validInner(const XrSwapchainSubImage& image,unsigned eye) {
 }
 XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    if(s.earlyBeginPending){logf("xrEndFrame refused: late application xrBeginFrame not received");return XR_ERROR_CALL_ORDER_INVALID;}
     if(s.focusOwnership&&heldFocusImages()){logf("stereo_pass end-frame refused: unresolved focus image owner; no downstream release/submission");return XR_ERROR_CALL_ORDER_INVALID;}
     if(!s.quad){
         unsigned submitted=0;
@@ -1170,12 +1195,14 @@ void xr_vrs_scene_complete(unsigned eye){std::lock_guard<std::recursive_mutex> l
     if(eye<2&&s.vrs&&s.frame&&s.shouldRender)s.sceneFocus[eye]=true;}
 bool xr_frame_views(XrView (&views)[4]) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    ensureQuadRenderFrame();
     if(!s.quad||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
     s.renderViewsLocked=true;
     std::copy(std::begin(s.views),std::end(s.views),std::begin(views));return true;
 }
 bool xr_frame_full_outer_fov(XrFovf (&fov)[2]) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    ensureQuadRenderFrame();
     if(!s.quad||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
     std::copy(std::begin(s.fullOuterFov),std::end(s.fullOuterFov),std::begin(fov));return true;
 }

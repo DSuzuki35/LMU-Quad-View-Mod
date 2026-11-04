@@ -8,6 +8,8 @@ Versions before 1.0 remain experimental and may change compatibility or settings
 
 Based on a patch contributed by **Markus Stahl**, reviewed and extended for the Windows build.
 
+- Handle LMU's late `xrBeginFrame` sequence reported with Pimax: begin the runtime frame when quad rendering needs it, then acknowledge the application's later begin without discarding the captured eyes. Keep timestamp, renderability and submission checks intact.
+
 - Skip the FOV-scale hook when runtime settings are inactive, including Stereo VRS.
 - Check native hook targets against executable sections and x64 function boundaries. The two known leaf functions without unwind entries require their complete code signatures. This improves rejection of incompatible game builds; it does not guarantee support for future or alpha versions. No executable SHA256 allowlist is reinstated.
 - Pin the launcher EXE and its .NET configuration to hashes stored in the protected autostart installation. Verify both before starting a helper and hold read-only file locks for the child lifetime. Reinstall automatic startup after updating the package.
