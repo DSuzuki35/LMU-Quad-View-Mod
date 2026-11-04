@@ -2,11 +2,12 @@
 
 This branch integrates main v0.3.3 (`c38e122`) and the complete SPS research from
 `experiment/sps-0.2.0` (`61a5940`, including `codex/sps-0.1.1`). Native rendering,
-preparation and draws remain enabled. Two previous awake-headset captures showed
-classifier agreement but no usable transform comparisons. This revised build
-observes the transform helper directly and needs a new live capture. It is still
-step 2: validating the numeric payload before ownership/scheduling integration.
-See the live findings and revised boundary in [SPS-DEVELOPMENT.md](SPS-DEVELOPMENT.md).
+preparation and draws remain enabled. The revised helper probe has now passed
+its bounded live numeric check: 2,048 comparisons, including 1,024 focus calls,
+matched all 106,496 compared float scalars exactly across four scene frames.
+Coverage remains capped and limited to the sampled ordinary path. Step 3 is the
+[native input/ownership contract](SPS-NATIVE-INTEGRATION.md); see detailed live
+evidence in [SPS-DEVELOPMENT.md](SPS-DEVELOPMENT.md).
 
 ## Integration changes
 
@@ -51,8 +52,9 @@ See the live findings and revised boundary in [SPS-DEVELOPMENT.md](SPS-DEVELOPME
 
 The integrated layer SHA256 from this build is
 `A3F4FB298F7407565E4C7D760206724E8A53AFFD4F5DFF269E00B3DBD7832553`.
-These fixtures do not establish live transform agreement, native SPS or a
-frametime improvement. Existing audit variable-shadow warnings remain.
+Subsequent live helper comparisons matched the sampled output as described
+above. This does not establish native SPS or a frametime improvement. Existing
+audit variable-shadow warnings remain.
 
 ## Capture procedure
 

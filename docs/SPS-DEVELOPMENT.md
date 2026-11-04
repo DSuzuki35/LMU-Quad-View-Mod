@@ -643,3 +643,51 @@ eyes (slots 2/3 and 6/7), and inspect matches, mismatches and refusal reasons.
 This is still step 2 of the continuation plan. A usable comparison is required
 before the ownership/scheduling work can rely on this numeric payload; it does
 not itself replace native work or establish a frametime gain.
+
+## Live helper agreement on VectorXR (2026-11-04)
+
+The helper-probe build from `0908632`, layer SHA256
+`A3F4FB298F7407565E4C7D760206724E8A53AFFD4F5DFF269E00B3DBD7832553`,
+completed two awake on-track hotkey captures on the pinned executable with
+VectorXR. Both captures finished two scene frames with no open scopes at save.
+The runtime log confirms helper-hook installation, successful engine startup and
+quad submissions with both eye captures and `shouldRender=1`.
+
+| Capture (UTC) | Available helper comparisons | Focus comparisons | Compared float scalars | Mismatched scalars | Later attempts beyond cap |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 19:07:40 | 1,024 | 512 | 53,248 | 0 | 3,544 |
+| 19:07:59 | 1,024 | 512 | 53,248 | 0 | 2,578 |
+| Total | 2,048 | 1,024 | 106,496 | 0 | 6,122 |
+
+Every slot 0..7 supplied 128 available comparisons in each capture, including
+focus slots 2/3 and 6/7. All records were ended, had boundary `transform_helper`,
+both mode arguments false, 688 bytes read and 52 compared scalars. There were no
+refusals, mismatched records, unfinished invocations or missing expected views.
+The first capture excluded 162 non-main-view calls before spending its budget.
+These are invocation counts, not counts of unique objects or shader families.
+
+Both captures explicitly report incomplete coverage because of the per-slot cap.
+The result validates the sampled ordinary helper's selected CPU constant output
+bit-for-bit, not every invocation/mode/material, GPU images or complete preparation.
+It closes the bounded numeric prerequisite in step 2 of the continuation plan.
+Every original native call/draw still runs; no speedup is measured here.
+
+The classifier also supplied 8,192 available comparisons with zero returned/stored
+flag mismatches in these captures. All 18 native opaque scopes completed, with
+no scope/preparation drops or abort. Shader/layout definitions and resource events
+reported no drops; resource dependency coverage remains partial.
+
+The four focus pairs contained 570/568, 569/569, 451/451 and 448/448 packets.
+The first pair included two left-only meshes; per-eye order also differed. Focus
+targets were 1589x1751 RGBA16_FLOAT with one sample and D32_FLOAT depth. Both eyes
+reused the observed native banks, and the first later observed access after left
+opaque group 31 was a group-32 draw before right focus began in every pair.
+Thus the earlier native consumer-order constraint still applies.
+
+Four supported outer camera comparisons were available (maximum matrix-entry
+error 0.00018310546875), while focus camera prediction still refused its missing
+projection input. The first capture additionally refused two mismatched-scene/view
+pairings. Helper agreement uses the actual per-eye view and does not close the
+early opposite-eye focus-camera producer contract.
+
+Next work is the [native input/ownership integration contract](SPS-NATIVE-INTEGRATION.md).
