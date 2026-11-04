@@ -31,6 +31,10 @@ try {
     }
     & .\build\benchmark_frame_test.exe --diagnostics-off
     if ($LASTEXITCODE -ne 0) { throw 'Benchmark diagnostics-off test failed' }
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static tests/sps_cpu_profile_test.cpp -o build/sps_cpu_profile_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'SPS CPU profile compilation failed' }
+    & .\build\sps_cpu_profile_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'SPS CPU profile tests failed' }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/native_xr_views_test.cpp -o build/native_xr_views_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native XR view tests compilation failed' }
     & .\build\native_xr_views_test.exe
@@ -41,6 +45,10 @@ try {
     }
     & gcc -O2 -c vendor/minhook-1.3.4/src/hde/hde64.c -o build/mh_hde64.o
     if ($LASTEXITCODE -ne 0) { throw 'MinHook decoder compilation failed' }
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static tests/sps_cpu_profile_hooks_test.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -o build/sps_cpu_profile_hooks_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'SPS CPU profile adapter compilation failed' }
+    & .\build\sps_cpu_profile_hooks_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'SPS CPU profile adapter tests failed' }
     & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/engine_hooks_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/engine_hooks_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Engine hook tests compilation failed' }
     & .\build\engine_hooks_test.exe

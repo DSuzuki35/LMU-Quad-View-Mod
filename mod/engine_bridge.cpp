@@ -8,6 +8,7 @@
 #include "gpu_timing.hpp"
 #include "render_profile.hpp"
 #include "stereo_audit.hpp"
+#include "sps_cpu_profile_hooks.hpp"
 #include "pipeline_stats.hpp"
 #include "benchmark_control.hpp"
 #include "code_anchors.hpp"
@@ -519,6 +520,7 @@ void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
     StereoAuditGroup auditGroup(group);
     const auto caller = reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     const auto callerRva = caller >= base ? caller - base : 0;
+    SpsCpuRangeScope cpuRange(view,group,callerRva);
     // Capture the ordered opaque inputs before native last-pass cleanup releases
     // their lists. This observes scalars only; it does not retain or skip a draw.
     const StereoNativePassInfo nativePassInfo{
@@ -628,6 +630,7 @@ void nativeTransformHook(void* shader,void* view,void* mesh,bool alternateOwner,
     if(caller!=base+0x562acf){
         nativeTransformOriginal(shader,view,mesh,alternateOwner,skipEyeConstants);return;
     }
+    SpsCpuScope cpuScope(!alternateOwner&&!skipEyeConstants?SpsCpuWork::transform:SpsCpuWork::other_transform);
     NativeStereoTransformArgs args{shader,view,mesh,address<void>(0x1b13630)};
     args.boundary=NativeStereoTransformBoundary::Helper;
     args.alternateOwner=alternateOwner;args.skipEyeConstants=skipEyeConstants;
@@ -641,6 +644,7 @@ int nativePrepareHook(void* shader,void* view,void* mesh,std::uint32_t flags,boo
     // Two verified world-sort submission sites. This hook observes the complete
     // original preparation and forwards its exact result; no setup is skipped.
     const bool known=caller==base+0x51f67e||caller==base+0x51f5c4;
+    SpsCpuScope cpuScope(known?SpsCpuWork::preparation:SpsCpuWork::count);
     const StereoNativePrepareInfo preparation{shader, flags, reset, readable};
     return invoke_native_stereo_transform(
         [&](unsigned){return known?stereo_audit_native_prepare_begin(mesh,&preparation):StereoNativePrepareToken{};},
@@ -649,6 +653,7 @@ int nativePrepareHook(void* shader,void* view,void* mesh,std::uint32_t flags,boo
 }
 void nativeUploadHook(void* cache,void* device,ID3D11DeviceContext* context,void* bindings){
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
+    SpsCpuScope cpuScope(caller==base+0x5b6034?SpsCpuWork::upload:SpsCpuWork::count);
     if(!selectedUploadCache){nativeUploadOriginal(cache,device,context,bindings);return;}
     // Keep bindings/bookkeeping and every changed upload in the native routine.
     // Unexpected native writers end reuse for the rest of this group.
@@ -792,7 +797,7 @@ void renderHook(void* unknown, bool laterPass) {
     ID3D11DeviceContext* profileContext=nullptr;
     ViewSnapshot* auditExpectedView=nullptr;
     unsigned profileEye=0;
-    if((renderProfile.enabled()||stereo_audit_enabled())&&!insideHook&&installed.load()&&caller==base+0xcd1763&&(xr_quad_active()||xr_vrs_active())){
+    if((renderProfile.enabled()||stereo_audit_enabled()||spsCpuProfile.enabled())&&!insideHook&&installed.load()&&caller==base+0xcd1763&&(xr_quad_active()||xr_vrs_active())){
         auto* before=*address<ViewSnapshot*>(0x1a51370);
         const auto renderer=*address<std::uintptr_t>(0x1b12be8);
         if(readable(before,sizeof(*before))&&before->eye_index>=0&&before->eye_index<=1&&
@@ -802,6 +807,8 @@ void renderHook(void* unknown, bool laterPass) {
                 profileContext=context;profileEye=unsigned(before->eye_index);
                 auditExpectedView=before;
                 if(profileEye==0){
+                    const bool cpuKey=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F10)&0x8000);
+                    spsCpuProfile.frame(cpuKey);
                     const bool key=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F9)&0x8000);
                     renderProfile.frame(context,key);
                     const bool auditKey=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F8)&0x8000);
@@ -863,7 +870,7 @@ void renderHook(void* unknown, bool laterPass) {
     const bool profileOuterGpu=profileContext&&renderProfile.gpu_start(profileContext,profileEye);
     ProfileScope outerProfile(profile_eye(ProfileSlot::outer0,profileEye),profileContext!=nullptr);
     StereoAuditScope outerAudit(profileContext?stereo_audit_eye(false,profileEye):StereoAuditPass::none,auditExpectedView);
-    renderOriginal(unknown,laterPass);
+    {SpsCpuPassScope cpuPass(profileContext?profileEye:4,auditExpectedView);renderOriginal(unknown,laterPass);}
     if(stereoVrsMode&&!insideHook&&caller==base+0xcd1763){
         auto* renderedView=*address<ViewSnapshot*>(0x1a51370);
         if(readable(renderedView,sizeof(*renderedView))&&renderedView->eye_index>=0&&renderedView->eye_index<=1)
@@ -946,7 +953,7 @@ void renderHook(void* unknown, bool laterPass) {
     const bool profileFocusGpu=profileContext&&renderProfile.gpu_start(profileContext,eye+2);
     ProfileScope focusSceneProfile(profile_eye(ProfileSlot::focus_scene0,eye));
     StereoAuditScope focusAudit(stereo_audit_eye(true,eye),view);
-    reinterpret_cast<SceneFn>(base+0x5de200)(scene,false,true);
+    {SpsCpuPassScope cpuPass(eye+2,view);reinterpret_cast<SceneFn>(base+0x5de200)(scene,false,true);}
     focusAudit.end();
     focusSceneProfile.end();
     if(profileFocusGpu)renderProfile.gpu_stop(profileContext);
@@ -1187,6 +1194,14 @@ bool engine_start(ID3D11DeviceContext* context) {
     char auditSetting[8]{};const auto auditLength=GetEnvironmentVariableA("LMU_QV_STEREO_AUDIT",auditSetting,sizeof(auditSetting));
     wchar_t auditDirectory[32768]{};const auto auditDirectoryLength=GetEnvironmentVariableW(L"LMU_QV_STEREO_AUDIT_DIR",auditDirectory,32768);
     bool auditRequested=diagnostics_enabled()&&!stereoTiming&&auditLength==1&&auditSetting[0]=='1'&&auditDirectoryLength&&auditDirectoryLength<32768;
+    char spsSetting[8]{},broadProfile[8]{},gpuTriggerSetting[2]{},benchSetting[2]{};
+    const bool spsOptIn=GetEnvironmentVariableA("LMU_QV_SPS_PROFILE",spsSetting,sizeof(spsSetting))==1&&spsSetting[0]=='1';
+    GetEnvironmentVariableA("LMU_QV_PROFILE",broadProfile,sizeof(broadProfile));
+    const bool spsRequested=spsOptIn&&diagnostics_enabled()&&!std::strcmp(mode,"quad")&&
+        !(auditLength==1&&auditSetting[0]=='1')&&std::strcmp(broadProfile,"1")&&
+        !GetEnvironmentVariableA("LMU_QV_GPU_TIMING_TRIGGER",gpuTriggerSetting,sizeof(gpuTriggerSetting))&&
+        !GetEnvironmentVariableA("LMU_QV_BENCH_CONTROL",benchSetting,sizeof(benchSetting));
+    if(spsOptIn&&!spsRequested)log_line("sps_cpu_profile disabled: requires quad diagnostics without stereo audit, broad profiling or legacy timing/benchmark");
     char uploadSetting[8]{};nativeUploadOptIn=!stereoTiming&&GetEnvironmentVariableA("LMU_QV_CPU_UPLOAD_REUSE",uploadSetting,sizeof(uploadSetting))==1&&uploadSetting[0]=='1';nativeUploadReuse.reset();
     char outerUploadSetting[8]{};nativeUploadOuterOptIn=!stereoTiming&&GetEnvironmentVariableA("LMU_QV_CPU_OUTER_REUSE",outerUploadSetting,sizeof(outerUploadSetting))==1&&outerUploadSetting[0]=='1';
     if(nativeUploadOuterOptIn)nativeUploadOptIn=true;
@@ -1263,7 +1278,7 @@ bool engine_start(ID3D11DeviceContext* context) {
     if(!parseVrsDefaultRate(worldVrsOptIn,defaultRate,defaultRateLength,worldVrsDefaultRate)) {
         log_line("engine: LMU_QV_OUTER_SHADING_RATE must be exactly 1, 2 or 4; hooks refused");return false;
     }
-    if((worldVrsOptIn||nativeOuterOptIn||auditRequested||nativeUploadOptIn||nativeUploadBatchOptIn) && (!matches(0x51d8a0,vrs_scope::kMainPassAnchor) ||
+    if((worldVrsOptIn||nativeOuterOptIn||auditRequested||spsRequested||nativeUploadOptIn||nativeUploadBatchOptIn) && (!matches(0x51d8a0,vrs_scope::kMainPassAnchor) ||
        !matches(0x51f040,vrs_scope::kWorldSortAnchor))) {
         log_line("engine: VRS code anchor mismatch; hooks refused");return false;
     }
@@ -1288,7 +1303,7 @@ bool engine_start(ID3D11DeviceContext* context) {
         timingTrigger=trigger;
         log_line("engine GPU timing: waiting for explicit trigger file");
     }
-    const std::size_t hookCount=stereoTiming?1:(nativeOuterOptIn?std::size(hooks):((worldVrsOptIn||auditRequested||nativeUploadOptIn||nativeUploadBatchOptIn)?9:(nativeRuntimeSettings?7:5)));
+    const std::size_t hookCount=stereoTiming?1:(nativeOuterOptIn?std::size(hooks):((worldVrsOptIn||auditRequested||spsRequested||nativeUploadOptIn||nativeUploadBatchOptIn)?9:(nativeRuntimeSettings?7:5)));
     if(hookCount>6&&!matches(0x8c2d30,nativeEnumerateAnchor)){
         log_line("engine: native XR enumeration anchor mismatch; hooks refused");return false;
     }
@@ -1322,21 +1337,21 @@ bool engine_start(ID3D11DeviceContext* context) {
     installedHookCount=selectedCount;
     stereo_audit_configure(context,auditRequested,auditDirectory,log_line);
     const std::array<std::uint8_t,5> prepareCall0{0xe8,0x1c,0x34,0x04,0x00},prepareCall1{0xe8,0x62,0x33,0x04,0x00};
-    if(stereo_audit_enabled()&&matches(nativePrepareRva,nativePrepareAnchor)&&hookTargetPlausible(nativePrepareRva)&&matches(0x51f5bf,prepareCall0)&&matches(0x51f679,prepareCall1)){
+    if((stereo_audit_enabled()||spsRequested)&&matches(nativePrepareRva,nativePrepareAnchor)&&hookTargetPlausible(nativePrepareRva)&&matches(0x51f5bf,prepareCall0)&&matches(0x51f679,prepareCall1)){
         if(MH_CreateHook(address<void>(nativePrepareRva),reinterpret_cast<void*>(&nativePrepareHook),reinterpret_cast<void**>(&nativePrepareOriginal))==MH_OK){
-            if(MH_EnableHook(address<void>(nativePrepareRva))==MH_OK){nativePrepareHooked=true;log_line("stereo_audit native per-mesh preparation hook enabled; pointer identities anonymized; original preparation retained");}
+            if(MH_EnableHook(address<void>(nativePrepareRva))==MH_OK){nativePrepareHooked=true;log_line(spsRequested?"sps_cpu_profile native preparation timing hook enabled; original calls retained":"stereo_audit native per-mesh preparation hook enabled; pointer identities anonymized; original preparation retained");}
             else MH_RemoveHook(address<void>(nativePrepareRva));
         }
     }
     if (auditRequested && !nativePrepareHooked)
       log_line("stereo_audit native preparation hook unavailable; paired private proof requires "
                "this identity source");
-    if(stereo_audit_enabled()&&nativePrepareHooked&&nativeTransformTargetVerified()){
+    if((stereo_audit_enabled()||spsRequested)&&nativePrepareHooked&&nativeTransformTargetVerified()){
         if(MH_CreateHook(address<void>(nativeTransformRva),reinterpret_cast<void*>(&nativeTransformHook),
                          reinterpret_cast<void**>(&nativeTransformOriginal))==MH_OK){
             if(MH_EnableHook(address<void>(nativeTransformRva))==MH_OK){
                 nativeTransformHooked=true;
-                log_line("stereo_audit original transform helper hook enabled; bounded entry/exit comparison; native preparation/draws retained");
+                log_line(spsRequested?"sps_cpu_profile native transform timing hook enabled; no numeric snapshots":"stereo_audit original transform helper hook enabled; bounded entry/exit comparison; native preparation/draws retained");
             }else MH_RemoveHook(address<void>(nativeTransformRva));
         }
     }
@@ -1361,10 +1376,10 @@ bool engine_start(ID3D11DeviceContext* context) {
     const std::array<std::uint8_t,15> uploadBindAnchor{0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x20,0x57,0x48,0x83,0xec,0x20};
     const std::array<std::uint8_t,6> lightUploadSize{0x41,0xb8,0x80,0x0a,0x00,0x00};
     if(nativeUploadBatchOptIn&&(!matches(0x5cae5c,lightUploadSize)||!nativeUploadBatch.configure(context))){nativeUploadBatchOptIn=false;log_line("cpu_upload_batch unavailable: native layout or D3D11.1 constant-buffer offsets unsupported; native uploads retained");}
-    if((nativeUploadOptIn||nativeUploadBatchOptIn)&&matches(nativeUploadRva,nativeUploadAnchor)&&hookTargetPlausible(nativeUploadRva)&&matches(0x5b602f,uploadCall)&&matches(0x5c3f20,uploadBindAnchor)){
+    if((nativeUploadOptIn||nativeUploadBatchOptIn||spsRequested)&&matches(nativeUploadRva,nativeUploadAnchor)&&hookTargetPlausible(nativeUploadRva)&&matches(0x5b602f,uploadCall)&&matches(0x5c3f20,uploadBindAnchor)){
         if(MH_CreateHook(address<void>(nativeUploadRva),reinterpret_cast<void*>(&nativeUploadHook),reinterpret_cast<void**>(&nativeUploadOriginal))==MH_OK){
             if(MH_EnableHook(address<void>(nativeUploadRva))==MH_OK){nativeUploadHooked=true;
-                log_line(nativeUploadBatchOptIn?"cpu_upload_batch enabled: outer/focus opaque group 31; unchanged-upload filtering + adaptive small-CB batching; large CBs stay native; native shaders/draws retained; experimental":
+                log_line(spsRequested&&!nativeUploadOptIn&&!nativeUploadBatchOptIn?"sps_cpu_profile native upload timing hook enabled; uploads unchanged":nativeUploadBatchOptIn?"cpu_upload_batch enabled: outer/focus opaque group 31; unchanged-upload filtering + adaptive small-CB batching; large CBs stay native; native shaders/draws retained; experimental":
                     nativeUploadOuterOptIn?"cpu_upload_reuse enabled: outer/focus opaque group 31; reuse within each group only; native preparation/draws/bindings retained; experimental":
                     "cpu_upload_reuse enabled: focus opaque group 31; byte-identical native VS constants only; all draws/bindings retained; experimental");}
             else MH_RemoveHook(address<void>(nativeUploadRva));
@@ -1372,6 +1387,9 @@ bool engine_start(ID3D11DeviceContext* context) {
     }
     if(nativeUploadOptIn&&!nativeUploadHooked){nativeUploadOptIn=false;nativeUploadOuterOptIn=false;log_line("cpu_upload_reuse unavailable: native code anchor/hook mismatch; ordinary rendering retained");}
     if(nativeUploadBatchOptIn&&!nativeUploadHooked){nativeUploadBatchOptIn=false;nativeUploadBatch.reset();log_line("cpu_upload_batch unavailable: native code anchor/hook mismatch; native uploads retained");}
+    if(spsRequested&&(!nativePrepareHooked||!nativeTransformHooked||!nativeUploadHooked||
+       !sps_cpu_hooks::configure(context,log_line)))
+        log_line("sps_cpu_profile unavailable: required native/D3D11 timing hook missing; no complete CPU attribution possible");
     char profileSetting[8]{};GetEnvironmentVariableA("LMU_QV_PROFILE",profileSetting,sizeof(profileSetting));
     const bool profiling=diagnostics_enabled()&&!stereoTiming&&!std::strcmp(profileSetting,"1")&&benchmarkPath.empty()&&timingTrigger.empty();
     char durationSetting[16]{};char* durationEnd=nullptr;
@@ -1388,6 +1406,7 @@ bool engine_start(ID3D11DeviceContext* context) {
     return true;
 }
 void engine_stop() {
+    sps_cpu_hooks::stop();
     stereo_audit_stop();
     if(nativeTransformHooked){
         MH_DisableHook(address<void>(nativeTransformRva));MH_RemoveHook(address<void>(nativeTransformRva));

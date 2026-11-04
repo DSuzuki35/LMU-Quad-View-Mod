@@ -13,9 +13,22 @@ function Get-FileHash { [pscustomobject]@{Hash='fixture'} }
 '@
 $fixture=[scriptblock]::Create($prefix+$setup+[Environment]::NewLine+$environment+$metadata+';[pscustomobject]@{Info=$info;Run=($run|ConvertTo-Json|ConvertFrom-Json)}')
 $keys=@('LMU_QV_OUTER_SSR','LMU_QV_CPU_OUTER_REUSE','LMU_QV_CPU_UPLOAD_REUSE')
+$savedSps=[Environment]::GetEnvironmentVariable('LMU_QV_SPS_PROFILE','Process')
 $saved=@{}
 foreach($key in $keys){$saved[$key]=[Environment]::GetEnvironmentVariable($key,'Process')}
 try {
+    [Environment]::SetEnvironmentVariable('LMU_QV_SPS_PROFILE','1','Process')
+    $spsDefault=& $fixture -Mode quad
+    if($spsDefault.Info.Environment['LMU_QV_SPS_PROFILE'] -ne '0' -or $spsDefault.Run.SpsCpuProfiling){throw 'Inherited SPS profiling survived default launch'}
+    $sps=& $fixture -Mode quad -Backend VectorXR -UseRuntimeSettings -SpsCpuProfiling
+    if($sps.Info.Environment['LMU_QV_SPS_PROFILE'] -ne '1' -or !$sps.Run.SpsCpuProfiling -or $sps.Run.StereoDrawAudit){throw 'SPS profiling environment/metadata mismatch'}
+    $spsQuiet=& $fixture -Mode quad -SpsCpuProfiling -DisableDiagnostics
+    if($spsQuiet.Info.Environment['LMU_QV_SPS_PROFILE'] -ne '0' -or $spsQuiet.Run.SpsCpuProfiling){throw 'Diagnostics-off did not disable SPS profiling'}
+    foreach($option in @('RenderProfiling','GpuTiming','Benchmark','StereoDrawAudit','StereoShaderCapture','StereoPairProof','CaptureViews','PixelStats','ScenePixelStats')){
+        $arguments=@{Mode='quad';SpsCpuProfiling=$true};$arguments[$option]=$true
+        $rejected=$false;try {& $fixture @arguments|Out-Null} catch {$rejected=$true}
+        if(!$rejected){throw "SPS profiling accepted incompatible $option"}
+    }
     $savedGrid=[Environment]::GetEnvironmentVariable('DISABLE_OPENGRIDXR','Process')
     try {
         [Environment]::SetEnvironmentVariable('DISABLE_OPENGRIDXR',$null,'Process')
@@ -58,4 +71,4 @@ try {
         if(!$rejected){throw ('Invalid performance configuration accepted: '+($case|ConvertTo-Json -Compress))}
     }
     'Performance CLI tests passed: three providers, opt-in defaults, stale clearing, environment/metadata, mode/dependency guards, profiling and diagnostics-off; no game launched.'
-} finally {foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,$saved[$key],'Process')}}
+} finally {foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,$saved[$key],'Process')};[Environment]::SetEnvironmentVariable('LMU_QV_SPS_PROFILE',$savedSps,'Process')}

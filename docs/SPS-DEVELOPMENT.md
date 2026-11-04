@@ -691,3 +691,36 @@ pairings. Helper agreement uses the actual per-eye view and does not close the
 early opposite-eye focus-camera producer contract.
 
 Next work is the [native input/ownership integration contract](SPS-NATIVE-INTEGRATION.md).
+
+## Sampled native CPU cost gate (2026-11-04)
+
+Before implementing the owned producer, the research branch now provides
+`-SpsCpuProfiling` / `LMU_QV_SPS_PROFILE=1`. Ctrl+Alt+F10 starts a 120-second
+capture of verified opaque group-31 ranges. Every sixteenth scene frame is
+sampled, alternating coarse group timing with detailed preparation, ordinary/
+other transform, upload, draw API and Map/Unmap timing. Nested exclusive costs
+plus the residual partition group wall time without double-counting subcalls.
+Group thread-cycle counts remain cycles, separately from elapsed milliseconds.
+
+The adapter observes one immediate context and the verified render thread/view;
+unverified or nested ranges are excluded. It collects no native object snapshots,
+shader reflection, mapped contents or GPU readbacks/queries. Detailed clock and
+accounting overhead remains measurable: coarse controls retain the same hooks
+and use different frames, so neither phase is an unhooked baseline or an SPS A/B.
+
+Native entry/call-site/function-boundary guards are retained. All preparation,
+helper, uploads and draws still execute. Heavy audit and other profilers are
+excluded by the dedicated CLI launch. Default launches leave this mode disabled.
+The prepared entry point reads selected working settings without modifying them;
+the log analyzer reports per-group units, coverage and accounting consistency.
+
+The full MSVC native suite passed, including deterministic nested accounting,
+thread ownership, stale/invalid ranges, bounded capacity, cycle-query failure and
+teardown fixtures. The WARP adapter fixture passed Map/Unmap/Draw forwarding,
+nested attribution, FP-control preservation, exception completion and hook
+removal. CLI configuration/diagnostics-off tests and four analyzer tests passed.
+Compiled MSVC inspection confirms the transform hook's unrecognized-caller path
+still changes only RSP/RBP after the original call before returning.
+
+No live CPU cost capture, owned producer or performance gain is established by
+this change. See [run instructions and decision gate](SPS-CPU-PROFILING.md).

@@ -42,6 +42,12 @@ accounting for its copies and synchronization. Neither approach is implemented.
 
 ## First implementation deliverable
 
+Before the replacement producer, collect the [sampled CPU cost breakdown](SPS-CPU-PROFILING.md)
+with the heavy audit disabled and compare coarse/detailed controls. Establish
+whether remaining preparation/submission cost and target/input feasibility justify
+the route. A neutral CPU-only intermediate does not rule out a benefit from paired
+submissions; its copying/ownership cost still belongs in the final comparison.
+
 Establish a restricted **owned focus input producer** and an equivalence check
 against the original traversal. This is the first component needed by the
 schedule, rather than another numeric transform implementation.

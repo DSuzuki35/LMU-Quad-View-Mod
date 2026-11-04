@@ -64,13 +64,14 @@ try {
     $hooks=@('buffer','hook','trampoline','hde64')|ForEach-Object{Join-Path $build ('mh_'+$_+'.obj')}
     $basic=@('math','focus_box','native_xr_views','gpu_timing','render_profile','swapchain_sampling','pipeline_stats','benchmark_control','vrs_scope_policy','nv_vrs','ui_d3d_state','focus_overlay','outer_resample','native_outer_texture','native_outer_bindings','stereo_instancing','stereo_audit_abi','stereo_audit','stereo_shader','stereo_draw_proof','native_upload_reuse','native_upload_batch','focus_image_lease')
     $basic += @('benchmark_timing_ownership','render_view_snapshot','frame_submission','late_begin_frame','view_crop','benchmark_native','benchmark_overlay','benchmark_frame','benchmark_gpu','vrs_foveation','vrs_gaze','native_outer_bank')
-    $basic += @('stereo_audit_trigger','native_stereo_packets','native_stereo_camera','native_stereo_source','native_stereo_transform_audit')
+    $basic += @('stereo_audit_trigger','native_stereo_packets','native_stereo_camera','native_stereo_source','native_stereo_transform_audit','sps_cpu_profile','sps_cpu_profile_hooks')
     foreach($test in $basic){
         $sources=@("tests/${test}_test.cpp")
         if($test -eq 'nv_vrs'){$sources+='nv_vrs.cpp'}
         if($test -eq 'stereo_shader'){$sources+='stereo_shader.cpp'}
         if($test -eq 'stereo_draw_proof'){$sources+=@('stereo_shader.cpp','stereo_draw_proof.cpp')}
         if($test -in @('stereo_audit','native_stereo_transform_audit')){$sources+=@('stereo_audit.cpp','stereo_shader.cpp','stereo_draw_proof.cpp');$sources+=$hooks}
+        if($test -eq 'sps_cpu_profile_hooks'){$sources+=$hooks}
         Compile ($common+$sources+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+(Join-Path $build ($test+'_test.exe')))))
         if($test -eq 'vrs_scope_policy'){Run-Test ($test+'_test') @('--policy-only')}
         else{Run-Test ($test+'_test')}
