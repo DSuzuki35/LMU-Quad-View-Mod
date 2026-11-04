@@ -1,6 +1,7 @@
 // White-box tests of the native hook policy. No LMU process or native game code is used.
 #include "../engine_bridge.cpp"
 #include <algorithm>
+#include <cassert>
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
@@ -38,6 +39,12 @@ void flush_log(){}
 }
 namespace {
 unsigned masks=0,derived=0;
+unsigned ownerForwardCalls=0;
+void ownerForward(void* a,void* b,void* c,float bias){
+    uint32_t bits=0;std::memcpy(&bits,&bias,sizeof(bits));
+    assert(a==reinterpret_cast<void*>(1)&&b==reinterpret_cast<void*>(2)&&c==reinterpret_cast<void*>(3)&&bits==0x7fc12345u);
+    ++ownerForwardCalls;_mm_setcsr(0x1fbf);
+}
 float expectedUiPlaneFov=0,expectedUiScale=0;
 unsigned uiPlaneDraws=0;
 void checkUiPlane(void* object,ID3D11DeviceContext*,const lmuqv::UiArgs* args){
@@ -234,6 +241,22 @@ void hookTargetTest(){
     image[nativeTransformRva]^=1;section->Characteristics=IMAGE_SCN_MEM_READ;
     require(!nativeTransformTargetVerified(),"transform helper accepted a non-executable section");
     section->Characteristics=IMAGE_SCN_MEM_EXECUTE;
+    const unsigned char ownerCall0[]{0xe8,0x20,0x22,0x00,0x00},ownerCall1[]{0xe8,0x8e,0x20,0x00,0x00};
+    const unsigned char ownerCall2[]{0xe8,0x14,0x13,0x00,0x00},ownerCall3[]{0xe8,0x55,0x11,0x00,0x00};
+    const unsigned char ownerMasks[]{0x44,0x8b,0x41,0x74,0x45,0x85,0xc0,0x74,0x2c,0x48,0x85,0xd2,0x74,0x17,0x8b,0x82,0x0c,0x01,0x00,0x00};
+    const unsigned char sourceCall[]{0xe8,0x0a,0xfd,0xff,0xff};
+    std::memcpy(image.data()+nativeOwnerRva,nativeOwnerAnchor.data(),nativeOwnerAnchor.size());
+    std::memcpy(image.data()+0x5def1b,ownerCall0,sizeof(ownerCall0));std::memcpy(image.data()+0x5df0ad,ownerCall1,sizeof(ownerCall1));
+    std::memcpy(image.data()+0x5dfe27,ownerCall2,sizeof(ownerCall2));std::memcpy(image.data()+0x5dffe6,ownerCall3,sizeof(ownerCall3));
+    std::memcpy(image.data()+0x41a9a0,ownerMasks,sizeof(ownerMasks));std::memcpy(image.data()+0x5e1201,sourceCall,sizeof(sourceCall));
+    function->BeginAddress=static_cast<DWORD>(nativeOwnerRva);function->EndAddress=function->BeginAddress+0x13b;
+    require(nativeOwnerTargetVerified(),"verified owner traversal target rejected");
+    --function->BeginAddress;require(!nativeOwnerTargetVerified(),"owner traversal interior accepted");++function->BeginAddress;
+    for(const auto rva:{uintptr_t(0x5def1b),uintptr_t(0x5df0ad),uintptr_t(0x5dfe27),uintptr_t(0x5dffe6),uintptr_t(0x41a9a0),uintptr_t(0x5e1201)}){
+        image[rva]^=1;require(!nativeOwnerTargetVerified(),"owner traversal accepted changed source/caller layout");image[rva]^=1;
+    }
+    section->Characteristics=IMAGE_SCN_MEM_READ;require(!nativeOwnerTargetVerified(),"owner traversal accepted non-executable target");
+    section->Characteristics=IMAGE_SCN_MEM_EXECUTE;
     nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].Size=0xffffffff;
     require(!hookTargetPlausible(0x1000),"out-of-image exception directory accepted");
     base=saved;
@@ -242,6 +265,12 @@ void hookTargetTest(){
 }
 int main(int argc,char** argv) {
     using namespace lmuqv;
+    {const unsigned saved=_mm_getcsr();uint32_t bits=0x7fc12345u;float bias{};std::memcpy(&bias,&bits,sizeof(bias));
+        nativeOwnerOriginal=ownerForward;
+        for(bool enabled:{false,true}){nativeOwnerInputEnabled.store(enabled);_mm_setcsr(0x1f80);
+            nativeOwnerHook(reinterpret_cast<void*>(1),reinterpret_cast<void*>(2),reinterpret_cast<void*>(3),bias);
+            require(_mm_getcsr()==0x1fbf,"owner forwarding changed native FP state");}
+        require(ownerForwardCalls==2,"owner hook did not forward original exactly once");nativeOwnerInputEnabled.store(false);_mm_setcsr(saved);}
     if(argc==2&&std::strcmp(argv[1],"--process-identity")==0) {
         wchar_t path[32768]{};require(GetModuleFileNameW(nullptr,path,32768)!=0,"Process path unavailable");
         const bool namedLmu=_wcsicmp(std::filesystem::path(path).filename().c_str(),L"Le Mans Ultimate.exe")==0;

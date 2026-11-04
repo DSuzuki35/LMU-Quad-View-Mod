@@ -74,17 +74,23 @@ producer preserved native normal/far depth and reproduced focus projections
 exactly in those samples. Maximum current-matrix entry difference was
 0.000183105 and maximum derived-matrix entry difference was 0.000488281. These
 are numeric differences, not pixel errors or an image acceptance tolerance.
-Recovered FOVs do not prove the live XR-frame-input connection; that runtime
-path and broader camera/material coverage still need correctness validation.
+Recovered FOVs alone do not prove the live XR-frame-input connection.
+
+A subsequent live VectorXR run of `3b9d94e` used the locked current XR inputs
+and consumed both prepared focus projections for 10,379 frame pairs, with zero
+refused pairs or per-eye fallbacks, followed by clean session teardown. This
+validates that connection in the sampled fixed-foveation mode; it does not
+establish image equivalence, broader camera/material coverage or a speedup.
 
 This pair is produced after the native left outer pass and before left focus.
-The unfiltered owner/source producer still needs an earlier native boundary;
-late group-31 vectors cannot supply right-only sources. Reuse the pure camera
-producer at that earlier boundary once it is established. Camera-number ownership
-does not own the native scene or its mutable meshes/materials/resources.
+The [unfiltered owner/source description producer](SPS-OWNER-INPUTS.md) now uses
+an earlier native root boundary, before admission. Late group-31 vectors cannot
+supply right-only sources. The new producer preserves selected subtrees but
+still needs live correctness validation and complete root coverage. Camera-number
+ownership does not own the native scene or its mutable meshes/materials/resources.
 
-Next connect an unfiltered native owner/source builder to the owned traversal
-planner, preserve independent per-eye membership/order, and assemble owned draw
-inputs. Native side effects, right engine world position/history and legal HDR/
-depth target seeding/consumers must be established before suppressing native work.
+Next validate that producer, preserve independent per-eye candidate membership/
+order, and assemble owned draw inputs. Native side effects, right engine world
+position/history and legal HDR/depth target seeding/consumers must be established
+before suppressing native work.
 The existing private portable instancing backend then supplies paired draws.

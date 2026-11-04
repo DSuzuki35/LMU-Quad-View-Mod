@@ -10,6 +10,7 @@
 #include "stereo_audit.hpp"
 #include "sps_cpu_profile_hooks.hpp"
 #include "native_stereo_focus_inputs.hpp"
+#include "native_stereo_owner_inputs.hpp"
 #include "pipeline_stats.hpp"
 #include "benchmark_control.hpp"
 #include "code_anchors.hpp"
@@ -174,6 +175,16 @@ struct History { ViewSnapshot* owner{}; TransformRecord transform{}; bool valid=
 History innerHistory[2];
 bool spsPreparationOptIn=false,spsPreparedLogged=false,spsPreparationRefusedLogged=false;
 NativeStereoFocusFrame spsFocusFrame;
+using NativeOwnerFn=void(*)(void*,void*,void*,float);
+NativeOwnerFn nativeOwnerOriginal{};
+std::atomic<bool> nativeOwnerInputEnabled{false};bool nativeOwnerInputHooked=false;
+constexpr uintptr_t nativeOwnerRva=0x5e1140;
+constexpr std::array<uint8_t,15> nativeOwnerAnchor{0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x6c,0x24,0x18,0x56,0x48,0x83,0xec,0x30};
+NativeStereoOwnerInputFrame spsOwnerFrame;
+std::mutex spsOwnerMutex;
+thread_local StereoFrameIdentity spsOwnerFrameIdentity;
+uint64_t spsOwnerFrames=0,spsOwnerRoots=0,spsOwnerRefusals=0;
+bool spsOwnerReadyLogged=false,spsOwnerRefusalLogged=false;
 struct SpsPreparationCounts {uint64_t prepared=0,refused=0,used[2]{},fallback[2]{};} spsPreparationCounts;
 void prepareHistory(History& history,ViewSnapshot* owner,bool nativePreviousValid) {
     // DYN invalidates native history on camera-definition changes even when View* is unchanged.
@@ -673,6 +684,38 @@ void nativeUploadHook(void* cache,void* device,ID3D11DeviceContext* context,void
         *address<std::uint32_t>(0x1b1a55c)+=result.maps;return;}
     nativeUploadOriginal(cache,device,context,bindings);nativeUploadReuse.after(cache,context,token);
 }
+void nativeOwnerHook(void* owner,void* pointer,void* buckets,float bias){
+    const auto caller=reinterpret_cast<uintptr_t>(LMU_CALLER_ADDRESS);
+    const bool known=caller==base+0x5def20||caller==base+0x5df0b2||caller==base+0x5dfe2c||caller==base+0x5dffeb;
+    // Recursive entries and unrelated callers retain the original fast path.
+    // The first root snapshot copies the entire subtree before any admission.
+    if(!known||!nativeOwnerInputEnabled.load(std::memory_order_relaxed)||!insideHook||pointer!=focusView||
+       !spsOwnerFrameIdentity.valid()||spsOwnerFrameIdentity.thread!=GetCurrentThreadId()){
+        nativeOwnerOriginal(owner,pointer,buckets,bias);return;
+    }
+    {
+        NativeStereoFpGuard fp;
+        try {
+            auto* view=static_cast<ViewSnapshot*>(pointer);
+            if(readable(view,sizeof(*view))&&view->eye_index==0&&view->parent==0&&
+               readable(address<void>(0x1a51370),sizeof(void*))&&*address<void*>(0x1a51370)==pointer&&
+               view->scene<=(std::numeric_limits<uintptr_t>::max)()-0x70&&
+               reinterpret_cast<uintptr_t>(buckets)==view->scene+0x70){
+                uint32_t mask=0,globalMask=0;
+                std::memcpy(&mask,reinterpret_cast<const std::byte*>(view)+0x10c,4);
+                if(readable(address<void>(0x1b12c28),4)){
+                    std::memcpy(&globalMask,address<void>(0x1b12c28),4);
+                    std::lock_guard<std::mutex> lock(spsOwnerMutex);
+                    if(nativeOwnerInputEnabled.load(std::memory_order_relaxed)&&
+                       spsOwnerFrame.accepts(spsOwnerFrameIdentity,view->scene,reinterpret_cast<uintptr_t>(view)))
+                        spsOwnerFrame.append(spsOwnerFrameIdentity,view->scene,reinterpret_cast<uintptr_t>(view),
+                            {mask,true},owner,globalMask,readable);
+                }
+            }
+        } catch(...) {std::lock_guard<std::mutex> lock(spsOwnerMutex);spsOwnerFrame.reset();}
+    }
+    nativeOwnerOriginal(owner,pointer,buckets,bias);
+}
 void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool later){
     // A nested view must see the unmodified native bank. Resume the outer bank
     // afterwards and rebuild its actual viewport through the native cache API.
@@ -974,6 +1017,12 @@ void renderHook(void* unknown, bool laterPass) {
     view->previous_transform_valid=history.valid ? 1 : 0;
     // Reuse outer visible objects, but rebuild derived view/frustum and issue fresh draws.
     derived(view,6,false);
+    if(eye==0&&nativeOwnerInputEnabled.load(std::memory_order_relaxed)){
+        std::lock_guard<std::mutex> lock(spsOwnerMutex);spsOwnerFrameIdentity={};spsOwnerFrame.reset();
+        if(ownedFrame){uint32_t mask=0;std::memcpy(&mask,reinterpret_cast<const std::byte*>(view)+0x10c,4);
+            spsOwnerFrameIdentity=frameInputs.identity;spsOwnerFrame.begin(frameInputs.identity,
+                view->scene,reinterpret_cast<uintptr_t>(view),{mask,view->parent==0});}
+    }
     focusPrepareProfile.end();
     const bool measureFocus=timingContext&&(!benchmark||benchmarkControl.state()==BenchmarkControl::State::measuring);
     const bool focusTimed=measureFocus && gpuTiming.start(timingContext,eye+2);
@@ -982,6 +1031,16 @@ void renderHook(void* unknown, bool laterPass) {
     ProfileScope focusSceneProfile(profile_eye(ProfileSlot::focus_scene0,eye));
     StereoAuditScope focusAudit(stereo_audit_eye(true,eye),view);
     {SpsCpuPassScope cpuPass(eye+2,view);reinterpret_cast<SceneFn>(base+0x5de200)(scene,false,true);}
+    if(eye==0&&nativeOwnerInputEnabled.load(std::memory_order_relaxed)){
+        NativeStereoFpGuard fp;std::lock_guard<std::mutex> lock(spsOwnerMutex);
+        if(spsOwnerFrame.seal(frameInputs.identity)){
+            ++spsOwnerFrames;spsOwnerRoots+=spsOwnerFrame.root_count();
+            if(!spsOwnerReadyLogged){log_line("sps_prepare: unfiltered owner/source/mesh descriptions for selected roots owned before left admission; subset sealed for scheduler input; native traversal/draws retained");spsOwnerReadyLogged=true;}
+        }else {++spsOwnerRefusals;if(!spsOwnerRefusalLogged){char line[256]{};
+            std::snprintf(line,sizeof(line),"sps_prepare owner inputs unavailable: %s; native traversal retained",spsOwnerFrame.reason());
+            log_line(line);spsOwnerRefusalLogged=true;}}
+        spsOwnerFrameIdentity={};
+    }
     focusAudit.end();
     focusSceneProfile.end();
     if(profileFocusGpu)renderProfile.gpu_stop(profileContext);
@@ -1194,6 +1253,15 @@ bool nativeTransformTargetVerified() {
     return matches(nativeTransformRva,nativeTransformAnchor)&&
         hookTargetPlausible(nativeTransformRva)&&matches(0x562aca,call);
 }
+bool nativeOwnerTargetVerified(){
+    const std::array<uint8_t,5> a{0xe8,0x20,0x22,0x00,0x00},b{0xe8,0x8e,0x20,0x00,0x00};
+    const std::array<uint8_t,5> c{0xe8,0x14,0x13,0x00,0x00},d{0xe8,0x55,0x11,0x00,0x00};
+    const std::array<uint8_t,20> masks{0x44,0x8b,0x41,0x74,0x45,0x85,0xc0,0x74,0x2c,0x48,0x85,0xd2,0x74,0x17,0x8b,0x82,0x0c,0x01,0x00,0x00};
+    const std::array<uint8_t,5> source{0xe8,0x0a,0xfd,0xff,0xff};
+    return matches(nativeOwnerRva,nativeOwnerAnchor)&&hookTargetPlausible(nativeOwnerRva)&&
+        matches(0x5def1b,a)&&matches(0x5df0ad,b)&&matches(0x5dfe27,c)&&matches(0x5dffe6,d)&&
+        matches(0x41a9a0,masks)&&matches(0x5e1201,source);
+}
 }
 
 unsigned engine_game_eye(XrSwapchain chain){
@@ -1222,6 +1290,8 @@ bool engine_start(ID3D11DeviceContext* context) {
     char prepareSetting[8]{};
     spsPreparationOptIn=!std::strcmp(mode,"quad")&&GetEnvironmentVariableA("LMU_QV_SPS_PREPARE",prepareSetting,sizeof(prepareSetting))==1&&prepareSetting[0]=='1';
     spsFocusFrame.reset();spsPreparationCounts={};spsPreparedLogged=spsPreparationRefusedLogged=false;
+    {std::lock_guard<std::mutex> lock(spsOwnerMutex);spsOwnerFrame.reset();spsOwnerFrames=spsOwnerRoots=spsOwnerRefusals=0;
+        spsOwnerReadyLogged=spsOwnerRefusalLogged=false;spsOwnerFrameIdentity={};}
     char auditSetting[8]{};const auto auditLength=GetEnvironmentVariableA("LMU_QV_STEREO_AUDIT",auditSetting,sizeof(auditSetting));
     wchar_t auditDirectory[32768]{};const auto auditDirectoryLength=GetEnvironmentVariableW(L"LMU_QV_STEREO_AUDIT_DIR",auditDirectory,32768);
     bool auditRequested=diagnostics_enabled()&&!stereoTiming&&auditLength==1&&auditSetting[0]=='1'&&auditDirectoryLength&&auditDirectoryLength<32768;
@@ -1366,6 +1436,13 @@ bool engine_start(ID3D11DeviceContext* context) {
     }
     innerHistory[0]={};innerHistory[1]={};
     installedHookCount=selectedCount;
+    if(spsPreparationOptIn&&nativeOwnerTargetVerified()){
+        if(MH_CreateHook(address<void>(nativeOwnerRva),reinterpret_cast<void*>(&nativeOwnerHook),reinterpret_cast<void**>(&nativeOwnerOriginal))==MH_OK){
+            if(MH_EnableHook(address<void>(nativeOwnerRva))==MH_OK){nativeOwnerInputHooked=true;nativeOwnerInputEnabled.store(true);}
+            else MH_RemoveHook(address<void>(nativeOwnerRva));
+        }
+    }
+    if(spsPreparationOptIn&&!nativeOwnerInputHooked)log_line("sps_prepare owner producer unavailable: native boundary verification/hook failed; native rendering retained");
     stereo_audit_configure(context,auditRequested,auditDirectory,log_line);
     const std::array<std::uint8_t,5> prepareCall0{0xe8,0x1c,0x34,0x04,0x00},prepareCall1{0xe8,0x62,0x33,0x04,0x00};
     if((stereo_audit_enabled()||spsRequested)&&matches(nativePrepareRva,nativePrepareAnchor)&&hookTargetPlausible(nativePrepareRva)&&matches(0x51f5bf,prepareCall0)&&matches(0x51f679,prepareCall1)){
@@ -1438,6 +1515,13 @@ bool engine_start(ID3D11DeviceContext* context) {
     return true;
 }
 void engine_stop() {
+    nativeOwnerInputEnabled.store(false);
+    if(nativeOwnerInputHooked){MH_DisableHook(address<void>(nativeOwnerRva));MH_RemoveHook(address<void>(nativeOwnerRva));nativeOwnerInputHooked=false;}
+    {std::lock_guard<std::mutex> lock(spsOwnerMutex);
+        if(spsPreparationOptIn){char line[256]{};std::snprintf(line,sizeof(line),
+            "sps_prepare owner summary complete_frames=%llu copied_roots=%llu refused_frames=%llu; source descriptions owned; native GPU resources/arrays not retained",
+            static_cast<unsigned long long>(spsOwnerFrames),static_cast<unsigned long long>(spsOwnerRoots),static_cast<unsigned long long>(spsOwnerRefusals));log_line(line);}
+        spsOwnerFrame.reset();spsOwnerFrameIdentity={};}
     if(spsPreparationOptIn){char line[384]{};std::snprintf(line,sizeof(line),
         "sps_prepare summary prepared_pairs=%llu refused_pairs=%llu prepared_projection_left=%llu prepared_projection_right=%llu fallback_left=%llu fallback_right=%llu; native eye draws retained",
         static_cast<unsigned long long>(spsPreparationCounts.prepared),static_cast<unsigned long long>(spsPreparationCounts.refused),

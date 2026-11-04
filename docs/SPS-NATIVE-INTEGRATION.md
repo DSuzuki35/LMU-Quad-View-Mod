@@ -1,10 +1,11 @@
 # Native SPS input and scheduling contract
 
 The bounded ordinary-transform numeric prerequisite has passed on sampled native
-VectorXR calls. Step 3 now needs a valid producer of both focus eyes' inputs and
-a scheduling boundary before their native consumers. The tested helper still
-uses the real view for each eye at its normal time; it does not supply the right
-eye early. No native work may be skipped based on this numeric result alone.
+VectorXR calls. Step 3 now supplies an early owned focus-camera pair and copies
+unfiltered owner/source descriptions from verified selected-root entries. The
+camera projection consumer passed a live VectorXR run; the new owner producer
+still needs live correctness validation. Full draw-input ownership and native
+consumer scheduling remain open. No native preparation or draws are suppressed.
 
 ## Observed scheduling constraint
 
@@ -31,10 +32,10 @@ accounting for its copies and synchronization. Neither approach is implemented.
 
 | Input or effect | Existing evidence | Requirement for replacement |
 | --- | --- | --- |
-| Current per-eye camera data | Restricted outer camera prediction; actual-view helper output matches | Current-frame focus poses/projections and depth coefficients for both eyes before the selected range. Preserve rendered-view metadata and native history; do not substitute an outer FOV or previous-frame view. |
-| Owner admission | Owned tree planner with left-then-right scalar transitions | A verified native producer before either eye's filtering, including right-only subtrees and any intervening mutations excluded by the planner's immutable-tree contract. |
+| Current per-eye camera data | Early owned current-frame focus pair; both projection consumers used it for 10,379 VectorXR pairs with no fallbacks | Validate remaining native world position/metadata/history and broader camera modes. Predicted right matrices do not overwrite the native view. |
+| Owner admission | Owned tree planner and verified pre-admission selected-root producer, including right-only subtrees | Live producer validation, complete root coverage and any intervening mutations excluded by the planner's immutable-tree contract. Both view masks must be supplied independently. |
 | Candidate membership/order | Numeric classifier agreement and late ordered packet observations | Independently valid candidates and sorting for each eye. Neither eye's visible list nor matching draw indices represents the other eye. |
-| Source/mesh lifetime | Geometry-reported array containment and bounded scalar copies | An actual ownership or complete-copy contract. Containment, retaining a bucket/item, or saving an array address does not retain its contents. |
+| Source/mesh lifetime | Owned bounded source/mesh descriptions copied at the early owner entry | Own the actual draw payloads and resources. Description fields and identity tokens do not retain mutable native arrays or objects. |
 | Draw inputs | Shader proof, binding signatures and resource-use observations | Owned constant payloads and legal lifetimes/content versions for shaders, geometry and material resources. COM references preserve object lifetime, not arbitrary mutable resource contents. |
 | Preparation effects | Selected 52-float helper output validated | Remaining shader/material/bone callbacks, PS constants, global derived data, native caches, counters and traversal/cleanup. Do not bypass the whole preparation wrapper or world sort. |
 | Native targets/consumers | Reused banks, later group draws and resolve/read traces | Correct per-eye initial HDR/depth state and legal consumer views. Count any copies/resolves needed for array-to-native integration; two private images alone do not solve it. |
@@ -49,23 +50,27 @@ Correctness, complete fallback and eventual end-to-end performance remain
 acceptance checks. A CPU-only intermediate need not independently meet the final
 performance target before the paired-submission stage is implemented.
 
-The first runtime component now produces [owned focus camera inputs](SPS-FOCUS-INPUTS.md)
+The first runtime component produces [owned focus camera inputs](SPS-FOCUS-INPUTS.md)
 before left focus rendering. It includes both actual XR focus FOVs and a restricted
 right camera prediction. The ordinary eye path consumes prepared projections when
 the frame/scene/view/order/native-depth checks match. Native world position,
-history, unfiltered source ownership and complete preparation effects remain open.
+history and complete preparation effects remain open. The next component now
+produces [owned owner/source/mesh descriptions](SPS-OWNER-INPUTS.md) at verified
+native root traversal entries before admission. It seals a bounded selected-root
+subset after left focus, with all native work retained.
 
-Establish a restricted **owned focus input producer** and an equivalence check
-against the original traversal. This is the first component needed by the
-schedule, rather than another numeric transform implementation.
+Continue the restricted **owned focus input producer** toward independent
+candidates and draw payloads, checking equivalence against original traversal.
 
 1. Identify and verify the native owner/source builder's entry, exit and cleanup
    boundaries before either eye's admission/filtering. Reuse existing read-only
-   code evidence. The original classifier call site is downstream evidence, not
-   proof that the whole unfiltered owner tree is available there.
+   code evidence. The selected owner boundary is now verified at `0x5e1140`;
+   source emission starts at `0x5e0f10`. The original classifier call site is
+   downstream evidence. Its `0x41c820` unwind fragment is not a function entry.
 2. Define exactly which values can be copied and which objects/resources require
-   native retention. The existing owner planner consumes an entirely owned tree;
-   no runtime producer currently establishes that contract.
+   native retention. The runtime producer now supplies entirely copied selected
+   trees and descriptions to that interface, without retaining native objects.
+   Whole-scene coverage and mutable draw-resource ownership remain unestablished.
 3. Keep ordered membership, per-eye distances and shared state transitions.
    Explicitly reject unsupported refresh/special/callback paths before producing
    a partial plan. Never call engine methods on fabricated copied objects.

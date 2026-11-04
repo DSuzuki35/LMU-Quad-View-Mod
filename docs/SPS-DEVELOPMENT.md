@@ -764,9 +764,37 @@ focus FOVs: projection differences zero; maximum current entry difference
 0.000183105 and derived entry difference 0.000488281. This is bounded numeric
 evidence, with no new live image-equivalence or performance claim.
 
-Next is the native unfiltered owner/source producer, then owned draw inputs and
-target/consumer integration for paired submission. The local code captures do
-not contain decoded source-builder code; read-only inspection needs the running
-game after a track has rendered. That inspection implements source ownership;
-it is independent of deferred performance measurement. See [implementation and
-remaining contracts](SPS-FOCUS-INPUTS.md).
+The subsequent live VectorXR run consumed both prepared focus projections for
+10,379 pairs, with zero refusals/fallbacks and clean teardown. This confirms the
+runtime camera-input connection in that sampled mode, without establishing
+image equivalence or a performance saving. See [implementation and remaining
+contracts](SPS-FOCUS-INPUTS.md).
+
+## Early owner/source description producer (2026-11-05)
+
+Read-only code capture from the completed on-track run established the actual
+owner traversal at `0x5e1140` and source emission at `0x5e0f10`. The downstream
+classifier's `0x41c820` unwind fragment is not a standalone hook entry. The saved
+capture is sufficient for continued implementation with the game closed.
+
+`native_stereo_owner_inputs.hpp` copies full selected subtrees before their
+admission, including right-only branches, ordered children, scalar states,
+world matrices and bounded source/mesh descriptions. A frame collector shares
+budgets, rejects overlapping roots and mask changes, and publishes only a sealed
+selected-root subset. The planner takes two explicit view masks. Copied pointer
+values are identity tokens; no native object, array or GPU content is retained.
+
+The opt-in preparation path installs the hook only after prologue, executable
+function-entry, four caller and mask/source-layout checks pass. Other callers
+and recursive entries forward to native unchanged. No lock spans a native call;
+no traversal, preparation, cleanup or draw is suppressed. The compiled hook
+restores its arguments and tail-jumps to the original after FP restoration.
+
+The full MSVC suite passed, with new producer fixtures at both optimization
+levels for unfiltered trees, right-only admissions, immutable copied values,
+strict limits, malformed inputs, allocation failures and maximum-depth trees.
+Hook policy and forwarding tests passed. Live owner-producer validation remains
+pending. Next establish root coverage, independent candidates/order, actual
+constant/resource ownership, native side effects and target/consumer integration
+for the paired backend. No additional timing capture is required for this stage.
+See [owned descriptions and limits](SPS-OWNER-INPUTS.md).
