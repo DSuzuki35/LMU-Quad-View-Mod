@@ -146,6 +146,12 @@ namespace LmuQuadViewLauncher {
             parent.DeleteSubKey(name);
         }
         internal static void RegisterFirst(RegistryKey parent,string keyName,string manifest,Action<RegistryKey> beforeVerify=null) {
+            // A normal elevated token cannot assign SYSTEM as the owner of a
+            // newly created backup. Restore privilege preserves the original
+            // owner without taking ownership or weakening either key's DACL.
+            using(var restore=RegistryRestoreScope.TryEnter())RegisterFirstCore(parent,keyName,manifest,beforeVerify);
+        }
+        static void RegisterFirstCore(RegistryKey parent,string keyName,string manifest,Action<RegistryKey> beforeVerify) {
             List<Value> original;RegistrySecurity security;
             using(var key=parent.CreateSubKey(keyName)) {
                 if(key.SubKeyCount!=0)throw new IOException("Unexpected subkeys in OpenXR layer registration; no changes made.");
@@ -159,7 +165,7 @@ namespace LmuQuadViewLauncher {
             // in that path. Save and verify a persistent copy before replacement.
             try{WriteKey(parent,backup,original,security);parent.Flush();}
             catch(Exception error) {
-                throw new IOException("Cannot create a verified registry backup with the original permissions. The original layer list was not replaced. Use the Steam launch wrapper if Windows refuses this key's ownership. Backup location: "+parent.Name+"\\"+backup+".",error);
+                throw new IOException("Cannot create a verified registry backup with the original permissions. The original layer list was not replaced. Windows reported: "+error.Message+" Use the Steam launch wrapper if system policy prevents registration. Backup location: "+parent.Name+"\\"+backup+".",error);
             }
             bool removed=false;
             try {

@@ -4,6 +4,15 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
+## 0.3.2 - 2026-11-04
+
+- Remove fixed executable SHA256 restrictions from the launcher, diagnostic CLI and native DLL.
+  Keep native code-anchor/resource checks and record the actual executable hash
+  in run metadata. Alpha builds still require rendering validation.
+- Fix automatic-start backup creation for SYSTEM-owned registry keys by using
+  a scoped restore privilege. Preserve the original owner and access rules
+  without manual Registry Editor ownership changes or granting Users write access.
+
 ## 0.3.1 - 2026-11-03
 
 - Read automatic-start activation from a per-user local file, with the older

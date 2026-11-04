@@ -37,8 +37,15 @@ key before rollback; the error reports its location. If Windows will not allow
 preserving the original key owner/permissions, installation stops before replacing
 the original list. The legacy Steam wrapper remains available in that case.
 
+The installer temporarily enables Windows' restore privilege on its registration
+thread to preserve an original SYSTEM owner when creating the backup and replacement
+key. It restores the previous thread token afterwards. Taking ownership in Registry
+Editor or granting Users full control is unnecessary for this owner-copy failure.
+An ACL or system policy that denies registry writes can still prevent installation;
+the error includes the underlying Windows message. Parent-key permissions are unchanged.
+
 The bootstrap forwards non-LMU instances unchanged. For the configured LMU it
-validates the supported executable, package/installed DLL match, saved settings
+validates the configured executable path, package/installed DLL match, saved settings
 and layer order before creating the adapter/provider chain. Quad sessions omit
 OpenGridXR to avoid the known crop mismatch; VRS preserves it. QVFR retains the
 VectorXR OSD layer. Registry entries are not disabled for other games. Existing

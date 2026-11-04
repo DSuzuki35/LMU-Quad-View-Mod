@@ -23,13 +23,11 @@
 #include "resource_diagnostics.hpp"
 #include "../prototype/lmu_reconstructed.hpp"
 #include "vendor/minhook-1.3.4/include/MinHook.h"
-#include <wincrypt.h>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <mutex>
 #include <vector>
 
@@ -242,25 +240,11 @@ void diagnoseNativeEye(const char* stage,unsigned eye,ID3D11Texture2D* texture,I
         readable(rtv,sizeof(void*))?rtv:nullptr,readable(srv,sizeof(void*))?srv:nullptr,
         readable(context,sizeof(void*))?context:nullptr,log_line);
 }
-bool correctDiskBuild() {
+bool correctProcess() {
     wchar_t path[32768]{};
-    if(!GetModuleFileNameW(nullptr,path,32768) ||
-       _wcsicmp(std::filesystem::path(path).filename().c_str(),L"Le Mans Ultimate.exe")) return false;
-    std::ifstream file(std::filesystem::path(path),std::ios::binary);
-    if(!file) return false;
-    HCRYPTPROV provider{}; HCRYPTHASH hash{};
-    if(!CryptAcquireContextW(&provider,nullptr,nullptr,PROV_RSA_AES,CRYPT_VERIFYCONTEXT)) return false;
-    if(!CryptCreateHash(provider,CALG_SHA_256,0,0,&hash)) {CryptReleaseContext(provider,0);return false;}
-    bool okay=true;
-    char bytes[65536];
-    while(file) { file.read(bytes,sizeof(bytes)); auto n=file.gcount();
-        if(n && !CryptHashData(hash,reinterpret_cast<BYTE*>(bytes),DWORD(n),0)) {okay=false;break;} }
-    if(!file.eof()) okay=false;
-    BYTE digest[32]{}; DWORD size=sizeof(digest);
-    okay=okay && CryptGetHashParam(hash,HP_HASHVAL,digest,&size,0) && size==32;
-    CryptDestroyHash(hash);CryptReleaseContext(provider,0);
-    char hex[65]{}; for(unsigned i=0;i<32;++i) std::snprintf(hex+2*i,3,"%02x",digest[i]);
-    return okay && !std::strcmp(hex,lmu::reconstructed::executable_sha256);
+    const auto length=GetModuleFileNameW(nullptr,path,32768);
+    return length && length<32768 &&
+        !_wcsicmp(std::filesystem::path(path).filename().c_str(),L"Le Mans Ultimate.exe");
 }
 template<std::size_t N> bool matches(std::uintptr_t rva,const std::array<std::uint8_t,N>& bytes) {
     return readable(address<void>(rva),N) && !std::memcmp(address<void>(rva),bytes.data(),N);
@@ -1098,11 +1082,12 @@ bool engine_start(ID3D11DeviceContext* context) {
     if(stereoVrsMode){auditRequested=false;nativeUploadOptIn=false;nativeUploadBatchOptIn=false;nativeUploadOuterOptIn=false;}
     if(std::strcmp(mode,"quad") && !stereoTiming && !stereoVrsMode) {log_line("engine: trace mode; no native hooks");return true;}
     base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
-    if(!correctDiskBuild() || !matches(0xd58a70,render_anchor) ||
+    if(!correctProcess()) {log_line("engine: unexpected executable name; hooks refused");return false;}
+    if(!matches(0xd58a70,render_anchor) ||
        !matches(0x557810,projection_setter_anchor) || !matches(0x557870,derived_anchor) ||
        !matches(0x617090,ui_anchor) || !matches(0x617fb0,ui_eye_anchor) || !matches(0x5de200,scene_anchor) ||
        !matches(0x6188d0,mask_anchor)) {
-        log_line("engine: build or code anchor mismatch; hooks refused");return false;
+        log_line("engine: code anchor mismatch; hooks refused");return false;
     }
     char vrsOptIn[8]{};
     const DWORD vrsLength=GetEnvironmentVariableA("LMU_QV_VRS_EXCLUSIVE",vrsOptIn,sizeof(vrsOptIn));

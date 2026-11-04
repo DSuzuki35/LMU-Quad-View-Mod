@@ -5,10 +5,10 @@ A free Windows x64 / D3D11 mod that adds two outer and two focus views to
 Quad-Views-Foveated (QVFR) or VectorXR separately to provide quad views on a
 stereo runtime.
 
-**v0.3.1 is an experimental offline build.** Headset and runtime compatibility
+**v0.3.2 is an experimental offline build.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
-Version 0.3.1 retains the **Benchmark** page with Minimal and
+Version 0.3.2 retains the **Benchmark** page with Minimal and
 Detailed in-headset overlays, separate joystick bindings for visibility and
 manual recording, local HTML/CSV/JSON reports, and latest-launch diagnostics.
 Enable Benchmark before launching and leave the launcher open. See
@@ -81,7 +81,7 @@ contributions are welcome. See [the contribution guide](CONTRIBUTING.md).
 
 ## Install and launch
 
-1. Use the complete `LMU-Quad-View-Mod-0.3.1.zip` package. Published builds are on [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
+1. Use the complete `LMU-Quad-View-Mod-0.3.2.zip` package. Published builds are on [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
 2. Extract the **complete ZIP** to a writable folder outside the LMU installation.
 3. Open **LMU-QuadView-Launcher.exe**. Keep its `.exe.config` file beside it.
 4. In **Setup**, select the LMU game folder. Ensure your headset's OpenXR runtime
@@ -215,10 +215,11 @@ matched CPU/GPU measurements. The [SPS research branch](https://github.com/DSuzu
 retains its historical name; its additional diagnostics are excluded from this
 offset release.
 
-Supported LMU executable SHA256:
+Previously validated LMU executable SHA256:
 `66942337813B301B87D12EDFA330F33354A2A4B8CD9B048885CBF77EB6F940CF`.
-The build guard and resource checks must remain enabled. A game update needs
-revalidation. No Studio397 endorsement or anti-cheat approval is claimed.
+Different executable hashes are accepted. Native hook signatures and resource
+checks remain enforced; alpha branches and game updates still need rendering
+validation. No Studio397 endorsement or anti-cheat approval is claimed.
 Broad headset support is a target, not a guarantee.
 
 ## Diagnostics and support

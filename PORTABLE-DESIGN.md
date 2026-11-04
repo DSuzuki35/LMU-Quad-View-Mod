@@ -18,7 +18,7 @@ Implementation tasks:
 - [x] Separate candidate ZIP, manifest/privacy checks and independent review.
 - [ ] Live Dream Air/sboys3/SteamVR and fixed-foveation checks (hardware required).
 
-Constraints: keep the pinned game build and renderer guards; preserve auxiliary
+Constraints: keep the native hook signatures and renderer guards; preserve auxiliary
 swapchain identity, gamma handling and runtime output sizes. Retain outer<=focus
 per-axis validation. QVFR default dimensions may violate that constraint; supply
 an LMU-only profile and report incompatible dimensions rather than guessing.

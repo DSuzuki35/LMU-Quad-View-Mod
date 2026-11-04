@@ -1,4 +1,4 @@
-LMU QUAD VIEW MOD — v0.3.1
+LMU QUAD VIEW MOD — v0.3.2
 
 SIGNED BUILD
 I bought a code-signing certificate for this project. The DLL and executables
@@ -112,7 +112,7 @@ outer target dimensions; uncovered edges are black. Focus resolution is unchange
 Focus is kept inside the cropped view, and narrowed if it cannot fit. Actual GPU
 savings depend on the smaller native outer bank; full-size fallback/PPFX costs remain.
 Restart LMU for crop, resolution or FOV changes. Live controls are not implemented.
-LMU's own crop settings remain bypassed. Keep the pinned game-build guard enabled.
+LMU's own crop settings remain bypassed. Native hook and resource checks remain enabled.
 
 MOTION COMPENSATION TEST CANDIDATE
 Submission preserves compensated poses and accepts changed projection spaces.

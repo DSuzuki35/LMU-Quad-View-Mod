@@ -38,7 +38,7 @@ removing the environment variable reintroduces the known conflict.
   overlay. Automatic GPU-driven focus resizing has been removed from corrected
   0.2.1 after failed user testing. Do not restore its min/max/reserve controls
   or controller from older commits. Runtime resolution scaling is not implemented.
-- Keep executable/hash and hook-anchor validation, resource/state restoration,
+- Keep executable identity and hook-anchor validation, resource/state restoration,
   launch isolation, diagnostics, regression tests and third-party notices.
 - Integrate OpenGridXR mask, sharpening and streaming at explicitly defined
   stages using the same projection state. Do not independently recrop stereo
@@ -60,7 +60,7 @@ alpha when inspecting RGB: it is not uniformly opaque.
 
 Validate fixed and tracked gaze, head motion, crop on/off, manual focus sizes,
 HUD/menus and provider output. Measure performance separately from
-capture readback. Preserve the pinned engine build checks during integration.
+capture readback. Preserve native hook-signature checks during integration.
 
 ## Hardware evidence and limits
 

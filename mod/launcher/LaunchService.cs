@@ -11,7 +11,6 @@ using Microsoft.Win32;
 
 namespace LmuQuadViewLauncher {
     public static class LaunchService {
-        public const string SupportedExecutableHash="66942337813B301B87D12EDFA330F33354A2A4B8CD9B048885CBF77EB6F940CF";
         const string ProviderName="XR_APILAYER_MBUCCHIA_quad_views_foveated";
         internal const string VectorXrProviderName="XR_APILAYER_DIENERTECH_VECTORXR";
         const string AdapterName="XR_APILAYER_LMU_quadview";
@@ -207,7 +206,6 @@ namespace LmuQuadViewLauncher {
         }
         internal static void ValidateExecutable(string executable) {
             if(!File.Exists(executable)) throw new FileNotFoundException("Select the folder containing Le Mans Ultimate.exe.",executable);
-            if(!String.Equals(HashFile(executable),SupportedExecutableHash,StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("LMU executable differs from the supported build. This mod needs validation for that game version.");
         }
         static void WriteJson(string path,object value) {
             File.WriteAllText(path,new JavaScriptSerializer().Serialize(value),new UTF8Encoding(false));
@@ -251,7 +249,7 @@ namespace LmuQuadViewLauncher {
         }
         internal static object PreparedMetadata(string root,LauncherSettings settings,LayerPlan plan,ProcessStartInfo info,string log) {
             return new {Status="prepared",Pid=(int?)null,Mode=settings.Backend=="VRS"?"vrs":"quad",Backend=settings.Backend,FoveationMode=settings.FoveationMode,VrsPeripheralRate=settings.VrsPeripheralRate,
-                Exe=info.FileName,Arguments=info.Arguments,ExeSHA256=SupportedExecutableHash,LayerSHA256=HashFile(System.IO.Path.Combine(root,@"build\lmu_quadview.dll")),
+                Exe=info.FileName,Arguments=info.Arguments,ExeSHA256=HashFile(info.FileName),LayerSHA256=HashFile(System.IO.Path.Combine(root,@"build\lmu_quadview.dll")),
                 ProviderManifest=plan.ProviderPath,ProviderName=plan.ProviderName,ProviderSHA256=plan.Library==null?null:HashFile(plan.Library),
                 ExplicitManifest=plan.ExplicitManifest,EnabledLayers=plan.Layers,DisabledImplicitSwitches=plan.DisableVariables,OpenGridXrDisabled=info.EnvironmentVariables["DISABLE_OPENGRIDXR"]=="1",Log=log,
                 DiagnosticsEnabled=settings.DiagnosticsEnabled,BenchmarkEnabled=settings.DiagnosticsEnabled&&settings.BenchmarkEnabled,BenchmarkRequested=settings.BenchmarkEnabled,BenchmarkTemplate=settings.BenchmarkTemplate,

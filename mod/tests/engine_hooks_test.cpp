@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <fstream>
 
 namespace lmuqv {
 bool testQuadFrame=false,testFullFovAvailable=true,testUiScenePresent=false;
@@ -170,8 +171,14 @@ void outerUploadSettingsTest(){
 }
 
 }
-int main() {
+int main(int argc,char** argv) {
     using namespace lmuqv;
+    if(argc==2&&std::strcmp(argv[1],"--process-identity")==0) {
+        wchar_t path[32768]{};require(GetModuleFileNameW(nullptr,path,32768)!=0,"Process path unavailable");
+        const bool namedLmu=_wcsicmp(std::filesystem::path(path).filename().c_str(),L"Le Mans Ultimate.exe")==0;
+        require(correctProcess()==namedLmu,"Native executable identity must not require a fixed disk hash");
+        return 0;
+    }
     // QVFR issues opaque handles 1 and 2. Exact native identity, not numeric
     // value, decides whether an eye is assigned (reported log regression).
     XrSwapchain eyeHandles[]{reinterpret_cast<XrSwapchain>(1),XR_NULL_HANDLE};

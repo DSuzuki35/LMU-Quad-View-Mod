@@ -64,8 +64,10 @@ class LaunchServiceTests {
             var metadataFactory=typeof(LaunchService).GetMethod("PreparedMetadata",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic);
             Check(metadataFactory!=null,"Prepared metadata must be inspectable without starting LMU");
             Directory.CreateDirectory(Path.Combine(root,"build"));File.WriteAllBytes(Path.Combine(root,"build","lmu_quadview.dll"),new byte[]{4,5,6});
+            Directory.CreateDirectory(settings.GameDirectory);File.WriteAllBytes(info.FileName,new byte[]{1,2,3});
             var prepared=metadataFactory.Invoke(null,new object[]{root,settings,plan,info,Path.Combine(root,"quad.log")});
             var savedMetadata=new JavaScriptSerializer().Deserialize<Dictionary<string,object>>(new JavaScriptSerializer().Serialize(prepared));
+            Check((string)savedMetadata["ExeSHA256"]=="039058C6F2C0CB492C533B0A4D14EF77CC0F78ABCCCED5287D84A1A2011CFB81","Diagnostics must hash the actual game executable");
             Check((bool)savedMetadata["OpenGridXrDisabled"],"OpenGridXR isolation missing from run metadata");
             Check(Convert.ToDecimal(savedMetadata["CropWidthPercent"])==75.5m&&Convert.ToDecimal(savedMetadata["CropHeightPercent"])==42.25m,"Crop missing from run metadata");
             Check(Convert.ToDecimal(savedMetadata["FocusOffsetXPercent"])==-12.5m&&Convert.ToDecimal(savedMetadata["FocusOffsetYPercent"])==50,"Offsets missing from run metadata");
@@ -234,9 +236,10 @@ class LaunchServiceTests {
             File.WriteAllBytes(dll,new byte[]{1,2,3});File.WriteAllText(manifest,original.Replace("XR_APILAYER_MBUCCHIA_quad_views_foveated","wrong_layer"));
             Reject(delegate{LaunchService.ReadProviderManifest(manifest);},"Unrelated layer accepted");
             var fakeExe=Path.Combine(root,"fake.exe");File.WriteAllText(fakeExe,"not LMU");
-            Reject(delegate{LaunchService.ValidateExecutable(fakeExe);},"Pinned game hash guard weakened");
+            LaunchService.ValidateExecutable(fakeExe);
+            File.Delete(fakeExe);Reject(delegate{LaunchService.ValidateExecutable(fakeExe);},"Missing executable accepted");
             Reject(delegate{LaunchService.Prepare(root,settings);},"Prepare accepted missing game/package");
-            Console.WriteLine("LaunchService tests passed: QVFR/VectorXR/native, discovery, explicit order, duplicate/conflicting-layer isolation, manifests, environment reset, pinned hash guard");
+            Console.WriteLine("LaunchService tests passed: QVFR/VectorXR/native, discovery, explicit order, duplicate/conflicting-layer isolation, manifests, environment reset, executable existence and actual hash metadata");
             return 0;
         } finally {
             System.Threading.Thread.CurrentThread.CurrentCulture=originalCulture;
