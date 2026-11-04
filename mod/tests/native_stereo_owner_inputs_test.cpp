@@ -65,13 +65,14 @@ NativeStereoOwnerInputs capture(Fixture& f,NativeStereoOwnerInputLimits limits={
     fixture=&f;return capture_native_stereo_owner_inputs(f.owner[0].data(),3,readable,limits);
 }
 void empty(const NativeStereoOwnerInputs& out,const char* reason){
-    assert(!out.complete&&!out.renderingEligible&&out.owners.empty()&&out.world.empty()&&out.ownerTokens.empty()&&out.sources.empty()&&out.meshes.empty());
+    assert(!out.complete&&!out.admissionReady&&!out.renderingEligible&&out.owners.empty()&&out.world.empty()&&out.nativeRequirements.empty()&&out.ownerTokens.empty()&&out.sources.empty()&&out.meshes.empty());
+    assert(out.worldRefreshOwners==0&&out.boundsAdmissionOwners==0);
     assert(std::string(out.reason).find(reason)!=std::string::npos);
 }
 }
 int main(){
     Fixture f;const auto original=f;_mm_setcsr(0x1fbf);auto out=capture(f);
-    assert(out.complete&&!out.renderingEligible&&out.owners.size()==3&&out.sources.size()==3&&out.meshes.size()==6);
+    assert(out.complete&&out.admissionReady&&!out.renderingEligible&&out.owners.size()==3&&out.sources.size()==3&&out.meshes.size()==6);
     assert(_mm_getcsr()==0x1fbf&&!std::memcmp(&f,&original,sizeof(f)));
     assert(out.owners[0].children==std::vector<uint32_t>({1,2}));
     assert(out.sources[1].owner==1&&out.sources[1].firstMesh==2&&out.meshes[3].source==1&&out.meshes[3].index==1);
@@ -88,9 +89,26 @@ int main(){
     Fixture::put(f.mesh[1].data(),0,uint32_t(77));Fixture::put(f.owner[1].data(),0x3e0,uint64_t(900));
     assert(out.meshes[2].flags==0x8000&&out.owners[1].state.currentValue==41);
     f.~Fixture();new(&f)Fixture();
-    Fixture::put(f.owner[1].data(),0,uint32_t(0x400000));empty(capture(f),"refresh");
-    Fixture::put(f.owner[1].data(),0x80,uint64_t(1));assert(capture(f).complete); // native attachment bypass
+    // Dirty/bounds owners are copyable inputs, never silently prepared inputs.
+    for(uint32_t flags:{0x400000u,0x80000u,0x480000u}){
+        Fixture::put(f.owner[1].data(),0,flags);const auto before=f;out=capture(f);
+        assert(out.complete&&!out.admissionReady&&!out.renderingEligible&&!std::memcmp(&f,&before,sizeof(f)));
+        assert(out.nativeRequirements[1]==((flags&0x400000?NativeOwnerWorldRefresh:0)|(flags&0x80000?NativeOwnerBoundsAdmission:0)));
+        assert(out.worldRefreshOwners==((flags&0x400000)!=0)&&out.boundsAdmissionOwners==((flags&0x80000)!=0));
+        plan=plan_native_stereo_owner_inputs(out,{{{1,true},{3,true}}});
+        assert(!plan.complete&&plan.reason==NativeStereoOwnerPlanReason::UnsupportedOwnerFlags&&plan.eyes[0].ownerOrder.empty()&&plan.transitions.empty());
+    }
+    Fixture::put(f.owner[1].data(),0x80,uint64_t(1));out=capture(f);
+    assert(out.complete&&out.admissionReady&&out.nativeRequirements[1]==NativeOwnerReady); // native attachment bypass
     Fixture::put(f.owner[1].data(),0,uint32_t(0));Fixture::put(f.owner[1].data(),0x80,uint64_t(0));
+    // A parent refresh traverses descendants, including right-only children.
+    Fixture::put(f.owner[0].data(),0,uint32_t(0x400000));out=capture(f);
+    assert(out.complete&&!out.admissionReady&&out.worldRefreshOwners==3);
+    for(auto requirement:out.nativeRequirements)assert(requirement&NativeOwnerWorldRefresh);
+    uint32_t nan=0x7fc12345u;Fixture::put(f.owner[1].data(),0x298,nan);out=capture(f);
+    uint32_t copied=0;std::memcpy(&copied,&out.world[1][0],4);assert(out.complete&&copied==nan);
+    Fixture::put(f.owner[0].data(),0,uint32_t(0));empty(capture(f),"non-finite");
+    Fixture::put(f.owner[1].data(),0x298,float(1));
     f.children[1]=f.children[0];empty(capture(f),"not a tree");f.children[1]=reinterpret_cast<uintptr_t>(f.owner[2].data());
     f.children[1]=reinterpret_cast<uintptr_t>(f.owner[0].data());empty(capture(f),"not a tree");f.children[1]=reinterpret_cast<uintptr_t>(f.owner[2].data());
     Fixture::put(f.owner[1].data(),0xa0,uint64_t(1));empty(capture(f),"malformed");Fixture::vector(f.owner[1].data(),0xa0,0,0);
@@ -123,6 +141,11 @@ int main(){
     frame.begin(key,10,20,{1,true});auto next=key;++next.frame;
     assert(!frame.append(next,10,20,{1,true},f.owner[0].data(),3,readable)&&!frame.seal(key));
     frame.reset();assert(!frame.inputs(key));
+    Fixture::put(f.owner[0].data(),0,uint32_t(0x480000));frame.begin(key,10,20,{1,true});
+    assert(frame.append(key,10,20,{1,true},f.owner[0].data(),3,readable)&&frame.seal(key));
+    assert(frame.root_count()==1&&frame.admission_ready_roots()==0&&frame.world_refresh_owners()==3&&frame.bounds_admission_owners()==1);
+    assert(frame.inputs(key)&&!frame.inputs(key)->front().admissionReady);
+    frame.reset();assert(frame.world_refresh_owners()==0&&frame.bounds_admission_owners()==0&&frame.admission_ready_roots()==0);
     // Maximum-depth native trees must not consume the C++ call stack.
     std::vector<std::array<unsigned char,0x430>> deep(nativeStereoOwnerNodeLimit);
     std::vector<uint64_t> links(nativeStereoOwnerNodeLimit-1);
@@ -134,5 +157,5 @@ int main(){
     assert(maximum.complete&&maximum.owners.size()==nativeStereoOwnerNodeLimit&&maximum.sources.empty());
     limits={};--limits.owners;
     empty(capture_native_stereo_owner_inputs(deep[0].data(),3,deepReadable,limits),"vector limit");
-    std::cout<<"Owned native source producer: unfiltered/right-only trees, mesh descriptions, no native mutation, strict bounds, allocation failures, frame sealing and admission planner passed\n";
+    std::cout<<"Owned native source producer: unfiltered/right-only trees, explicit native refresh/bounds dependencies, stale world protection, mesh descriptions, no native mutation, strict bounds, allocation failures, frame sealing and admission planner passed\n";
 }

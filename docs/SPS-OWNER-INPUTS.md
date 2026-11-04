@@ -46,17 +46,41 @@ It never calls native refresh, retain, classifier, callback or cleanup methods.
 The producer validates pointer spans/overflow, vector headers, tree structure,
 source-to-owner correspondence and mesh record bounds. Its maximums are 4,096
 owners, 65,536 source references, 32,768 mesh descriptions and 8 MiB of attempted
-native reads. Failure returns empty owned payloads. Unsupported null-attachment
-refresh/bounds flags `0x480000` refuse the tree; attachments retain the planner's
-existing bypass behavior. These are admitted-domain limits, not engine limits.
+native reads. Invalid structure/read/allocation failure returns empty owned
+payloads. These are admitted-domain limits, not engine limits.
+
+Description completeness and admission readiness are separate. Null-attachment
+flag `0x400000` records pending native world refresh; it also marks descendants'
+world values pending because the native refresh traverses children. Flag
+`0x80000` records a pending native bounds-admission path. Attachment bypass is
+preserved. Dirty world bytes may be copied but are explicitly stale; they are
+never treated as numeric prepared transforms. Ready world matrices must remain
+finite. Source/mesh descriptions are values at capture time, not post-refresh
+payloads. The snapshot does not perform or simulate either native operation.
 
 The frame collector shares those budgets across selected roots and rejects
 overlapping trees or changed view/global masks. It publishes after the left
 focus scope completes and seals successfully, never as a partially built forest.
 This is a selected-root subset, not proof of complete scene/root coverage.
-The existing owner planner accepts its copied tree with two explicitly supplied
-view masks, preserving left/right admissions, right-only branches and scalar
-transition order. It does not silently assume both eyes use the left mask.
+The existing owner planner accepts a ready copied tree with two explicitly
+supplied view masks, preserving left/right admissions, right-only branches and
+scalar transition order. It refuses snapshots with any pending refresh/bounds
+dependency. It does not silently assume both eyes use the left mask.
+
+## First live run and continuation
+
+The `b7397ae` VectorXR run completed 2,844 focus pairs, with both prepared camera
+projections consumed and zero camera fallbacks. The new owner hook ran, but its
+conservative whole-tree refresh/bounds guard refused all 2,844 frames. Zero
+owner frames/roots were published. This proves the hook reaches the path; it
+does not validate owner inputs or demonstrate SPS/performance gains.
+
+The revised producer collects descriptions for those trees and records their
+native requirements instead of discarding them solely for their flags. This
+extends snapshot collection, not the rendering planner's supported domain.
+Readiness and shutdown messages distinguish copied roots, admission-ready roots,
+world-refresh owners and bounds-admission owners. Shutdown totals count repeated
+frame observations, not unique objects. The revision still needs live validation.
 
 ## Remaining work
 
@@ -67,7 +91,10 @@ tree, no native mutation and frame sealing. Hook tests cover changed native
 anchors and disabled/unknown-caller forwarding. Compiled forwarding restores
 the original arguments and tail-jumps to the native function after the input
 guard has restored floating-point state. This is static/synthetic evidence;
-the new owner producer has not yet been run in the game.
+the revised owner producer has not yet been run in the game. Additional fixtures
+cover the two requirements separately/together, inherited refresh requirements,
+stale NaN bit preservation, ready-matrix refusal, attachment bypass and planner
+refusal until native dependencies are resolved.
 
 The descriptions do not retain native mesh arrays, geometry/material objects,
 shader resources or mutable GPU contents. A copied callback address is not a
@@ -75,7 +102,8 @@ frozen callback result. Concurrent changes/coherence and intervening native
 candidate/cache effects are not established by copying. Both the producer and
 planner therefore remain ineligible for native draw/preparation suppression.
 
-Next validate selected-root coverage and connect independent candidate sorting,
+Next resolve the recorded native refresh/bounds dependencies, validate selected-root
+coverage and connect independent candidate sorting,
 owned constant payloads and resource versions/lifetimes. Establish complete
 native side effects and legal HDR/depth target seeding/consumers, then connect
 the paired D3D11 backend. Native traversal, cleanup and both eye draws remain

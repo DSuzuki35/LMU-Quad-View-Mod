@@ -798,3 +798,22 @@ pending. Next establish root coverage, independent candidates/order, actual
 constant/resource ownership, native side effects and target/consumer integration
 for the paired backend. No additional timing capture is required for this stage.
 See [owned descriptions and limits](SPS-OWNER-INPUTS.md).
+
+## Live owner guard result and dependency-aware copying (2026-11-05)
+
+The first owner-input build `b7397ae` ran through 2,844 focus pairs in VectorXR.
+Camera inputs were consumed for both eyes without refusals/fallbacks. The owner
+hook reached its capture path but refused every frame with `unsupported native
+refresh/bounds path`; no owner frame or root was published. This is an uncovered
+native domain, not an owner-equivalence or speedup result.
+
+The producer now preserves complete descriptions with explicit pending world-
+refresh and bounds-admission requirements. Parent refresh marks descendants'
+world values pending. Stale world bits remain descriptions and cannot qualify
+for admission planning; ready matrices still require finite values. Native
+operations, arrays/resources and both draws remain unchanged. The immutable-tree
+planner's rejection remains in force, so copied-input counts cannot be confused
+with prepared or renderable coverage. New tests cover separate/combined flags,
+propagation, stale NaN bits, finite ready inputs, attachment bypass, frame totals
+and refusal to plan unresolved inputs. Resolving the native dependencies and
+independent candidate/target integration remain the next implementation work.

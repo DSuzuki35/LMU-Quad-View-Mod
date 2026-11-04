@@ -19,6 +19,9 @@ struct NativeStereoOwnerSourceInput {
     uint32_t id=0,owner=0,flags=0,firstMesh=0,meshCount=0;
     uint64_t geometryToken=0,arrayToken=0,lazyStateToken=0; // Not retained engine objects.
 };
+enum NativeStereoOwnerRequirement : uint8_t {
+    NativeOwnerReady=0,NativeOwnerWorldRefresh=1,NativeOwnerBoundsAdmission=2
+};
 struct NativeStereoOwnerInputs {
     bool complete=false;
     const char* reason="incomplete owner inputs";
@@ -27,9 +30,14 @@ struct NativeStereoOwnerInputs {
     // Entire unfiltered tree, including branches rejected by the first eye.
     std::vector<NativeStereoOwner> owners;
     std::vector<NativeStereoMatrix> world;
+    // WorldRefresh propagates to descendants: a native parent refresh traverses
+    // children. Copied world values at those nodes are stale, not draw inputs.
+    std::vector<uint8_t> nativeRequirements;
     std::vector<uint64_t> ownerTokens; // Ephemeral identity keys, no lifetime claim.
     std::vector<NativeStereoOwnerSourceInput> sources;
     std::vector<NativeStereoOwnerMeshInput> meshes;
+    size_t worldRefreshOwners=0,boundsAdmissionOwners=0;
+    bool admissionReady=false; // A complete description is not prepared state.
     bool renderingEligible=false;
 };
 namespace native_owner_input_detail {
@@ -82,20 +90,29 @@ inline NativeStereoOwnerInputs capture_native_stereo_owner_inputs(
         Reader reader(readable,out.bytesRead,limits.bytes,reason);
         std::unordered_set<uint64_t> ownerSet,sourceSet;
         const auto rootToken=uint64_t(reinterpret_cast<uintptr_t>(root));
-        ownerSet.insert(rootToken);out.ownerTokens.push_back(rootToken);out.owners.emplace_back();out.world.emplace_back();
+        ownerSet.insert(rootToken);out.ownerTokens.push_back(rootToken);out.owners.emplace_back();out.world.emplace_back();out.nativeRequirements.push_back(NativeOwnerReady);
         for(size_t index=0;index<out.owners.size();++index){
             const auto token=out.ownerTokens[index];NativeStereoOwner node;uint64_t attachment=0;
             if(!reader.read(token,0,node.state.flags)||!reader.read(token,0x74,node.state.mask)||
                !reader.read(token,0x80,attachment)||!reader.read(token,0x3d8,node.state.pendingValue)||
                !reader.read(token,0x3e0,node.state.currentValue))return refuse(reason);
             node.state.attachmentPresent=attachment!=0;
-            if(!attachment&&(node.state.flags&0x480000u))return refuse("unsupported native refresh/bounds path");
+            auto& requirements=out.nativeRequirements[index];
+            if(!attachment){
+                if(node.state.flags&0x400000u)requirements|=NativeOwnerWorldRefresh;
+                if(node.state.flags&0x80000u)requirements|=NativeOwnerBoundsAdmission;
+            }
+            const bool worldPending=(requirements&NativeOwnerWorldRefresh)!=0;
+            out.worldRefreshOwners+=worldPending;
+            out.boundsAdmissionOwners+=(requirements&NativeOwnerBoundsAdmission)!=0;
             Vector children,sources;
             if(!vector(reader,token,0xa0,limits.owners-out.owners.size(),children,reason)||
                !vector(reader,token,0x88,limits.sources-out.sources.size(),sources,reason))return refuse(reason);
             if(sources.count){
                 if(!reader.read(token,0x298,out.world[index]))return refuse(reason);
-                for(float value:out.world[index])if(!std::isfinite(value))return refuse("non-finite native owner matrix");
+                // Preserve dirty input bits without treating them as a prepared
+                // transform. Only a ready matrix is eligible for numeric use.
+                if(!worldPending)for(float value:out.world[index])if(!std::isfinite(value))return refuse("non-finite native owner matrix");
             }
             for(size_t i=0;i<sources.count;++i){
                 uint64_t geometry=0;if(!reader.read(sources.begin,i*8,geometry))return refuse(reason);
@@ -129,10 +146,13 @@ inline NativeStereoOwnerInputs capture_native_stereo_owner_inputs(
                 if(!child||!ownerSet.insert(child).second)return refuse("native owner graph is not a tree");
                 node.children.push_back(uint32_t(out.owners.size()));
                 out.ownerTokens.push_back(child);out.owners.emplace_back();out.world.emplace_back();
+                out.nativeRequirements.push_back(worldPending?NativeOwnerWorldRefresh:NativeOwnerReady);
             }
             out.owners[index]=std::move(node);
         }
-        out.complete=true;out.reason="owned unfiltered owner/source/mesh descriptions";return out;
+        out.complete=true;out.admissionReady=out.worldRefreshOwners==0&&out.boundsAdmissionOwners==0;
+        out.reason=out.admissionReady?"owned unfiltered owner/source/mesh descriptions":"owned descriptions; native refresh/bounds required";
+        return out;
     } catch(const std::bad_alloc&){return refuse("owner input allocation failure");}
       catch(...){return refuse("owner input reader failure");}
 }
@@ -142,6 +162,7 @@ inline NativeStereoOwnerInputs capture_native_stereo_owner_inputs(
 inline NativeStereoOwnerPlanResult plan_native_stereo_owner_inputs(
     const NativeStereoOwnerInputs& inputs,const std::array<NativeStereoOwnerView,2>& views) noexcept {
     if(!inputs.complete)return {};
+    if(!inputs.admissionReady){NativeStereoOwnerPlanResult result;result.reason=NativeStereoOwnerPlanReason::UnsupportedOwnerFlags;return result;}
     try {
         NativeStereoOwnerPlanInput plan;plan.owners=inputs.owners;plan.globalMask=inputs.globalMask;plan.views=views;
         return build_native_stereo_owner_plan(plan);
@@ -185,6 +206,15 @@ public:
         } catch(...){reason_="owner frame allocation failure";complete_=false;roots_.clear();owners_.clear();return false;}
     }
     size_t root_count()const{return complete_?roots_.size():0;}
+    size_t world_refresh_owners()const{
+        size_t count=0;if(complete_)for(const auto& root:roots_)count+=root.worldRefreshOwners;return count;
+    }
+    size_t bounds_admission_owners()const{
+        size_t count=0;if(complete_)for(const auto& root:roots_)count+=root.boundsAdmissionOwners;return count;
+    }
+    size_t admission_ready_roots()const{
+        size_t count=0;if(complete_)for(const auto& root:roots_)count+=root.admissionReady;return count;
+    }
     bool seal(const StereoFrameIdentity& identity){
         if(!complete_||identity_!=identity||roots_.empty())return false;
         sealed_=true;reason_="owned selected-root frame sealed";return true;

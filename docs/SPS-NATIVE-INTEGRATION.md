@@ -3,9 +3,12 @@
 The bounded ordinary-transform numeric prerequisite has passed on sampled native
 VectorXR calls. Step 3 now supplies an early owned focus-camera pair and copies
 unfiltered owner/source descriptions from verified selected-root entries. The
-camera projection consumer passed a live VectorXR run; the new owner producer
-still needs live correctness validation. Full draw-input ownership and native
-consumer scheduling remain open. No native preparation or draws are suppressed.
+camera projection consumer passed live VectorXR runs. The first owner-producer
+run reached the hook but refused all 2,844 frames on refresh/bounds flags. Its
+revision separates complete descriptions from unresolved native requirements;
+live validation and resolving those requirements remain open. Full draw-input
+ownership and native consumer scheduling remain open. No native preparation or
+draws are suppressed.
 
 ## Observed scheduling constraint
 
@@ -33,7 +36,7 @@ accounting for its copies and synchronization. Neither approach is implemented.
 | Input or effect | Existing evidence | Requirement for replacement |
 | --- | --- | --- |
 | Current per-eye camera data | Early owned current-frame focus pair; both projection consumers used it for 10,379 VectorXR pairs with no fallbacks | Validate remaining native world position/metadata/history and broader camera modes. Predicted right matrices do not overwrite the native view. |
-| Owner admission | Owned tree planner and verified pre-admission selected-root producer, including right-only subtrees | Live producer validation, complete root coverage and any intervening mutations excluded by the planner's immutable-tree contract. Both view masks must be supplied independently. |
+| Owner admission | Owned tree planner and verified pre-admission selected-root producer, including right-only subtrees; descriptions now record native refresh/bounds dependencies | Resolve dependencies before planning admission; live producer validation, complete root coverage and any intervening mutations excluded by the planner's immutable-tree contract. Both view masks must be supplied independently. |
 | Candidate membership/order | Numeric classifier agreement and late ordered packet observations | Independently valid candidates and sorting for each eye. Neither eye's visible list nor matching draw indices represents the other eye. |
 | Source/mesh lifetime | Owned bounded source/mesh descriptions copied at the early owner entry | Own the actual draw payloads and resources. Description fields and identity tokens do not retain mutable native arrays or objects. |
 | Draw inputs | Shader proof, binding signatures and resource-use observations | Owned constant payloads and legal lifetimes/content versions for shaders, geometry and material resources. COM references preserve object lifetime, not arbitrary mutable resource contents. |
@@ -72,8 +75,9 @@ candidates and draw payloads, checking equivalence against original traversal.
    trees and descriptions to that interface, without retaining native objects.
    Whole-scene coverage and mutable draw-resource ownership remain unestablished.
 3. Keep ordered membership, per-eye distances and shared state transitions.
-   Explicitly reject unsupported refresh/special/callback paths before producing
-   a partial plan. Never call engine methods on fabricated copied objects.
+   Record refresh/bounds dependencies in the description producer and reject them
+   in admission planning until implemented. Keep special/callback paths native.
+   Never call engine methods on fabricated copied objects.
 4. Compare the produced admissions and ordered candidates with both original
    native traversals for the same frame/scene/view identities. Include left-only
    and right-only objects, allocation/refusal paths and frame transitions. Keep

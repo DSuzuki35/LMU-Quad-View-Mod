@@ -184,6 +184,7 @@ NativeStereoOwnerInputFrame spsOwnerFrame;
 std::mutex spsOwnerMutex;
 thread_local StereoFrameIdentity spsOwnerFrameIdentity;
 uint64_t spsOwnerFrames=0,spsOwnerRoots=0,spsOwnerRefusals=0;
+uint64_t spsOwnerAdmissionReadyRoots=0,spsOwnerWorldRefreshOwners=0,spsOwnerBoundsAdmissionOwners=0;
 bool spsOwnerReadyLogged=false,spsOwnerRefusalLogged=false;
 struct SpsPreparationCounts {uint64_t prepared=0,refused=0,used[2]{},fallback[2]{};} spsPreparationCounts;
 void prepareHistory(History& history,ViewSnapshot* owner,bool nativePreviousValid) {
@@ -1035,7 +1036,13 @@ void renderHook(void* unknown, bool laterPass) {
         NativeStereoFpGuard fp;std::lock_guard<std::mutex> lock(spsOwnerMutex);
         if(spsOwnerFrame.seal(frameInputs.identity)){
             ++spsOwnerFrames;spsOwnerRoots+=spsOwnerFrame.root_count();
-            if(!spsOwnerReadyLogged){log_line("sps_prepare: unfiltered owner/source/mesh descriptions for selected roots owned before left admission; subset sealed for scheduler input; native traversal/draws retained");spsOwnerReadyLogged=true;}
+            spsOwnerAdmissionReadyRoots+=spsOwnerFrame.admission_ready_roots();
+            spsOwnerWorldRefreshOwners+=spsOwnerFrame.world_refresh_owners();
+            spsOwnerBoundsAdmissionOwners+=spsOwnerFrame.bounds_admission_owners();
+            if(!spsOwnerReadyLogged){char line[384]{};std::snprintf(line,sizeof(line),
+                "sps_prepare: selected-root descriptions sealed roots=%zu admission_ready_roots=%zu world_refresh_owners=%zu bounds_admission_owners=%zu; pending native effects retained; no draw eligibility",
+                spsOwnerFrame.root_count(),spsOwnerFrame.admission_ready_roots(),spsOwnerFrame.world_refresh_owners(),spsOwnerFrame.bounds_admission_owners());
+                log_line(line);spsOwnerReadyLogged=true;}
         }else {++spsOwnerRefusals;if(!spsOwnerRefusalLogged){char line[256]{};
             std::snprintf(line,sizeof(line),"sps_prepare owner inputs unavailable: %s; native traversal retained",spsOwnerFrame.reason());
             log_line(line);spsOwnerRefusalLogged=true;}}
@@ -1291,6 +1298,7 @@ bool engine_start(ID3D11DeviceContext* context) {
     spsPreparationOptIn=!std::strcmp(mode,"quad")&&GetEnvironmentVariableA("LMU_QV_SPS_PREPARE",prepareSetting,sizeof(prepareSetting))==1&&prepareSetting[0]=='1';
     spsFocusFrame.reset();spsPreparationCounts={};spsPreparedLogged=spsPreparationRefusedLogged=false;
     {std::lock_guard<std::mutex> lock(spsOwnerMutex);spsOwnerFrame.reset();spsOwnerFrames=spsOwnerRoots=spsOwnerRefusals=0;
+        spsOwnerAdmissionReadyRoots=spsOwnerWorldRefreshOwners=spsOwnerBoundsAdmissionOwners=0;
         spsOwnerReadyLogged=spsOwnerRefusalLogged=false;spsOwnerFrameIdentity={};}
     char auditSetting[8]{};const auto auditLength=GetEnvironmentVariableA("LMU_QV_STEREO_AUDIT",auditSetting,sizeof(auditSetting));
     wchar_t auditDirectory[32768]{};const auto auditDirectoryLength=GetEnvironmentVariableW(L"LMU_QV_STEREO_AUDIT_DIR",auditDirectory,32768);
@@ -1518,9 +1526,10 @@ void engine_stop() {
     nativeOwnerInputEnabled.store(false);
     if(nativeOwnerInputHooked){MH_DisableHook(address<void>(nativeOwnerRva));MH_RemoveHook(address<void>(nativeOwnerRva));nativeOwnerInputHooked=false;}
     {std::lock_guard<std::mutex> lock(spsOwnerMutex);
-        if(spsPreparationOptIn){char line[256]{};std::snprintf(line,sizeof(line),
-            "sps_prepare owner summary complete_frames=%llu copied_roots=%llu refused_frames=%llu; source descriptions owned; native GPU resources/arrays not retained",
-            static_cast<unsigned long long>(spsOwnerFrames),static_cast<unsigned long long>(spsOwnerRoots),static_cast<unsigned long long>(spsOwnerRefusals));log_line(line);}
+        if(spsPreparationOptIn){char line[512]{};std::snprintf(line,sizeof(line),
+            "sps_prepare owner summary complete_frames=%llu copied_roots=%llu refused_frames=%llu admission_ready_roots=%llu world_refresh_owners=%llu bounds_admission_owners=%llu; counts are repeated frame observations; native effects/GPU resources not replaced",
+            static_cast<unsigned long long>(spsOwnerFrames),static_cast<unsigned long long>(spsOwnerRoots),static_cast<unsigned long long>(spsOwnerRefusals),
+            static_cast<unsigned long long>(spsOwnerAdmissionReadyRoots),static_cast<unsigned long long>(spsOwnerWorldRefreshOwners),static_cast<unsigned long long>(spsOwnerBoundsAdmissionOwners));log_line(line);}
         spsOwnerFrame.reset();spsOwnerFrameIdentity={};}
     if(spsPreparationOptIn){char line[384]{};std::snprintf(line,sizeof(line),
         "sps_prepare summary prepared_pairs=%llu refused_pairs=%llu prepared_projection_left=%llu prepared_projection_right=%llu fallback_left=%llu fallback_right=%llu; native eye draws retained",
