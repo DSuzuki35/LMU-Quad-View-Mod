@@ -536,3 +536,56 @@ The integration described at the top brings in main's crop/motion/launcher and
 frame-handling work. Before replacing draws, resolve candidate/resource
 lifetimes, remaining preparation effects, per-eye visibility/order and the
 native consumer schedule. Live transform agreement is still pending.
+
+## Awake VectorXR capture on the integrated baseline (2026-11-04)
+
+Two hotkey captures on integration commit `47493ce` completed four scene frames
+with VectorXR, both focus eyes and successful quad submissions. The layer hash
+matched the integrated diagnostic build. All 16 native opaque scopes completed,
+with no native scope/preparation drops or diagnostic abort. Resource tracing
+reported no event/use drops; its dependency coverage remains partial.
+
+The classifier supplied **8,192 available original-invocation comparisons with
+zero returned-flag or stored-flag mismatches**, including **4,096 focus-eye
+comparisons**. Both captures still reached the per-slot cap and explicitly report
+incomplete coverage. This extends the earlier outer-only agreement to sampled
+focus calls, not complete visibility, object ownership or production SPS.
+
+The transform diagnostic recorded 2,048 attempts, all unavailable with the reason
+`unsupported preparation flags or disabled shader`. It compared **zero scalars**;
+3,878 later attempts exceeded the diagnostic cap. Separately, all 15,467 complete
+preparation records used flag combinations other than exactly 1. The observed
+values were `0xf`, `0x2f`, `0x12f`, `0x292f`, `0x812f` and `0xa92f`.
+Thus the restricted whole-preparation comparison domain was not exercised.
+Increasing its record limit would not admit these calls, and zero mismatches
+with zero available comparisons must not be reported as agreement.
+
+Focus color was 1352x1734 RGBA16_FLOAT with one sample and D32_FLOAT depth. In the
+first capture, the two sampled focus pairs had 410/410 and 383/383 packets; their
+mesh order differed at 20 and 19 positions. In the second they had 344/345 and
+340/341 packets, each with one right-only mesh and much wider order differences.
+Each pair reused the observed color/depth banks. The next observed access after
+left group 31 was a group-32 draw into those banks, before right focus began.
+This again rules out simply delaying left opaque draws until the right eye.
+
+Four outer camera comparisons were available: projection/far-projection errors
+were zero, and maximum current/derived matrix-entry error was 0.0001220703125.
+Four focus camera comparisons remained unavailable due to unsupported focus
+projection input. These are numeric observations, not a pixel-error tolerance.
+
+### Next transform boundary
+
+Investigate observing the ordinary transform helper itself at RVA `0x565260`,
+after earlier bone/material preparation and before later preparation helpers.
+The pinned wrapper calls it when effective flag bit 0 is set, including the
+common observed `0x12f` path; the current diagnostic instead requires the entire
+wrapper's flags to equal 1. Broadening that equality to a bit test while retaining
+the existing before/after-wrapper comparison would admit unmodeled intervening
+effects and is not justified by these captures.
+
+Before implementing the helper probe, verify its calling/return convention,
+every admitted call site, mode arguments, target function boundary, and which
+outputs are observable at its return. Keep bounded reads, FP preservation,
+scope/generation checks and every original helper/preparation/draw. A successful
+helper comparison would establish only its numeric payload, not remove the
+larger native wrapper or establish scheduling. No SPS speedup was measured.

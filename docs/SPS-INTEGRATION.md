@@ -2,8 +2,12 @@
 
 This branch integrates main v0.3.3 (`c38e122`) and the complete SPS research from
 `experiment/sps-0.2.0` (`61a5940`, including `codex/sps-0.1.1`). Native rendering,
-preparation and draws remain enabled. The next result needed is a live comparison
-of the owned transform calculations with LMU, including both focus eyes.
+preparation and draws remain enabled. Two awake-headset captures have now been
+reviewed: the classifier agrees on sampled focus calls, but the transform probe
+made no numeric comparisons because none of the observed preparation calls used
+its admitted flag value. The next code change must address that probe boundary;
+repeating the unchanged capture cannot establish transform agreement. See the
+2026-11-04 live findings at the end of [SPS-DEVELOPMENT.md](SPS-DEVELOPMENT.md).
 
 ## Integration changes
 
@@ -45,7 +49,11 @@ The integrated layer SHA256 from this build is
 These fixtures do not establish live transform agreement, native SPS or a
 frametime improvement. Existing audit variable-shadow warnings remain.
 
-## Next live capture
+## Capture procedure
+
+This procedure produced the two captures reviewed above. Reuse it after the
+transform probe has been revised and tested; the current whole-preparation
+domain was not exercised by this scene.
 
 1. Extract this diagnostic package into a separate folder. Run its launcher,
    select your installed game directory and the quad-view provider you normally
