@@ -987,7 +987,7 @@ namespace LmuQuadViewLauncher
                 string mutexName;using(var sha=System.Security.Cryptography.SHA256.Create())mutexName="Local\\LMUQuadViewUI-"+BitConverter.ToString(sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(root).TrimEnd('\\').ToUpperInvariant()))).Replace("-","");
                 bool first;
                 using(var mutex=new System.Threading.Mutex(true,mutexName,out first)) {
-                    if(args.Length==0){if(first)Application.Run(new Launcher());return;}
+                    if(args.Length==0){if(first){LaunchService.PruneRuntime(Path.Combine(root,"runtime"),DateTime.UtcNow);Application.Run(new Launcher());}return;}
                     if(args.Length==2&&args[0]=="--attach") {
                         var settings=AutoStart.Settings(root);int pid=Int32.Parse(args[1]);AutoStart.ValidateProcess(settings,pid);
                         if(!first)return;

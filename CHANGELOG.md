@@ -4,6 +4,18 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
+## 0.3.3 - 2026-11-04
+
+Based on a patch contributed by **Markus Stahl**, reviewed and extended for the Windows build.
+
+- Skip the FOV-scale hook when runtime settings are inactive, including Stereo VRS.
+- Check native hook targets against executable sections and x64 function boundaries. The two known leaf functions without unwind entries require their complete code signatures. This improves rejection of incompatible game builds; it does not guarantee support for future or alpha versions. No executable SHA256 allowlist is reinstated.
+- Pin the launcher EXE and its .NET configuration to hashes stored in the protected autostart installation. Verify both before starting a helper and hold read-only file locks for the child lifetime. Reinstall automatic startup after updating the package.
+- Clean generated runtime manifests and one-shot autoload INIs older than one day when LMU is not running. Preserve logs, unknown files and linked paths. Keep the newest three generated QVFR profile backups.
+- Remove the product's layer-order backup during autostart removal; preserve unrelated registry data and recovery/conflict keys.
+- Preserve UTF-8/UTF-16/UTF-32 encoding and BOM in QVFR settings. Refuse malformed or unrecognized encoding without changing the file.
+- Add Windows tests for hook boundaries, launcher/config tampering and file locks, cleanup, backup retention and Unicode preservation.
+
 ## 0.3.2 - 2026-11-04
 
 - Remove fixed executable SHA256 restrictions from the launcher, diagnostic CLI and native DLL.

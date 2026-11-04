@@ -14,7 +14,7 @@ $core += @('BenchmarkController.cs','JoystickInput.cs','LaunchDiagnostics.cs','S
 $icon = Join-Path $PSScriptRoot 'launcher/assets/quadview.ico'
 $appConfig = Join-Path $PSScriptRoot 'launcher/app.config'
 $references = @('/reference:System.Windows.Forms.dll','/reference:System.Drawing.dll','/reference:System.Xml.Linq.dll','/reference:System.Web.Extensions.dll')
-foreach ($test in @('RegistrySafetyTests','SettingsTests','FocusGeometryTests','LaunchServiceTests','SteamLaunchTests','AutoStartTests','RegistryOwnerTests','ProcessPathTests','JoystickInputTests','LaunchDiagnosticsTests','BenchmarkTests')) {
+foreach ($test in @('RegistrySafetyTests','HardeningTests','SettingsTests','FocusGeometryTests','LaunchServiceTests','SteamLaunchTests','AutoStartTests','RegistryOwnerTests','ProcessPathTests','JoystickInputTests','LaunchDiagnosticsTests','BenchmarkTests')) {
     $testOutput = Join-Path $PSScriptRoot ('build/' + $test + '.exe')
     & $compiler /nologo /target:exe /platform:x64 /optimize+ /warnaserror+ "/main:$test" "/out:$testOutput" @references @core (Join-Path $PSScriptRoot "launcher/$test.cs")
     if ($LASTEXITCODE -ne 0) { throw "$test compilation failed" }

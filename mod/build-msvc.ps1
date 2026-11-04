@@ -31,9 +31,11 @@ try {
     Run-Test 'autoload_policy_test'
     Compile ($common+@('tests/autoload_activation_test.cpp',('/Fe'+(Join-Path $build 'autoload_activation_test.exe'))))
     Run-Test 'autoload_activation_test'
-    Compile ($common+@('/LD','autoload.cpp',$versionResource,'advapi32.lib','ole32.lib',('/Fe'+(Join-Path ([IO.Path]::GetDirectoryName($LayerOutput)) 'lmu_autostart.dll'))))
-    Compile ($common+@('tests/autoload_passthrough_test.cpp','autoload.cpp','advapi32.lib','ole32.lib',('/Fe'+(Join-Path $build 'autoload_passthrough_test.exe'))))
+    Compile ($common+@('/LD','autoload.cpp',$versionResource,'advapi32.lib','ole32.lib','bcrypt.lib',('/Fe'+(Join-Path ([IO.Path]::GetDirectoryName($LayerOutput)) 'lmu_autostart.dll'))))
+    Compile ($common+@('tests/autoload_passthrough_test.cpp','autoload.cpp','advapi32.lib','ole32.lib','bcrypt.lib',('/Fe'+(Join-Path $build 'autoload_passthrough_test.exe'))))
     Run-Test 'autoload_passthrough_test'
+    Compile ($common+@('tests/autoload_verification_test.cpp','advapi32.lib','ole32.lib','bcrypt.lib',('/Fe'+(Join-Path $build 'autoload_verification_test.exe'))))
+    Run-Test 'autoload_verification_test'
     if($AutoloadOnly){return}
     if($FocusLeaseOnly){
         Compile ($common+@('tests/focus_image_lease_test.cpp','d3d11.lib','d3dcompiler.lib',('/Fe'+(Join-Path $build 'focus_image_lease_test.exe'))))

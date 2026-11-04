@@ -1040,9 +1040,54 @@ const Hook hooks[]{
     {0x51f040,reinterpret_cast<void*>(&worldSortHook),reinterpret_cast<void**>(&worldSortOriginal)},
     {0x5df6f0,reinterpret_cast<void*>(&nativeViewHook),reinterpret_cast<void**>(&nativeViewOriginal)}
 };
+constexpr std::size_t fovScaleHookIndex=5;
+static_assert(sizeof(hooks)/sizeof(hooks[0])>fovScaleHookIndex);
+// 0.3.3: only hooks whose code anchor was verified for this launch are installed.
+// The list records exactly what was patched so teardown removes the same set.
+std::array<std::size_t,sizeof(hooks)/sizeof(hooks[0])> selectedHooks{};
 void removeHooks(std::size_t count) {
-    for(std::size_t i=0;i<count;++i) MH_DisableHook(address<void>(hooks[i].rva));
-    for(std::size_t i=0;i<count;++i) MH_RemoveHook(address<void>(hooks[i].rva));
+    for(std::size_t i=0;i<count;++i) MH_DisableHook(address<void>(hooks[selectedHooks[i]].rva));
+    for(std::size_t i=0;i<count;++i) MH_RemoveHook(address<void>(hooks[selectedHooks[i]].rva));
+}
+// 0.3.3: the executable hash is no longer an allowlist, so short prologue anchors
+// alone could match an unrelated function after a game update. A hook target must
+// lie in an executable section and must not fall inside a framed function's range
+// unless it is exactly that function's start (x64 exception directory). Only
+// two known leaf functions may lack .pdata; their complete bodies must match.
+bool knownLeafTarget(std::uintptr_t rva) {
+    return (rva==0x557810&&matches(rva,projection_leaf_anchor))||
+        (rva==fovScaleRva&&matches(rva,fovScaleAnchor));
+}
+bool hookTargetPlausible(std::uintptr_t rva) {
+    const auto* dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if(!readable(dos,sizeof(*dos))||dos->e_magic!=IMAGE_DOS_SIGNATURE||dos->e_lfanew<=0||dos->e_lfanew>0x100000)return false;
+    const auto* nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(base+std::uintptr_t(dos->e_lfanew));
+    if(!readable(nt,sizeof(*nt))||nt->Signature!=IMAGE_NT_SIGNATURE||nt->FileHeader.Machine!=IMAGE_FILE_MACHINE_AMD64||nt->OptionalHeader.Magic!=IMAGE_NT_OPTIONAL_HDR64_MAGIC||nt->FileHeader.SizeOfOptionalHeader!=sizeof(IMAGE_OPTIONAL_HEADER64))return false;
+    const auto imageSize=nt->OptionalHeader.SizeOfImage;
+    if(rva>=imageSize||static_cast<std::uint32_t>(dos->e_lfanew)>imageSize||sizeof(*nt)>imageSize-static_cast<std::uint32_t>(dos->e_lfanew))return false;
+    const auto* sections=IMAGE_FIRST_SECTION(nt);const unsigned sectionCount=nt->FileHeader.NumberOfSections;
+    if(!sectionCount||sectionCount>96||!readable(sections,sizeof(IMAGE_SECTION_HEADER)*sectionCount))return false;
+    bool executable=false;
+    for(unsigned i=0;i<sectionCount;++i){
+        const auto begin=std::uintptr_t(sections[i].VirtualAddress);
+        const auto size=std::uintptr_t((std::max)(sections[i].Misc.VirtualSize,sections[i].SizeOfRawData));
+        if(rva>=begin&&rva-begin<size&&(sections[i].Characteristics&IMAGE_SCN_MEM_EXECUTE))executable=true;
+    }
+    if(!executable)return false;
+    if(nt->OptionalHeader.NumberOfRvaAndSizes<=IMAGE_DIRECTORY_ENTRY_EXCEPTION)return false;
+    const auto& directory=nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION];
+    const std::size_t count=directory.Size/sizeof(RUNTIME_FUNCTION);
+    if(!directory.VirtualAddress||!count||directory.Size%sizeof(RUNTIME_FUNCTION)||directory.VirtualAddress>=imageSize||directory.Size>imageSize-directory.VirtualAddress)return false;
+    const auto* functions=reinterpret_cast<const RUNTIME_FUNCTION*>(base+directory.VirtualAddress);
+    if(!readable(functions,count*sizeof(RUNTIME_FUNCTION)))return false;
+    std::size_t low=0,high=count; // first entry whose BeginAddress > rva
+    while(low<high){const auto mid=low+(high-low)/2;if(functions[mid].BeginAddress<=rva)low=mid+1;else high=mid;}
+    if(low!=0){
+        const auto& candidate=functions[low-1];
+        if(candidate.BeginAddress>=candidate.EndAddress||candidate.EndAddress>imageSize)return false;
+        if(rva<candidate.EndAddress)return rva==candidate.BeginAddress;
+    }
+    return knownLeafTarget(rva);
 }
 }
 
@@ -1177,26 +1222,37 @@ bool engine_start(ID3D11DeviceContext* context) {
     if(hookCount>6&&!matches(0x8c2d30,nativeEnumerateAnchor)){
         log_line("engine: native XR enumeration anchor mismatch; hooks refused");return false;
     }
+    // The FOV-scale hook only changes behavior with runtime settings, and its
+    // anchor is only verified in that mode. Never patch it unverified (VRS).
+    std::size_t selectedCount=0;
+    for(std::size_t i=0;i<hookCount;++i){
+        if(i==fovScaleHookIndex&&!nativeRuntimeSettings)continue;
+        if(!hookTargetPlausible(hooks[i].rva)){
+            char message[160]{};std::snprintf(message,sizeof(message),"engine: hook target %llx is not a function start in this executable; hooks refused",static_cast<unsigned long long>(hooks[i].rva));
+            log_line(message);return false;
+        }
+        selectedHooks[selectedCount++]=i;
+    }
     auto status=MH_Initialize();
     if(status!=MH_OK && status!=MH_ERROR_ALREADY_INITIALIZED) {log_line("engine: MH_Initialize failed");return false;}
     std::size_t created=0;
-    for(std::size_t i=0;i<hookCount;++i) {
-        const auto& hook=hooks[i];
+    for(std::size_t i=0;i<selectedCount;++i) {
+        const auto& hook=hooks[selectedHooks[i]];
         status=MH_CreateHook(address<void>(hook.rva),hook.detour,hook.original);
         if(status!=MH_OK) {removeHooks(created);log_line("engine: hook creation failed");return false;}
         ++created;
     }
-    for(std::size_t i=0;i<hookCount;++i) {
-        const auto& hook=hooks[i];
+    for(std::size_t i=0;i<selectedCount;++i) {
+        const auto& hook=hooks[selectedHooks[i]];
         if(MH_EnableHook(address<void>(hook.rva))!=MH_OK) {
             removeHooks(created);log_line("engine: hook enable failed");return false;
         }
     }
     innerHistory[0]={};innerHistory[1]={};
-    installedHookCount=hookCount;
+    installedHookCount=selectedCount;
     stereo_audit_configure(context,auditRequested,auditDirectory,log_line);
     const std::array<std::uint8_t,5> prepareCall0{0xe8,0x1c,0x34,0x04,0x00},prepareCall1{0xe8,0x62,0x33,0x04,0x00};
-    if(stereo_audit_enabled()&&matches(nativePrepareRva,nativePrepareAnchor)&&matches(0x51f5bf,prepareCall0)&&matches(0x51f679,prepareCall1)){
+    if(stereo_audit_enabled()&&matches(nativePrepareRva,nativePrepareAnchor)&&hookTargetPlausible(nativePrepareRva)&&matches(0x51f5bf,prepareCall0)&&matches(0x51f679,prepareCall1)){
         if(MH_CreateHook(address<void>(nativePrepareRva),reinterpret_cast<void*>(&nativePrepareHook),reinterpret_cast<void**>(&nativePrepareOriginal))==MH_OK){
             if(MH_EnableHook(address<void>(nativePrepareRva))==MH_OK){nativePrepareHooked=true;log_line("stereo_audit native per-mesh preparation hook enabled; pointer identities anonymized; original preparation retained");}
             else MH_RemoveHook(address<void>(nativePrepareRva));
@@ -1207,7 +1263,7 @@ bool engine_start(ID3D11DeviceContext* context) {
     const std::array<std::uint8_t,15> uploadBindAnchor{0x48,0x89,0x5c,0x24,0x10,0x48,0x89,0x74,0x24,0x20,0x57,0x48,0x83,0xec,0x20};
     const std::array<std::uint8_t,6> lightUploadSize{0x41,0xb8,0x80,0x0a,0x00,0x00};
     if(nativeUploadBatchOptIn&&(!matches(0x5cae5c,lightUploadSize)||!nativeUploadBatch.configure(context))){nativeUploadBatchOptIn=false;log_line("cpu_upload_batch unavailable: native layout or D3D11.1 constant-buffer offsets unsupported; native uploads retained");}
-    if((nativeUploadOptIn||nativeUploadBatchOptIn)&&matches(nativeUploadRva,nativeUploadAnchor)&&matches(0x5b602f,uploadCall)&&matches(0x5c3f20,uploadBindAnchor)){
+    if((nativeUploadOptIn||nativeUploadBatchOptIn)&&matches(nativeUploadRva,nativeUploadAnchor)&&hookTargetPlausible(nativeUploadRva)&&matches(0x5b602f,uploadCall)&&matches(0x5c3f20,uploadBindAnchor)){
         if(MH_CreateHook(address<void>(nativeUploadRva),reinterpret_cast<void*>(&nativeUploadHook),reinterpret_cast<void**>(&nativeUploadOriginal))==MH_OK){
             if(MH_EnableHook(address<void>(nativeUploadRva))==MH_OK){nativeUploadHooked=true;
                 log_line(nativeUploadBatchOptIn?"cpu_upload_batch enabled: outer/focus opaque group 31; unchanged-upload filtering + adaptive small-CB batching; large CBs stay native; native shaders/draws retained; experimental":

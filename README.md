@@ -5,10 +5,10 @@ A free Windows x64 / D3D11 mod that adds two outer and two focus views to
 Quad-Views-Foveated (QVFR) or VectorXR separately to provide quad views on a
 stereo runtime.
 
-**v0.3.2 is an experimental offline build.** Headset and runtime compatibility
+**v0.3.3 is an experimental offline build.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
-Version 0.3.2 retains the **Benchmark** page with Minimal and
+Version 0.3.3 retains the **Benchmark** page with Minimal and
 Detailed in-headset overlays, separate joystick bindings for visibility and
 manual recording, local HTML/CSV/JSON reports, and latest-launch diagnostics.
 Enable Benchmark before launching and leave the launcher open. See
@@ -81,7 +81,7 @@ contributions are welcome. See [the contribution guide](CONTRIBUTING.md).
 
 ## Install and launch
 
-1. Use the complete `LMU-Quad-View-Mod-0.3.2.zip` package. Published builds are on [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
+1. Use the complete `LMU-Quad-View-Mod-0.3.3.zip` package. Published builds are on [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
 2. Extract the **complete ZIP** to a writable folder outside the LMU installation.
 3. Open **LMU-QuadView-Launcher.exe**. Keep its `.exe.config` file beside it.
 4. In **Setup**, select the LMU game folder. Ensure your headset's OpenXR runtime
@@ -248,6 +248,10 @@ and test commands, review expectations and release steps. The
 [architecture guide](docs/ARCHITECTURE.md) maps the launcher, XR adapter, hooks and
 resource ownership. Native builds run tests; graphics tests use D3D11 WARP and
 cannot replace headset QA. Release versions come from the root `VERSION` file.
+
+## Contributors
+
+**Markus Stahl** contributed the 0.3.3 hook-safety, launcher-integrity, cleanup and QVFR encoding patch. The changes were reviewed and extended with Windows regression tests before integration.
 
 ## Optional support
 

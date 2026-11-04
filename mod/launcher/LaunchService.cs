@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -238,6 +239,7 @@ namespace LmuQuadViewLauncher {
             var logDirectory=System.IO.Path.Combine(root,"logs");
             var stamp=DateTime.Now.ToString("yyyyMMdd-HHmmss",CultureInfo.InvariantCulture)+"-"+Guid.NewGuid().ToString("N").Substring(0,8);
             var runDirectory=System.IO.Path.Combine(root,settings.DiagnosticsEnabled?"logs":"runtime");
+            PruneRuntime(System.IO.Path.Combine(root,"runtime"),DateTime.UtcNow);
             var plan=MakeLayerPlan(root,settings.Backend,provider,System.IO.Path.Combine(runDirectory,"layers-"+stamp));
             AddImplicitDisables(plan,RegisteredManifests(true),settings.Backend);
             if(settings.DiagnosticsEnabled)Directory.CreateDirectory(logDirectory);
@@ -246,6 +248,36 @@ namespace LmuQuadViewLauncher {
             if(gameArguments!=null)info.Arguments=gameArguments;
             if(settings.DiagnosticsEnabled)WriteJson(MetadataPath(info),PreparedMetadata(root,settings,plan,info,log));
             return info;
+        }
+        // 0.3.3: diagnostics-off launches left one layers-* folder per start in runtime\
+        // forever, and a failed automatic start could leave its one-shot INI behind.
+        // Only remove this package's own generated names after a day. logs\ stays
+        // user-owned. Prepare may run inside an autoload helper while LMU is alive.
+        internal static readonly TimeSpan RuntimeRetention=TimeSpan.FromDays(1);
+        internal static void PruneRuntime(string directory,DateTime nowUtc) {
+            try {
+                if(!Directory.Exists(directory))return;
+                var info=new DirectoryInfo(directory);
+                for(var parent=info;parent!=null;parent=parent.Parent)if((parent.Attributes&FileAttributes.ReparsePoint)!=0)return;
+                var games=Process.GetProcessesByName("Le Mans Ultimate");bool running=games.Length!=0;
+                foreach(var game in games)game.Dispose();
+                if(running)return;
+                foreach(var child in info.GetDirectories("layers-*")) {
+                    if(!Regex.IsMatch(child.Name,"^layers-[0-9]{8}-[0-9]{6}-[0-9a-f]{8}$")||nowUtc-child.LastWriteTimeUtc<RuntimeRetention)continue;
+                    if((child.Attributes&FileAttributes.ReparsePoint)!=0)continue;
+                    try {
+                        var files=child.GetFiles();
+                        if(child.GetDirectories().Length!=0||files.Any(f=>(f.Attributes&FileAttributes.ReparsePoint)!=0||
+                            (f.Name!="XR_APILAYER_MBUCCHIA_quad_views_foveated.json"&&f.Name!="XR_APILAYER_DIENERTECH_VECTORXR.json")))continue;
+                        foreach(var file in files)file.Delete();
+                        child.Delete(false);
+                    } catch(IOException) { } catch(UnauthorizedAccessException) { }
+                }
+                foreach(var file in info.GetFiles("autoload-*.ini")) {
+                    if((file.Attributes&FileAttributes.ReparsePoint)!=0||!Regex.IsMatch(file.Name,"^autoload-[0-9a-fA-F]{32}\\.ini$")||nowUtc-file.LastWriteTimeUtc<RuntimeRetention)continue;
+                    try { file.Delete(); } catch(IOException) { } catch(UnauthorizedAccessException) { }
+                }
+            } catch(IOException) { } catch(UnauthorizedAccessException) { }
         }
         internal static object PreparedMetadata(string root,LauncherSettings settings,LayerPlan plan,ProcessStartInfo info,string log) {
             return new {Status="prepared",Pid=(int?)null,Mode=settings.Backend=="VRS"?"vrs":"quad",Backend=settings.Backend,FoveationMode=settings.FoveationMode,VrsPeripheralRate=settings.VrsPeripheralRate,

@@ -52,6 +52,20 @@ class AutoStartTests {
         Check(String.Join(";",result)=="our.json;qvfr.json;other.json","Third-party order changed");
         string testKey=@"Software\LMUQuadView\Tests-"+Guid.NewGuid().ToString("N");
         try {
+            string product=testKey+@"\Product";
+            using(var backup=Registry.CurrentUser.CreateSubKey(product+@"\LayerOrderBackup"))backup.SetValue("original.json",0);
+            AutoStart.RemoveLayerOrderBackup(Registry.CurrentUser,product);
+            using(var removed=Registry.CurrentUser.OpenSubKey(product))Check(removed==null,"Empty product key retained");
+            using(var key=Registry.CurrentUser.CreateSubKey(product))key.SetValue("foreign",1);
+            using(var key=Registry.CurrentUser.CreateSubKey(product+@"\Other"))key.SetValue("foreign",2);
+            using(var key=Registry.CurrentUser.CreateSubKey(product+@"\LayerOrderBackup\Unexpected"))key.SetValue("foreign",3);
+            AutoStart.RemoveLayerOrderBackup(Registry.CurrentUser,product);
+            using(var key=Registry.CurrentUser.OpenSubKey(product+@"\LayerOrderBackup\Unexpected"))Check(key!=null&&(int)key.GetValue("foreign")==3,"Unexpected backup subtree removed");
+            using(var key=Registry.CurrentUser.OpenSubKey(product+@"\LayerOrderBackup",true))key.DeleteSubKey("Unexpected");
+            AutoStart.RemoveLayerOrderBackup(Registry.CurrentUser,product);
+            using(var key=Registry.CurrentUser.OpenSubKey(product))Check((int)key.GetValue("foreign")==1&&key.GetSubKeyNames().SequenceEqual(new[]{"Other"}),"Unrelated registry data removed");
+            using(var key=Registry.CurrentUser.OpenSubKey(product,true)){key.DeleteSubKey("Other");key.DeleteValue("foreign");}
+            AutoStart.RemoveLayerOrderBackup(Registry.CurrentUser,product);
             using(var parent=Registry.CurrentUser.CreateSubKey(testKey)) {
               RegistrySecurity security;
               using(var key=parent.CreateSubKey("Implicit")) {

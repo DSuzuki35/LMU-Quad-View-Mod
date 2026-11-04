@@ -2,7 +2,9 @@
 #define NOMINMAX
 #include <windows.h>
 #include <objbase.h>
+#include <bcrypt.h>
 #include <algorithm>
+#include <vector>
 #include <filesystem>
 #include <mutex>
 #include <unordered_map>
@@ -93,12 +95,64 @@ std::wstring moduleDirectory() {
     auto length=GetModuleFileNameW(module,path,32768);if(!length||length>=32768)throw std::runtime_error("Invalid installed layer path.");
     return std::filesystem::path(path).parent_path().wstring();
 }
+// 0.3.3: the protected installation records the launcher hash approved by the
+// elevated installer. The user-writable package copy must still match it.
+std::string expectedLauncherHash(const wchar_t* record) {
+    HANDLE file=CreateFileW((moduleDirectory()+L"\\"+record).c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(file==INVALID_HANDLE_VALUE)throw std::runtime_error("The installed automatic startup predates launcher verification. Reinstall automatic startup from Setup.");
+    char buffer[80]{};DWORD read=0;const bool ok=ReadFile(file,buffer,sizeof(buffer)-1,&read,nullptr)!=FALSE;CloseHandle(file);
+    std::string value(buffer,ok?read:0);while(!value.empty()&&(value.back()=='\r'||value.back()=='\n'||value.back()==' '))value.pop_back();
+    if(value.size()!=64||value.find_first_not_of("0123456789abcdef")!=std::string::npos)throw std::runtime_error("Invalid launcher verification record. Reinstall automatic startup from Setup.");
+    return value;
+}
+std::string sha256(HANDLE file) {
+    BCRYPT_ALG_HANDLE algorithm=nullptr;BCRYPT_HASH_HANDLE hash=nullptr;std::string result;
+    if(BCryptOpenAlgorithmProvider(&algorithm,BCRYPT_SHA256_ALGORITHM,nullptr,0)<0)throw std::runtime_error("SHA256 is unavailable.");
+    try {
+        if(BCryptCreateHash(algorithm,&hash,nullptr,0,nullptr,0,0)<0)throw std::runtime_error("SHA256 is unavailable.");
+        std::vector<unsigned char> chunk(1<<20);DWORD read=0;
+        for(;;) {
+            if(!ReadFile(file,chunk.data(),DWORD(chunk.size()),&read,nullptr))throw std::runtime_error("Cannot read the launcher for verification.");
+            if(!read)break;
+            if(BCryptHashData(hash,chunk.data(),read,0)<0)throw std::runtime_error("Cannot hash the launcher.");
+        }
+        unsigned char digest[32]{};
+        if(BCryptFinishHash(hash,digest,sizeof(digest),0)<0)throw std::runtime_error("Cannot hash the launcher.");
+        const char* digits="0123456789abcdef";for(auto b:digest){result+=digits[b>>4];result+=digits[b&15];}
+    }catch(...){if(hash)BCryptDestroyHash(hash);BCryptCloseAlgorithmProvider(algorithm,0);throw;}
+    BCryptDestroyHash(hash);BCryptCloseAlgorithmProvider(algorithm,0);return result;
+}
 void helper(const std::wstring& root,const std::wstring& arguments,bool wait) {
     auto executable=root+L"\\LMU-QuadView-Launcher.exe";
     auto command=quote(executable)+L" "+arguments;
-    STARTUPINFOW startup{};startup.cb=sizeof(startup);PROCESS_INFORMATION process{};
-    if(!CreateProcessW(executable.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_NO_WINDOW,nullptr,root.c_str(),&startup,&process))
-        throw std::runtime_error("Cannot start LMU settings helper. Reinstall automatic startup from the launcher.");
+    // Deny writes and deletion while verifying and starting, so the checked file is the started file.
+    HANDLE image=CreateFileW(executable.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_SEQUENTIAL_SCAN,nullptr);
+    if(image==INVALID_HANDLE_VALUE)throw std::runtime_error("Cannot open the LMU launcher. Reinstall automatic startup from the launcher.");
+    HANDLE config=CreateFileW((executable+L".config").c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    if(config==INVALID_HANDLE_VALUE){CloseHandle(image);throw std::runtime_error("Cannot open the launcher configuration. Reinstall automatic startup from Setup.");}
+    STARTUPINFOEXW startup{};startup.StartupInfo.cb=sizeof(startup);PROCESS_INFORMATION process{};
+    SIZE_T attributesSize=0;
+    InitializeProcThreadAttributeList(nullptr,1,0,&attributesSize);
+    std::vector<unsigned char> attributes(attributesSize);
+    startup.lpAttributeList=reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributes.data());
+    bool initialized=false;
+    try {
+        if(sha256(image)!=expectedLauncherHash(L"launcher.sha256")||sha256(config)!=expectedLauncherHash(L"launcher-config.sha256"))
+            throw std::runtime_error("LMU-QuadView-Launcher.exe differs from the copy approved during installation. Reinstall automatic startup from Setup.");
+        // Inherit only these two read handles. The child keeps both files locked
+        // until exit, including asynchronous --attach and delayed CLR startup.
+        HANDLE handles[]{image,config};
+        if(!SetHandleInformation(image,HANDLE_FLAG_INHERIT,HANDLE_FLAG_INHERIT)||!SetHandleInformation(config,HANDLE_FLAG_INHERIT,HANDLE_FLAG_INHERIT)||
+           !InitializeProcThreadAttributeList(startup.lpAttributeList,1,0,&attributesSize))
+            throw std::runtime_error("Cannot protect launcher startup handles.");
+        initialized=true;
+        if(!UpdateProcThreadAttribute(startup.lpAttributeList,0,PROC_THREAD_ATTRIBUTE_HANDLE_LIST,handles,sizeof(handles),nullptr,nullptr))
+            throw std::runtime_error("Cannot protect launcher startup handles.");
+        if(!CreateProcessW(executable.c_str(),command.data(),nullptr,nullptr,TRUE,CREATE_NO_WINDOW|EXTENDED_STARTUPINFO_PRESENT,nullptr,root.c_str(),&startup.StartupInfo,&process))
+            throw std::runtime_error("Cannot start LMU settings helper. Reinstall automatic startup from the launcher.");
+    }catch(...){if(initialized)DeleteProcThreadAttributeList(startup.lpAttributeList);CloseHandle(config);CloseHandle(image);throw;}
+    DeleteProcThreadAttributeList(startup.lpAttributeList);
+    CloseHandle(config);CloseHandle(image);
     CloseHandle(process.hThread);
     DWORD code=0;bool ok=true;
     if(wait){ok=WaitForSingleObject(process.hProcess,30000)==WAIT_OBJECT_0&&GetExitCodeProcess(process.hProcess,&code)&&code==0;}

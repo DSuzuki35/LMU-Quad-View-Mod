@@ -20,6 +20,9 @@ namespace LmuQuadViewLauncher {
         const string ManifestName="XR_APILAYER_LMU_autostart.json";
         const string RegistryParent=@"SOFTWARE\Khronos\OpenXR\1\ApiLayers";
         const string Signer="89F7F00A4FD4BD66F5617F1202B8E7B9DD662247";
+        const string LauncherName="LMU-QuadView-Launcher.exe";
+        const string LauncherHashName="launcher.sha256";
+        const string LauncherConfigHashName="launcher-config.sha256";
         static string InstallRoot {get{return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"LMU QuadView Layer");}}
         public static bool Elevated {get{using(var identity=WindowsIdentity.GetCurrent())return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);}}
         static void NoGame() {
@@ -222,7 +225,9 @@ namespace LmuQuadViewLauncher {
         static void InstallCore(string root) {
             NoGame();
             var files=new[]{Path.Combine(root,@"build\lmu_autostart.dll"),Path.Combine(root,@"build\lmu_quadview.dll")};CheckSigned(files);
-            var version=Hash(files[0]).Substring(0,16)+"-"+Hash(files[1]).Substring(0,16);
+            var launcher=Path.Combine(root,LauncherName);
+            var launcherHash=Hash(launcher);var configHash=Hash(launcher+".config");
+            var version=Hash(files[0]).Substring(0,16)+"-"+Hash(files[1]).Substring(0,16)+"-"+launcherHash.Substring(0,16)+"-"+configHash.Substring(0,16);
             var directory=Path.Combine(InstallRoot,version);CheckProtectedPath(directory);Directory.CreateDirectory(directory);
             for(int i=0;i<files.Length;i++) {
                 var target=Path.Combine(directory,Path.GetFileName(files[i]));
@@ -230,6 +235,10 @@ namespace LmuQuadViewLauncher {
                 if(Hash(files[i])!=Hash(target))throw new IOException("Installed DLL differs from the signed package.");
             }
             CheckSigned(files.Select(f=>Path.Combine(directory,Path.GetFileName(f))));
+            // 0.3.3: approve exactly this package launcher. The protected layer refuses
+            // to start a different user-writable launcher until automatic startup is reinstalled.
+            File.WriteAllText(Path.Combine(directory,LauncherHashName),launcherHash+"\r\n",Encoding.ASCII);
+            File.WriteAllText(Path.Combine(directory,LauncherConfigHashName),configHash+"\r\n",Encoding.ASCII);
             var manifest=Path.Combine(directory,ManifestName);
             File.WriteAllText(manifest,"{\"file_format_version\":\"1.0.0\",\"api_layer\":{\"name\":\"XR_APILAYER_LMU_autostart\",\"library_path\":\".\\\\lmu_autostart.dll\",\"api_version\":\"1.0\",\"implementation_version\":\"1\",\"description\":\"LMU Quad View automatic startup\",\"disable_environment\":\"LMU_QV_DISABLE_AUTOLOAD\"}}",new UTF8Encoding(false));
             using(var machine=RegistryKey.OpenBaseKey(RegistryHive.LocalMachine,RegistryView.Registry64))
@@ -250,9 +259,22 @@ namespace LmuQuadViewLauncher {
         }
         static void RemoveCore() {
             NoGame();
-            using(var machine=RegistryKey.OpenBaseKey(RegistryHive.LocalMachine,RegistryView.Registry64))
-            using(var key=machine.OpenSubKey(RegistryPath,true))if(key!=null)foreach(var name in key.GetValueNames())if(Owned(name))key.DeleteValue(name);
+            using(var machine=RegistryKey.OpenBaseKey(RegistryHive.LocalMachine,RegistryView.Registry64)) {
+                using(var key=machine.OpenSubKey(RegistryPath,true))if(key!=null)foreach(var name in key.GetValueNames())if(Owned(name))key.DeleteValue(name);
+                // 0.3.3: the pre-install layer-order backup is only needed while our layer is registered.
+                RemoveLayerOrderBackup(machine,@"SOFTWARE\LMUQuadView");
+            }
             // Old protected DLLs remain so an already-loaded foreign process can finish safely.
+        }
+        internal static void RemoveLayerOrderBackup(RegistryKey hive,string productPath) {
+            bool empty=false;
+            using(var product=hive.OpenSubKey(productPath,true))if(product!=null) {
+                // Never recursively remove unexpected subkeys or unrelated data.
+                using(var backup=product.OpenSubKey("LayerOrderBackup"))if(backup!=null&&backup.SubKeyCount!=0)return;
+                product.DeleteSubKey("LayerOrderBackup",false);
+                empty=product.SubKeyCount==0&&product.ValueCount==0;
+            }
+            if(empty)hive.DeleteSubKey(productPath,false);
         }
         public static void Enable(string root,bool enable) {
             NoGame();
@@ -275,6 +297,11 @@ namespace LmuQuadViewLauncher {
                 foreach(var name in new[]{"lmu_autostart.dll","lmu_quadview.dll"})
                     if(Hash(Path.Combine(Path.GetDirectoryName(first),name))!=Hash(Path.Combine(root,"build",name)))
                         throw new InvalidOperationException("The installed layer belongs to a different package. Reinstall automatic startup from this launcher.");
+                foreach(var pair in new[]{new[]{LauncherHashName,LauncherName},new[]{LauncherConfigHashName,LauncherName+".config"}}) {
+                    var approved=Path.Combine(Path.GetDirectoryName(first),pair[0]);
+                    if(!File.Exists(approved)||File.ReadAllText(approved).Trim()!=Hash(Path.Combine(root,pair[1])))
+                        throw new InvalidOperationException("The launcher or its configuration changed since automatic startup was installed. Reinstall automatic startup from this launcher.");
+                }
             }
         }
     }

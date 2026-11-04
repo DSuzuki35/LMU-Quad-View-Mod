@@ -170,6 +170,41 @@ void outerUploadSettingsTest(){
     for(size_t i=0;i<prior.size();++i)SetEnvironmentVariableA(names[i],prior[i].empty()?nullptr:prior[i].c_str());
 }
 
+// 0.3.3: hook targets must be plausible function starts in the real PE image.
+void hookTargetTest(){
+    using namespace lmuqv;
+    const auto saved=base;base=reinterpret_cast<std::uintptr_t>(GetModuleHandleW(nullptr));
+    DWORD64 imageBase=0;
+    const auto* entry=RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(&outerUploadSettingsTest),&imageBase,nullptr);
+    require(entry&&imageBase==base,"framed test function has no unwind entry");
+    require(hookTargetPlausible(entry->BeginAddress),"framed function start rejected");
+    require(entry->EndAddress-entry->BeginAddress>1&&!hookTargetPlausible(entry->BeginAddress+1),"target inside a framed function accepted");
+    require(!hookTargetPlausible(0),"PE header accepted as hook target");
+    require(!hookTargetPlausible(reinterpret_cast<std::uintptr_t>(&selectedHooks)-base),"data section accepted as hook target");
+    base=0;require(!hookTargetPlausible(0x1000),"missing image accepted");
+    // Synthetic mapped image: arbitrary gaps are rejected, only complete known
+    // leaf bodies can be used without an unwind record.
+    std::vector<unsigned char> image(0x600000);
+    base=reinterpret_cast<std::uintptr_t>(image.data());
+    auto* dos=reinterpret_cast<IMAGE_DOS_HEADER*>(base);dos->e_magic=IMAGE_DOS_SIGNATURE;dos->e_lfanew=0x80;
+    auto* nt=reinterpret_cast<IMAGE_NT_HEADERS64*>(base+0x80);nt->Signature=IMAGE_NT_SIGNATURE;
+    nt->FileHeader.Machine=IMAGE_FILE_MACHINE_AMD64;nt->FileHeader.NumberOfSections=1;nt->FileHeader.SizeOfOptionalHeader=sizeof(IMAGE_OPTIONAL_HEADER64);
+    nt->OptionalHeader.Magic=IMAGE_NT_OPTIONAL_HDR64_MAGIC;nt->OptionalHeader.SizeOfImage=static_cast<DWORD>(image.size());nt->OptionalHeader.NumberOfRvaAndSizes=16;
+    nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION]={0x800,sizeof(RUNTIME_FUNCTION)};
+    auto* section=IMAGE_FIRST_SECTION(nt);section->VirtualAddress=0x1000;section->Misc.VirtualSize=0x5ff000;section->Characteristics=IMAGE_SCN_MEM_EXECUTE;
+    auto* function=reinterpret_cast<RUNTIME_FUNCTION*>(base+0x800);function->BeginAddress=0x1000;function->EndAddress=0x1020;
+    require(hookTargetPlausible(0x1000)&&!hookTargetPlausible(0x1001)&&!hookTargetPlausible(0x1030),"synthetic framed function/gap classification failed");
+    std::memcpy(image.data()+0x557810,projection_leaf_anchor.data(),projection_leaf_anchor.size());
+    std::memcpy(image.data()+fovScaleRva,fovScaleAnchor.data(),fovScaleAnchor.size());
+    require(hookTargetPlausible(0x557810)&&hookTargetPlausible(fovScaleRva),"verified leaf rejected");
+    require(!hookTargetPlausible(0x557811)&&!hookTargetPlausible(fovScaleRva+1),"leaf interior accepted");
+    image[0x557841]=0x90;image[fovScaleRva+7]=0x90;
+    require(!hookTargetPlausible(0x557810)&&!hookTargetPlausible(fovScaleRva),"partial leaf signatures accepted");
+    nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXCEPTION].Size=0xffffffff;
+    require(!hookTargetPlausible(0x1000),"out-of-image exception directory accepted");
+    base=saved;
+}
+
 }
 int main(int argc,char** argv) {
     using namespace lmuqv;
@@ -197,6 +232,7 @@ int main(int argc,char** argv) {
     base=savedBase;installed=false;nativeRuntimeSettings=false;
     SetEnvironmentVariableA("LMU_QV_DIAGNOSTICS","0");
     uiPlaneSizeTest();
+    hookTargetTest();
     outerUploadScopeTest();outerUploadSettingsTest();
     unsigned nativeWidth=0,nativeHeight=0;
     nativeRuntimeSettings=true;

@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Xml;
@@ -230,17 +231,50 @@ namespace LmuQuadViewLauncher
         public static void SaveProfile(string path, LauncherSettings s)
         {
             Validate(s); if (s.Backend != "QVFR") return;
-            string old = File.Exists(path) ? File.ReadAllText(path) : "";
+            string old = "";
+            Encoding encoding = new UTF8Encoding(false);
+            if (File.Exists(path))
+            {
+                var bytes=File.ReadAllBytes(path);int skip=0;
+                encoding=new UTF8Encoding(false,true);
+                if(StartsWith(bytes,new byte[]{0xff,0xfe,0,0})){encoding=new UTF32Encoding(false,true,true);skip=4;}
+                else if(StartsWith(bytes,new byte[]{0,0,0xfe,0xff})){encoding=new UTF32Encoding(true,true,true);skip=4;}
+                else if(StartsWith(bytes,new byte[]{0xff,0xfe})){encoding=new UnicodeEncoding(false,true,true);skip=2;}
+                else if(StartsWith(bytes,new byte[]{0xfe,0xff})){encoding=new UnicodeEncoding(true,true,true);skip=2;}
+                else if(StartsWith(bytes,new byte[]{0xef,0xbb,0xbf})){encoding=new UTF8Encoding(true,true);skip=3;}
+                try{old=encoding.GetString(bytes,skip,bytes.Length-skip);}
+                catch(DecoderFallbackException error){throw new InvalidDataException("QVFR settings have an unsupported or invalid text encoding. The file was not changed. Save it as UTF-8 and retry.",error);}
+                if(old.IndexOf('\0')>=0)throw new InvalidDataException("QVFR settings contain null characters. The file was not changed. Save it as UTF-8 and retry.");
+            }
             string updated = ProfileText(old, s);
-            if (updated != old) WriteAtomic(path, updated, true);
+            if (updated != old) { WriteAtomic(path, updated, true, encoding); PruneBackups(path, KeptBackups); }
         }
-        static void WriteAtomic(string path, string text, bool backup)
+        internal const int KeptBackups = 3;
+        static bool StartsWith(byte[] bytes,byte[] prefix) { return bytes.Length>=prefix.Length&&prefix.SequenceEqual(bytes.Take(prefix.Length)); }
+        // 0.3.3: every profile change used to leave another backup forever. Keep the newest few.
+        internal static void PruneBackups(string path, int keep)
+        {
+            try
+            {
+                path = Path.GetFullPath(path);
+                var directory = Path.GetDirectoryName(path);
+                var prefix = Path.GetFileName(path) + ".lmu-backup-";
+                var backups = new DirectoryInfo(directory).GetFiles(prefix + "*")
+                    .Where(f => (f.Attributes&FileAttributes.ReparsePoint)==0&&Regex.IsMatch(f.Name.Substring(prefix.Length), "^[0-9a-f]{32}$"))
+                    .OrderByDescending(f => f.LastWriteTimeUtc).ThenByDescending(f => f.Name, StringComparer.Ordinal).ToList();
+                foreach (var stale in backups.Skip(Math.Max(0, keep)))
+                    try { stale.Delete(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+            catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+        static void WriteAtomic(string path, string text, bool backup) { WriteAtomic(path, text, backup, new UTF8Encoding(false)); }
+        static void WriteAtomic(string path, string text, bool backup, Encoding encoding)
         {
             path = Path.GetFullPath(path); Directory.CreateDirectory(Path.GetDirectoryName(path));
             string temp = path + ".tmp-" + Guid.NewGuid().ToString("N");
             try
             {
-                File.WriteAllText(temp, text, new UTF8Encoding(false));
+                File.WriteAllText(temp, text, encoding);
                 if (File.Exists(path)) File.Replace(temp, path, backup ? path + ".lmu-backup-" + Guid.NewGuid().ToString("N") : null);
                 else File.Move(temp, path);
             }
