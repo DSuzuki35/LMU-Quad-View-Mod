@@ -817,3 +817,45 @@ with prepared or renderable coverage. New tests cover separate/combined flags,
 propagation, stale NaN bits, finite ready inputs, attachment bypass, frame totals
 and refusal to plan unresolved inputs. Resolving the native dependencies and
 independent candidate/target integration remain the next implementation work.
+
+## Regular owner bounds admission and collector separation (2026-11-05)
+
+The next `689ed43` live run copied 89 forests with no refusals: 99,146 root
+observations, 92,382 ordinary-input root observations, 3,293 world-refresh owner
+observations and 3,471 bounds-admission owner observations. The first forest had
+1,114 roots. Both focus projections were consumed for all 89 pairs. The user
+reported extremely poor CPU frametimes. This collector duplicated tree reads,
+per-field memory validation and allocations every scene frame without removing
+native work. The user requested continued implementation rather than another
+collector test or a replacement package.
+
+`native_stereo_owner_bounds.hpp` now implements the regular null-source bounds
+path on owned values: distance equality, ordered six-plane sphere/intersection
+checks and the subsequent eight-corner rejection gate. It preserves ordered flag
+writes and sticky sign flags. The traversal planner applies those results with
+independent eye inputs, preserves right-only subtrees and executes the native
+final parent-null clear on bounds rejection while leaving mask rejection alone.
+Pending world refresh and transformed-plane paths still refuse. The actual
+native helper center and both complete per-eye bounds views must be provided;
+the raw collector does not guess them from object origins or XR poses. No native
+preparation/draw is suppressed and native equivalence remains unestablished.
+
+The full regression build includes optimized/unoptimized bounds and traversal
+fixtures for distance/plane boundaries, sphere-before-corner rejection, ordered
+state changes, right-only trees, attachment bypass, invalid inputs/arithmetic,
+allocation failure and FP preservation. CLI isolation tests verify camera
+preparation does not enable heavy collection, stale environment variables are
+cleared and diagnostics-off disables explicit owner capture.
+
+In source, `-SpsPreparation` is camera preparation only. `-SpsOwnerInputs` is a
+separate opt-in with diagnostics enabled; a valid frame consumes its single-frame
+allowance even if copying refuses, with no repeated retry. The owner hook is not
+installed by ordinary preparation. This bounds a diagnostic; it does not make
+the collector a production SPS preparation algorithm. No new package or user
+capture is requested for this step. See [bounds contract](SPS-OWNER-BOUNDS.md).
+
+The capture body is outlined from the thin owner hook so larger owned data
+structures cannot add stack-cookie or object cleanup after native returns.
+The final MSVC suite passed, and compiled forwarding was checked to restore
+arguments and tail-jump to the original after capture/FP cleanup. DLL load/export
+smoke and CLI isolation passed. No live bounds equivalence or speedup is claimed.

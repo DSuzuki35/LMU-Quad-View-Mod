@@ -15,18 +15,26 @@ $fixture=[scriptblock]::Create($prefix+$setup+[Environment]::NewLine+$environmen
 $keys=@('LMU_QV_OUTER_SSR','LMU_QV_CPU_OUTER_REUSE','LMU_QV_CPU_UPLOAD_REUSE')
 $savedSps=[Environment]::GetEnvironmentVariable('LMU_QV_SPS_PROFILE','Process')
 $savedPreparation=[Environment]::GetEnvironmentVariable('LMU_QV_SPS_PREPARE','Process')
+$savedOwnerInputs=[Environment]::GetEnvironmentVariable('LMU_QV_SPS_OWNER_INPUTS','Process')
 $saved=@{}
 foreach($key in $keys){$saved[$key]=[Environment]::GetEnvironmentVariable($key,'Process')}
 try {
     [Environment]::SetEnvironmentVariable('LMU_QV_SPS_PROFILE','1','Process')
     [Environment]::SetEnvironmentVariable('LMU_QV_SPS_PREPARE','1','Process')
+    [Environment]::SetEnvironmentVariable('LMU_QV_SPS_OWNER_INPUTS','1','Process')
     $spsDefault=& $fixture -Mode quad
     if($spsDefault.Info.Environment['LMU_QV_SPS_PROFILE'] -ne '0' -or $spsDefault.Run.SpsCpuProfiling){throw 'Inherited SPS profiling survived default launch'}
     if($spsDefault.Info.Environment['LMU_QV_SPS_PREPARE'] -ne '0' -or $spsDefault.Run.SpsPreparation){throw 'Inherited SPS preparation survived default launch'}
+    if($spsDefault.Info.Environment['LMU_QV_SPS_OWNER_INPUTS'] -ne '0' -or $spsDefault.Run.SpsOwnerInputs){throw 'Inherited owner capture survived default launch'}
     foreach($quiet in @($false,$true)){
         $preparation=& $fixture -Mode quad -SpsPreparation -DisableDiagnostics:$quiet
         if($preparation.Info.Environment['LMU_QV_SPS_PREPARE'] -ne '1' -or !$preparation.Run.SpsPreparation -or $preparation.Run.SpsCpuProfiling -or $preparation.Run.RenderProfiling){throw 'SPS preparation must be independent of diagnostics/profiling'}
+        if($preparation.Info.Environment['LMU_QV_SPS_OWNER_INPUTS'] -ne '0' -or $preparation.Run.SpsOwnerInputs){throw 'Camera preparation enabled heavy owner capture'}
+        $ownerInputs=& $fixture -Mode quad -SpsPreparation -SpsOwnerInputs -DisableDiagnostics:$quiet
+        if($ownerInputs.Info.Environment['LMU_QV_SPS_OWNER_INPUTS'] -ne $(if($quiet){'0'}else{'1'}) -or $ownerInputs.Run.SpsOwnerInputs -ne !$quiet){throw 'Explicit owner capture diagnostics/configuration mismatch'}
     }
+    $rejected=$false;try {& $fixture -Mode quad -SpsOwnerInputs|Out-Null} catch {$rejected=$true}
+    if(!$rejected){throw 'Owner capture accepted without SPS preparation'}
     foreach($mode in @('trace','stereo-timing')){
         $rejected=$false;try {& $fixture -Mode $mode -SpsPreparation|Out-Null} catch {$rejected=$true}
         if(!$rejected){throw 'SPS preparation accepted a non-quad mode'}
@@ -82,4 +90,4 @@ try {
         if(!$rejected){throw ('Invalid performance configuration accepted: '+($case|ConvertTo-Json -Compress))}
     }
     'Performance CLI tests passed: three providers, opt-in defaults, stale clearing, environment/metadata, mode/dependency guards, profiling and diagnostics-off; no game launched.'
-} finally {foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,$saved[$key],'Process')};[Environment]::SetEnvironmentVariable('LMU_QV_SPS_PROFILE',$savedSps,'Process');[Environment]::SetEnvironmentVariable('LMU_QV_SPS_PREPARE',$savedPreparation,'Process')}
+} finally {foreach($key in $keys){[Environment]::SetEnvironmentVariable($key,$saved[$key],'Process')};[Environment]::SetEnvironmentVariable('LMU_QV_SPS_PROFILE',$savedSps,'Process');[Environment]::SetEnvironmentVariable('LMU_QV_SPS_PREPARE',$savedPreparation,'Process');[Environment]::SetEnvironmentVariable('LMU_QV_SPS_OWNER_INPUTS',$savedOwnerInputs,'Process')}

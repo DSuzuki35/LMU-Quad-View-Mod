@@ -54,8 +54,9 @@ keep the existing behavior.
 ## Development run
 
 The prepared package includes `Start-SPS-Preparation.cmd`. It reads the saved
-provider/game/runtime settings and enables this stage with profiling and heavy
-audit disabled. Normal gameplay is sufficient; no timing hotkey or fixed-duration
+provider/game/runtime settings and enables this stage with profiling, owner
+diagnostic collection and heavy audit disabled. Normal gameplay is sufficient;
+no timing hotkey or fixed-duration
 capture is required. A bounded readiness/fallback message and teardown counts
 identify whether the path was used when diagnostics are enabled.
 
@@ -86,8 +87,9 @@ This pair is produced after the native left outer pass and before left focus.
 The [unfiltered owner/source description producer](SPS-OWNER-INPUTS.md) now uses
 an earlier native root boundary, before admission. Late group-31 vectors cannot
 supply right-only sources. The new producer preserves selected subtrees but
-still needs live correctness validation and complete root coverage. Camera-number
-ownership does not own the native scene or its mutable meshes/materials/resources.
+has live raw-description evidence, with native equivalence and complete root
+coverage still open. Camera-number ownership does not own the native scene or
+its mutable meshes/materials/resources.
 
 Next validate that producer, preserve independent per-eye candidate membership/
 order, and assemble owned draw inputs. Native side effects, right engine world

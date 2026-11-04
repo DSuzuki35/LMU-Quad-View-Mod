@@ -64,8 +64,11 @@ focus scope completes and seals successfully, never as a partially built forest.
 This is a selected-root subset, not proof of complete scene/root coverage.
 The existing owner planner accepts a ready copied tree with two explicitly
 supplied view masks, preserving left/right admissions, right-only branches and
-scalar transition order. It refuses snapshots with any pending refresh/bounds
-dependency. It does not silently assume both eyes use the left mask.
+scalar transition order. It refuses pending world refresh. The extended
+[owned bounds evaluator](SPS-OWNER-BOUNDS.md) can resolve regular bounds admission
+when an input producer supplies the actual owned center/corners and two complete
+per-eye bounds views; those values are not yet established by this raw collector.
+It does not silently assume both eyes use the left mask.
 
 ## First live run and continuation
 
@@ -80,7 +83,21 @@ native requirements instead of discarding them solely for their flags. This
 extends snapshot collection, not the rendering planner's supported domain.
 Readiness and shutdown messages distinguish copied roots, admission-ready roots,
 world-refresh owners and bounds-admission owners. Shutdown totals count repeated
-frame observations, not unique objects. The revision still needs live validation.
+frame observations, not unique objects.
+
+The `689ed43` run subsequently copied 89 selected forests without refusals:
+1,114 roots in the first frame, with 1,038 ordinary-input roots, 37 world-refresh
+owner observations and 39 bounds-admission observations. It copied 99,146 roots
+over the run. Both camera projections were used for all 89 pairs. The user
+reported extremely poor CPU frametimes. Repeated tree copying, per-field memory
+checks and allocations all ran alongside the untouched native renderer; this
+was not an optimization result. No extra timing capture is needed.
+
+Source now separates this diagnostic collector from camera preparation and caps
+an explicit owner capture at one scene frame per engine session. It is disabled
+by default, including with `-SpsPreparation`; `-SpsOwnerInputs` is a separate
+diagnostic request and is disabled by diagnostics-off. Existing packaged builds
+retain their old behavior; this source change is not an in-place package update.
 
 ## Remaining work
 
@@ -91,7 +108,8 @@ tree, no native mutation and frame sealing. Hook tests cover changed native
 anchors and disabled/unknown-caller forwarding. Compiled forwarding restores
 the original arguments and tail-jumps to the native function after the input
 guard has restored floating-point state. This is static/synthetic evidence;
-the revised owner producer has not yet been run in the game. Additional fixtures
+the revised collector has now passed the bounded live description run above.
+That is not native bounds/input equivalence. Additional fixtures
 cover the two requirements separately/together, inherited refresh requirements,
 stale NaN bit preservation, ready-matrix refusal, attachment bypass and planner
 refusal until native dependencies are resolved.
@@ -107,5 +125,5 @@ coverage and connect independent candidate sorting,
 owned constant payloads and resource versions/lifetimes. Establish complete
 native side effects and legal HDR/depth target seeding/consumers, then connect
 the paired D3D11 backend. Native traversal, cleanup and both eye draws remain
-active through this input stage. Live correctness validation of the new owner
-producer is still required; no performance capture is needed for that check.
+active through this input stage. Continue implementation from the collected
+evidence; no additional collector test is requested.

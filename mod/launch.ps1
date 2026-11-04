@@ -7,6 +7,7 @@ param(
     [switch]$RenderProfiling,
     [switch]$SpsCpuProfiling,
     [switch]$SpsPreparation,
+    [switch]$SpsOwnerInputs,
     [switch]$DisableDiagnostics,
     [switch]$StereoDrawAudit,
     [switch]$StereoShaderCapture,
@@ -34,7 +35,7 @@ param(
     [string]$GameDirectory = 'D:\SteamLibrary\steamapps\common\Le Mans Ultimate'
 )
 $ErrorActionPreference = 'Stop'
-if($DisableDiagnostics){$SpsCpuProfiling=$false;$RenderProfiling=$false;$GpuTiming=$false;$Benchmark=$false;$CaptureViews=$false;$PixelStats=$false;$ScenePixelStats=$false;$StereoDrawAudit=$false;$StereoShaderCapture=$false;$StereoPairProof=$false}
+if($DisableDiagnostics){$SpsCpuProfiling=$false;$SpsOwnerInputs=$false;$RenderProfiling=$false;$GpuTiming=$false;$Benchmark=$false;$CaptureViews=$false;$PixelStats=$false;$ScenePixelStats=$false;$StereoDrawAudit=$false;$StereoShaderCapture=$false;$StereoPairProof=$false}
 . (Join-Path $PSScriptRoot 'portable-launch.ps1')
 if ($Backend -ne 'Native' -and ($Mode -ne 'quad' -or !$UseRuntimeSettings)) { throw "$Backend requires quad mode with runtime-controlled settings." }
 if ($UseRuntimeSettings) {
@@ -47,6 +48,7 @@ if ($Mode -eq 'stereo-timing' -and !$DisableDiagnostics) { $GpuTiming = $true }
 if ($GpuTiming -and $Mode -eq 'trace') { throw 'Use stereo-timing for native stereo GPU measurements; trace has no engine hooks' }
 if($RenderProfiling -and ($Mode -ne 'quad' -or $GpuTiming -or $Benchmark)){throw 'RenderProfiling requires quad mode without legacy GPU timing or Benchmark.'}
 if($SpsPreparation -and $Mode -ne 'quad'){throw 'SpsPreparation requires quad mode.'}
+if($SpsOwnerInputs -and !$SpsPreparation){throw 'SpsOwnerInputs requires SpsPreparation; it collects one scene frame and can cause a hitch.'}
 if($SpsCpuProfiling -and ($Mode -ne 'quad' -or $RenderProfiling -or $GpuTiming -or $Benchmark -or $StereoDrawAudit -or $StereoShaderCapture -or $StereoPairProof -or $CaptureViews -or $PixelStats -or $ScenePixelStats)){throw 'SpsCpuProfiling requires quad mode with other profilers and heavy captures disabled.'}
 if ($DebugFocus -and $Mode -ne 'quad') { throw 'Focus debug border requires quad mode' }
 if (($Benchmark -or $EnableOuterVrs) -and $Mode -ne 'quad') { throw 'Outer VRS experiments and A/B benchmarking require quad mode' }
@@ -111,6 +113,7 @@ $info.Environment['LMU_QV_VECTORXR_DIRECT_INPUTS'] = $(if ($Backend -eq 'VectorX
 $info.Environment['LMU_QV_PROFILE'] = $(if ($RenderProfiling) { '1' } else { '0' })
 $info.Environment['LMU_QV_SPS_PROFILE'] = $(if ($SpsCpuProfiling) { '1' } else { '0' })
 $info.Environment['LMU_QV_SPS_PREPARE'] = $(if ($SpsPreparation) { '1' } else { '0' })
+$info.Environment['LMU_QV_SPS_OWNER_INPUTS'] = $(if ($SpsOwnerInputs) { '1' } else { '0' })
 $info.Environment['LMU_QV_DIAGNOSTICS'] = $(if ($DisableDiagnostics) { '0' } else { '1' })
 $info.Environment['LMU_QV_STEREO_AUDIT'] = $(if ($StereoDrawAudit) { '1' } else { '0' })
 $info.Environment['LMU_QV_STEREO_AUDIT_DIR'] = $(if ($StereoDrawAudit) { $logDirectory } else { '' })
@@ -149,6 +152,7 @@ $run = [pscustomobject]@{
     RenderProfiling=[bool]$RenderProfiling;RenderProfileSeconds=$RenderProfileSeconds
     SpsCpuProfiling=[bool]$SpsCpuProfiling
     SpsPreparation=[bool]$SpsPreparation
+    SpsOwnerInputs=[bool]$SpsOwnerInputs
     StereoDrawAudit=[bool]$StereoDrawAudit
     StereoShaderCapture=[bool]($StereoDrawAudit -and $StereoShaderCapture)
     StereoPairProof=[bool]($StereoDrawAudit -and $StereoPairProof)

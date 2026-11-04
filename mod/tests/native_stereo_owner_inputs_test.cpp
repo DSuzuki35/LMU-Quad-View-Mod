@@ -96,14 +96,28 @@ int main(){
         assert(out.nativeRequirements[1]==((flags&0x400000?NativeOwnerWorldRefresh:0)|(flags&0x80000?NativeOwnerBoundsAdmission:0)));
         assert(out.worldRefreshOwners==((flags&0x400000)!=0)&&out.boundsAdmissionOwners==((flags&0x80000)!=0));
         plan=plan_native_stereo_owner_inputs(out,{{{1,true},{3,true}}});
-        assert(!plan.complete&&plan.reason==NativeStereoOwnerPlanReason::UnsupportedOwnerFlags&&plan.eyes[0].ownerOrder.empty()&&plan.transitions.empty());
+        assert(!plan.complete&&plan.reason==((flags&0x400000)?NativeStereoOwnerPlanReason::UnsupportedOwnerFlags:NativeStereoOwnerPlanReason::UnsupportedOwnerBounds)&&plan.eyes[0].ownerOrder.empty()&&plan.transitions.empty());
     }
+    // An owned producer may supply the actual helper center/corners and two
+    // independent bounds views. Raw copying alone never fabricates these.
+    Fixture::put(f.owner[1].data(),0,uint32_t(0x80000));out=capture(f);
+    auto& bounds=out.owners[1].bounds;bounds.available=true;bounds.radius=1;
+    for(unsigned i=0;i<8;++i)bounds.corners[i]={i&1?.5f:-.5f,i&2?.5f:-.5f,i&4?.5f:-.5f};
+    std::array<NativeStereoOwnerView,2> views{{{1,true},{3,true}}};
+    for(auto& view:views){view.bounds.available=true;view.bounds.range=100;
+        view.bounds.planes={{{1,0,0,-10},{-1,0,0,-10},{0,1,0,-10},{0,-1,0,-10},{0,0,1,-10},{0,0,-1,-10}}};}
+    plan=plan_native_stereo_owner_inputs(out,views);
+    assert(plan.complete&&!out.admissionReady&&plan.eyes[0].ownerOrder==std::vector<uint32_t>({0,2})&&
+           plan.eyes[1].ownerOrder==std::vector<uint32_t>({0,1,2}));
+    views[1].bounds.position={1000,0,0};plan=plan_native_stereo_owner_inputs(out,views);
+    assert(plan.complete&&plan.eyes[1].ownerOrder==std::vector<uint32_t>({0,2}));
     Fixture::put(f.owner[1].data(),0x80,uint64_t(1));out=capture(f);
     assert(out.complete&&out.admissionReady&&out.nativeRequirements[1]==NativeOwnerReady); // native attachment bypass
     Fixture::put(f.owner[1].data(),0,uint32_t(0));Fixture::put(f.owner[1].data(),0x80,uint64_t(0));
     // A parent refresh traverses descendants, including right-only children.
     Fixture::put(f.owner[0].data(),0,uint32_t(0x400000));out=capture(f);
     assert(out.complete&&!out.admissionReady&&out.worldRefreshOwners==3);
+    assert(plan_native_stereo_owner_inputs(out,views).reason==NativeStereoOwnerPlanReason::UnsupportedOwnerFlags);
     for(auto requirement:out.nativeRequirements)assert(requirement&NativeOwnerWorldRefresh);
     uint32_t nan=0x7fc12345u;Fixture::put(f.owner[1].data(),0x298,nan);out=capture(f);
     uint32_t copied=0;std::memcpy(&copied,&out.world[1][0],4);assert(out.complete&&copied==nan);
@@ -131,6 +145,10 @@ int main(){
         out=capture(f);failure_probe::enabled=false;empty(out,"allocation failure");}
     // Frame publication requires a successful seal; never expose a partial forest.
     NativeStereoOwnerInputFrame frame;const StereoFrameIdentity key{1,2,3,4000,5};
+    NativeStereoOwnerCaptureOnce once;assert(!once.begin(key));
+    once.reset(true);assert(!once.begin({}));assert(once.begin(key));
+    assert(!once.begin(key));auto later=key;++later.frame;assert(!once.begin(later));
+    once.reset(true);assert(once.begin(later));once.reset();assert(!once.begin(key));
     frame.begin(key,10,20,{1,true});assert(!frame.inputs(key));fixture=&f;
     assert(frame.append(key,10,20,{1,true},f.owner[0].data(),3,readable));assert(!frame.inputs(key));
     assert(frame.seal(key)&&frame.inputs(key)->size()==1);

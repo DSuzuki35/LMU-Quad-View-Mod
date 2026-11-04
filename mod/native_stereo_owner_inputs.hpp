@@ -162,7 +162,9 @@ inline NativeStereoOwnerInputs capture_native_stereo_owner_inputs(
 inline NativeStereoOwnerPlanResult plan_native_stereo_owner_inputs(
     const NativeStereoOwnerInputs& inputs,const std::array<NativeStereoOwnerView,2>& views) noexcept {
     if(!inputs.complete)return {};
-    if(!inputs.admissionReady){NativeStereoOwnerPlanResult result;result.reason=NativeStereoOwnerPlanReason::UnsupportedOwnerFlags;return result;}
+    // The extended planner can resolve bounds from explicit owned per-eye data.
+    // A pending parent refresh still blocks the entire tree, including children.
+    if(inputs.worldRefreshOwners){NativeStereoOwnerPlanResult result;result.reason=NativeStereoOwnerPlanReason::UnsupportedOwnerFlags;return result;}
     try {
         NativeStereoOwnerPlanInput plan;plan.owners=inputs.owners;plan.globalMask=inputs.globalMask;plan.views=views;
         return build_native_stereo_owner_plan(plan);
@@ -224,5 +226,17 @@ public:
     }
     NativeStereoOwnerView first_view()const{return firstView_;}
     const char* reason()const{return reason_;}
+};
+// Diagnostic collection is not the production SPS preparation path. One valid
+// frame consumes the request, including failed/unsupported captures; no retries
+// or stale-frame reuse. Reset only when a new engine session is configured.
+class NativeStereoOwnerCaptureOnce {
+    bool pending_=false;
+public:
+    void reset(bool requested=false){pending_=requested;}
+    bool begin(const StereoFrameIdentity& key){
+        if(!pending_||!key.valid())return false;
+        pending_=false;return true;
+    }
 };
 }

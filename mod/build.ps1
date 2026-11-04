@@ -68,6 +68,10 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "$test tests failed" }
     }
     foreach ($optimization in @('O0','O2')) {
+        & g++ -std=c++17 "-$optimization" -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static tests/native_stereo_owner_bounds_test.cpp -o "build/native_stereo_owner_bounds_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native owner bounds $optimization compilation failed" }
+        & ".\build\native_stereo_owner_bounds_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native owner bounds $optimization tests failed" }
         & g++ -std=c++17 "-$optimization" -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static tests/native_stereo_transform_test.cpp -o "build/native_stereo_transform_test_${optimization}.exe"
         if ($LASTEXITCODE -ne 0) { throw "Native transform $optimization compilation failed" }
         & ".\build\native_stereo_transform_test_${optimization}.exe"

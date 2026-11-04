@@ -168,7 +168,7 @@ void domain_and_structure_refusals() {
         auto in = tree(2); in.owners[0].children = {1}; in.owners[0].state.flags = 0x20000u;
         in.owners[1].state.flags = flags;
         const auto before = in;
-        empty_refusal(build_native_stereo_owner_plan(in), Reason::UnsupportedOwnerFlags);
+        empty_refusal(build_native_stereo_owner_plan(in), flags==0x80000u?Reason::UnsupportedOwnerBounds:Reason::UnsupportedOwnerFlags);
         unchanged(in, before);
     }
     empty_refusal(build_native_stereo_owner_plan(tree(0)), Reason::NodeLimit);
@@ -203,6 +203,36 @@ void domain_and_structure_refusals() {
     in = tree(2); in.owners[0].children = {1};
     in.owners[0].sourceIds.resize(32769); in.owners[1].sourceIds.resize(32768);
     empty_refusal(build_native_stereo_owner_plan(in), Reason::SourceLimit);
+}
+void bounded_stereo_admission(){
+    auto in=tree(2);in.owners[0].children={1};in.owners[0].sourceIds={10};in.owners[1].sourceIds={11};
+    auto& owner=in.owners[0];owner.state.flags=0xc0080000;owner.state.currentValue=1;owner.state.pendingValue=2;
+    in.owners[1].state.pendingValue=42;
+    owner.bounds.available=true;owner.bounds.radius=1;
+    for(unsigned i=0;i<8;++i)owner.bounds.corners[i]={i&1?.5f:-.5f,i&2?.5f:-.5f,i&4?.5f:-.5f};
+    for(auto& view:in.views){view.bounds.available=true;view.bounds.range=1;
+        view.bounds.planes={{{1,0,0,-10},{-1,0,0,-10},{0,1,0,-10},{0,-1,0,-10},{0,0,1,-10},{0,0,-1,-10}}};}
+    in.views[0].bounds.position={5,0,0};
+    auto out=build_native_stereo_owner_plan(in);success(out);
+    assert(out.eyes[0].ownerOrder.empty()&&out.eyes[0].sourceOrder.empty());
+    assert(out.eyes[1].ownerOrder==std::vector<uint32_t>({0,1})&&out.eyes[1].sourceOrder==std::vector<uint32_t>({10,11}));
+    // Bounds rejection still performs the owner's final flag clear. A mask
+    // rejection, tested below, must not perform it.
+    assert(out.transitions.size()==5);
+    transition(out,0,Eye::Left,0,Field::CurrentValue,1,2);
+    transition(out,1,Eye::Left,0,Field::Flags,0xc0080000,0x80080000);
+    transition(out,2,Eye::Right,0,Field::Flags,0x80080000,0x80090000);
+    assert(out.finalStates[1].currentValue==42&&out.finalStates[0].flags==0x80090000);
+    in.views[0].parentNull=false;out=build_native_stereo_owner_plan(in);success(out);
+    assert(out.transitions.back().eye==Eye::Right&&out.transitions.back().ownerIndex==0&&out.transitions.back().after==0x80090000);
+    in.views[0].parentNull=true;owner.state.mask=2;in.views[0].mask=1;in.views[1].mask=3;
+    out=build_native_stereo_owner_plan(in);success(out);
+    transition(out,1,Eye::Right,0,Field::Flags,0xc0080000,0xc0090000);
+    assert(out.transitions.back().after==0x80090000);
+    owner.state.attachmentPresent=true;owner.state.flags|=0x400000;owner.bounds={};in.views[0].mask=3;
+    out=build_native_stereo_owner_plan(in);success(out);assert(out.eyes[0].ownerOrder.size()==2);
+    owner.state.attachmentPresent=false;owner.state.flags&=~0x400000u;
+    empty_refusal(build_native_stereo_owner_plan(in),Reason::UnsupportedOwnerBounds);
 }
 void bounded_depth_and_sources() {
     auto in = tree(4096);
@@ -247,7 +277,7 @@ int main() {
     static_assert(noexcept(build_native_stereo_owner_plan(NativeStereoOwnerPlanInput{})), "planner must not throw");
     right_only_and_order(); all_bits_masks(); shared_mutations_and_postorder();
     rejection_side_effects_and_attachment(); domain_and_structure_refusals();
-    bounded_depth_and_sources(); allocation_failures();
+    bounded_stereo_admission(); bounded_depth_and_sources(); allocation_failures();
     std::cout << "Owned stereo owner plan: ordered stereo admission, shared transitions, refusals, bounds and allocation failures passed\n";
 }
 #else
