@@ -1,6 +1,7 @@
 using System;
 using System.Reflection;
 using System.Windows.Forms;
+using System.Diagnostics;
 using LmuQuadViewLauncher;
 
 class SliderRangeTests {
@@ -9,7 +10,32 @@ class SliderRangeTests {
     static PercentSetting Setting(Launcher form,string name){return (PercentSetting)typeof(Launcher).GetField(name,Hidden).GetValue(form);}
     static void Fill(Launcher form,LauncherSettings settings){typeof(Launcher).GetMethod("Fill",Hidden).Invoke(form,new object[]{settings});}
     static LauncherSettings Values(Launcher form){return (LauncherSettings)typeof(Launcher).GetMethod("Values",Hidden).Invoke(form,null);}
+    static void WatchLayouts(Control root,Action<string> changed){root.Layout+=delegate(object sender,LayoutEventArgs e){changed(root.GetType().Name+"/"+root.Name+":"+e.AffectedProperty);};foreach(Control child in root.Controls)WatchLayouts(child,changed);}
+    static void DragRangeRegression(){
+        using(var form=new Launcher()){
+            Fill(form,new LauncherSettings{Backend="QVFR",OuterPercent=25,InnerPercent=100,FocusWidthPercent=50,FocusHeightPercent=50});
+            form.Opacity=0;form.ShowInTaskbar=false;form.StartPosition=FormStartPosition.Manual;form.Location=new System.Drawing.Point(-16000,-16000);
+            form.Show();Application.DoEvents();
+            var inner=Setting(form,"inner");var outer=Setting(form,"outer");
+            int innerCaptions=0,outerCaptions=0,layouts=0;
+            inner.Controls.Find("AllowedRange",true)[0].TextChanged+=delegate{++innerCaptions;};
+            outer.Controls.Find("AllowedRange",true)[0].TextChanged+=delegate{++outerCaptions;};
+            var groups=new System.Collections.Generic.Dictionary<string,int>();
+            WatchLayouts(form,delegate(string group){++layouts;if(!groups.ContainsKey(group))groups[group]=0;++groups[group];});
+            var slider=(PurpleSlider)typeof(PercentSetting).GetField("slider",Hidden).GetValue(inner);
+            var watch=Stopwatch.StartNew();
+            for(int i=1;i<=80;++i){slider.Value=100+i*.1m;Application.DoEvents();}
+            watch.Stop();
+            Console.WriteLine("Slider drag regression: 80 edits, inner captions="+innerCaptions+", outer captions="+outerCaptions+", layouts="+layouts+", elapsed_ms="+watch.Elapsed.TotalMilliseconds.ToString("F1"));
+            foreach(var group in groups)Console.WriteLine("  "+group.Key+"="+group.Value);
+            Check(innerCaptions==0,"Dragging inner needlessly resets its unchanged allowed range, forcing layout on every input");
+            Check(outerCaptions<=80,"Dragging inner shows temporary full-domain outer bounds between real updates");
+            Check(layouts==0,"Changing values and legal bounds relayouts fixed-size slider rows");
+            Check(inner.Value==108&&outer.Value==25,"Drag lost values while updating legal ranges");
+        }
+    }
     [STAThread] static void Main(){
+        DragRangeRegression();
         using(var form=new Launcher()){
             Fill(form,new LauncherSettings{Backend="QVFR"});
             var outer=Setting(form,"outer");var inner=Setting(form,"inner");
@@ -54,6 +80,8 @@ class SliderRangeTests {
             width.Value=0;Values(form);
         }
         using(var setting=new PercentSetting("Test",10,100)){
+            Check(setting.RangeText=="Allowed 10–100 %","Initial fixed bounds must initialize the allowed-range caption");
+            Check(setting.Controls.Find("AllowedRange",true)[0].AccessibleName==setting.RangeText,"Allowed range is missing from accessibility text");
             setting.SetRange(12.25m,87.75m);
             setting.Value=400;Check(setting.Value==87.75m,"Numeric maximum not enforced");
             var slider=typeof(PercentSetting).GetField("slider",Hidden).GetValue(setting);

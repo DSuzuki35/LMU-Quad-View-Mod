@@ -231,6 +231,7 @@ namespace LmuQuadViewLauncher
         }
         public void SetAllowedRange(decimal minimum,decimal maximum){
             if(minimum<Minimum||maximum>Maximum||minimum>maximum)throw new ArgumentOutOfRangeException("minimum");
+            if(AllowedMinimum==minimum&&AllowedMaximum==maximum)return;
             AllowedMinimum=minimum;AllowedMaximum=maximum;Value=current;Invalidate();
         }
         public event EventHandler ValueChanged;
@@ -276,11 +277,27 @@ namespace LmuQuadViewLauncher
         }
     }
 
+    // WinForms Label.AdjustSize temporarily resizes even a docked, non-auto-size
+    // label when Text changes. These frequently updated captions have fixed
+    // table cells; draw text without that resize/layout round trip.
+    sealed class RangeCaption : Control
+    {
+        public RangeCaption(){
+            SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer|ControlStyles.SupportsTransparentBackColor,true);
+            BackColor=Color.Transparent;ForeColor=Theme.Muted;Font=new Font("Segoe UI",8.5F);TabStop=false;AccessibleRole=AccessibleRole.StaticText;
+        }
+        protected override void OnTextChanged(EventArgs e){base.OnTextChanged(e);AccessibleName=Text;Invalidate();}
+        protected override void OnPaint(PaintEventArgs e){
+            base.OnPaint(e);TextRenderer.DrawText(e.Graphics,Text,Font,ClientRectangle,ForeColor,
+                TextFormatFlags.NoPadding|TextFormatFlags.SingleLine|TextFormatFlags.VerticalCenter|TextFormatFlags.Left);
+        }
+    }
+
     sealed class PercentSetting : UserControl
     {
         readonly NumericUpDown number = new SpacedNumericUpDown();
         readonly PurpleSlider slider = new PurpleSlider();
-        readonly Label range=Theme.Label("",8.5F,Theme.Muted);
+        readonly RangeCaption range=new RangeCaption();
         bool synchronizing;
         public event EventHandler ValueChanged;
         public decimal Minimum {get{return number.Minimum;}}
@@ -293,6 +310,8 @@ namespace LmuQuadViewLauncher
         public void SetAllowedRange(decimal minimum,decimal maximum){SetBounds(minimum,maximum,false);}
         void SetBounds(decimal minimum,decimal maximum,bool fullRange){
             if(minimum>maximum)throw new ArgumentOutOfRangeException("minimum");
+            if(range.Text.Length!=0&&number.Minimum==minimum&&number.Maximum==maximum&&slider.AllowedMinimum==minimum&&slider.AllowedMaximum==maximum&&
+                (!fullRange||(slider.Minimum==minimum&&slider.Maximum==maximum)))return;
             decimal before=number.Value;
             synchronizing=true;
             try {
@@ -1133,7 +1152,6 @@ namespace LmuQuadViewLauncher
             try {
                 var settings=ReadValues(false);
                 SettingRanges.NormalizeForProvider(settings);
-                outer.SetRange(10,400);inner.SetRange(25,400);
                 outer.Value=settings.OuterPercent;inner.Value=settings.InnerPercent;
                 var limits=new SettingRanges(settings);
                 outer.SetAllowedRange(10,limits.OuterMaximum);inner.SetAllowedRange(limits.InnerMinimum,400);
