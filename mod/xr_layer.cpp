@@ -18,6 +18,7 @@
 #include "benchmark_gpu.hpp"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
@@ -153,6 +154,14 @@ struct State {
     unsigned captureMask=0;
     uint64_t frames=0;
 } s;
+std::atomic<bool> quadActive{false},vrsActive{false};
+// Called under stateMutex when lifecycle state changes. These are coarse mode
+// snapshots, not ownership of the session or any of its graphics resources.
+void publishActiveModes(){
+    const bool running=s.session&&s.running;
+    quadActive.store(s.quad&&running,std::memory_order_release);
+    vrsActive.store(s.vrs&&running,std::memory_order_release);
+}
 lmuqv::benchmark::Transport benchmarkTransport;
 lmuqv::benchmark::Overlay benchmarkOverlay;
 lmuqv::benchmark::GpuSpan<> benchmarkGpu;
@@ -340,6 +349,7 @@ void clearSession() {
     if(s.context) s.context->Release();
     if(s.device) s.device->Release();
     s.context=nullptr;s.device=nullptr;s.session=XR_NULL_HANDLE;s.running=false;
+    publishActiveModes();
     s.appChains.clear();s.nextAppEye=0;s.waitPending=false;s.focusOwnership=s.focusBeginInFlight=false;clearFrame();
 }
 XrResult selectFoveation(XrInstance instance,XrSystemId system){
@@ -494,7 +504,7 @@ XrResult XRAPI_CALL layerDestroyInstance(XrInstance instance) {
     if(s.session) {lmuqv::engine_stop();clearSession();}
     lmuqv::stereo_audit_stop(); // Also releases early hooks when no session was created.
     XrResult r=next.DestroyInstance(instance);
-    if(XR_SUCCEEDED(r)) s=State{};
+    if(XR_SUCCEEDED(r)){s=State{};publishActiveModes();}
     lmuqv::flush_log();
     return r;
 }
@@ -567,6 +577,7 @@ XrResult XRAPI_CALL layerCreateSession(XrInstance instance,const XrSessionCreate
     }
     XrResult r=next.CreateSession(instance,info,session);if(XR_FAILED(r)){logf("Downstream xrCreateSession failed result=%d",r);return r;}
     s.session=*session;s.system=info->systemId;
+    publishActiveModes();
     if(s.vrs&&s.requestEyeTracking)logf("vrs gaze initialized=%d; invalid/unavailable gaze uses fixed focus",vrsGaze.initialize(*session));
     for(auto chain=static_cast<const XrBaseInStructure*>(info->next);chain;chain=chain->next) {
         if(chain->type==XR_TYPE_GRAPHICS_BINDING_D3D11_KHR) {
@@ -599,14 +610,14 @@ XrResult XRAPI_CALL layerDestroySession(XrSession session) {
 XrResult XRAPI_CALL layerBeginSession(XrSession session,const XrSessionBeginInfo* info) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     auto modified=*info;if(s.quad)modified.primaryViewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO;
-    XrResult r=next.BeginSession(session,&modified);s.running=XR_SUCCEEDED(r);benchmarkRuntimeResult(r);
+    XrResult r=next.BeginSession(session,&modified);s.running=XR_SUCCEEDED(r);publishActiveModes();benchmarkRuntimeResult(r);
     logf("xrBeginSession app=%d runtime=%d result=%d",info->primaryViewConfigurationType,modified.primaryViewConfigurationType,r);return r;
 }
 XrResult XRAPI_CALL layerEndSession(XrSession session) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(s.focusOwnership&&heldFocusImages()){logf("stereo_pass end-session refused: focus lease must be resolved or session destroyed");return XR_ERROR_CALL_ORDER_INVALID;}
     XrResult r=next.EndSession(session);benchmarkRuntimeResult(r);
-    if(XR_SUCCEEDED(r)){benchmarkGpu.stop(false);s.running=false;clearFrame();if(benchmarkEnabled){benchmarkGpu.stop(false);benchmarkPreviousSceneQpc=0;benchmarkTransport.data()->header.running=0;benchmarkTransport.data()->header.status=1;benchmarkTransport.data()->header.reason=0;}}logf("xrEndSession result=%d",r);return r;
+    if(XR_SUCCEEDED(r)){benchmarkGpu.stop(false);s.running=false;publishActiveModes();clearFrame();if(benchmarkEnabled){benchmarkGpu.stop(false);benchmarkPreviousSceneQpc=0;benchmarkTransport.data()->header.running=0;benchmarkTransport.data()->header.status=1;benchmarkTransport.data()->header.reason=0;}}logf("xrEndSession result=%d",r);return r;
 }
 XrResult XRAPI_CALL layerWaitFrame(XrSession session,const XrFrameWaitInfo* info,XrFrameState* state) {
     // A pipelined WaitFrame must not hold the lock needed by the previous EndFrame.
@@ -1055,6 +1066,7 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
     next.get=chain->nextGetInstanceProcAddr;
     if(!next.load(*instance)){if(next.DestroyInstance)next.DestroyInstance(*instance);*instance=XR_NULL_HANDLE;return XR_ERROR_INITIALIZATION_FAILED;}
     s.instance=*instance;s.quad=quad;s.vrs=vrs;s.requestEyeTracking=requestEyeTracking;
+    publishActiveModes();
     if(gazeEnabled)vrsGaze.load(*instance,next.get);
     else vrsGaze.load(XR_NULL_HANDLE,nullptr);
     if(vrs){
@@ -1179,8 +1191,8 @@ bool xr_runtime_sizes(unsigned eye,uint32_t& outerWidth,uint32_t& outerHeight,ui
     if(eye>1||!s.runtimeSettings||!s.runtimeSizesReady)return false;
     outerWidth=s.runtimeOuterWidth[eye];outerHeight=s.runtimeOuterHeight[eye];focusWidth=s.runtimeFocusWidth;focusHeight=s.runtimeFocusHeight;return true;
 }
-bool xr_quad_active(){std::lock_guard<std::recursive_mutex> lock(stateMutex);return s.quad&&s.session&&s.running;}
-bool xr_vrs_active(){std::lock_guard<std::recursive_mutex> lock(stateMutex);return s.vrs&&s.session&&s.running;}
+bool xr_quad_active(){return quadActive.load(std::memory_order_acquire);}
+bool xr_vrs_active(){return vrsActive.load(std::memory_order_acquire);}
 bool xr_vrs_focus(unsigned eye,VrsFocus& focus){std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(eye>1||!s.vrs||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
     focus=s.vrsFocus[eye];return true;}
