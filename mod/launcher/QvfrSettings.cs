@@ -57,9 +57,9 @@ namespace LmuQuadViewLauncher
             GameDirectory = @"D:\SteamLibrary\steamapps\common\Le Mans Ultimate";
             Backend = "Native"; FoveationMode = "auto"; QuadViewsManifest = ""; VectorXrManifest = "";
             VrsPeripheralRate = 2;
-            NativeOuterResolution = true; OuterPercent = 25; InnerPercent = 100;
+            NativeOuterResolution = false; OuterPercent = 25; InnerPercent = 100;
             RenderProfileSeconds=120;
-            DiagnosticsEnabled=true;
+            DiagnosticsEnabled=false;
             BenchmarkY=-0.25m;BenchmarkDistance=1.2m;BenchmarkWidth=0.65m;
             BenchmarkVisibilityDevice=BenchmarkRecordingDevice="";
             BenchmarkVisibilityName=BenchmarkRecordingName="";
@@ -126,7 +126,7 @@ namespace LmuQuadViewLauncher
             s.VectorXrManifest = Value(x, "VectorXrManifest", "");
             s.DebugFocus = Boolean.Parse(Value(x, "DebugFocus", "false"));
             s.RenderProfiling = Boolean.Parse(Value(x, "RenderProfiling", "false"));
-            s.DiagnosticsEnabled=Boolean.Parse(Value(x,"DiagnosticsEnabled","true"));
+            s.DiagnosticsEnabled=Boolean.Parse(Value(x,"DiagnosticsEnabled","false"));
             s.BenchmarkEnabled=Boolean.Parse(Value(x,"BenchmarkEnabled","false"));
             s.BenchmarkTemplate=Int32.Parse(Value(x,"BenchmarkTemplate","0"),CultureInfo.InvariantCulture);
             s.BenchmarkX=Decimal.Parse(Value(x,"BenchmarkX","0"),CultureInfo.InvariantCulture);
@@ -147,7 +147,7 @@ namespace LmuQuadViewLauncher
             s.CpuOuterReuse=Boolean.Parse(Value(x,"CpuOuterReuse","false"));
             s.OuterSsr=Boolean.Parse(Value(x,"OuterSsr","false"));
             s.RenderProfileSeconds=Int32.Parse(Value(x,"RenderProfileSeconds","120"),CultureInfo.InvariantCulture);
-            s.NativeOuterResolution = Boolean.Parse(Value(x, "NativeOuterResolution", "true"));
+            s.NativeOuterResolution = Boolean.Parse(Value(x, "NativeOuterResolution", "false"));
             s.OuterBlur = Decimal.Parse(Value(x, "OuterBlur", "0"), CultureInfo.InvariantCulture);
             s.OuterPercent = Decimal.Parse(Value(x, "OuterPercent", "25"), CultureInfo.InvariantCulture);
             s.InnerPercent = Decimal.Parse(Value(x, "InnerPercent", "100"), CultureInfo.InvariantCulture);

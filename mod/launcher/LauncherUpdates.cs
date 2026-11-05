@@ -20,7 +20,7 @@ namespace LmuQuadViewLauncher {
             foreach(var height in new[]{32,40,48,55,38})stack.RowStyles.Add(new RowStyle(SizeType.Absolute,height));
             var title=Theme.Label("Application updates",13F,Theme.Text);title.Font=new Font("Segoe UI",13F,FontStyle.Bold);
             stack.Controls.Add(title,0,0);updateAutomatic.Name="UpdateAutomatic";
-            try{updateAutomatic.Checked=!File.Exists(UpdatePreferencePath)||File.ReadAllText(UpdatePreferencePath).Trim()!="off";}
+            try{updateAutomatic.Checked=File.Exists(UpdatePreferencePath)&&File.ReadAllText(UpdatePreferencePath).Trim()=="on";}
             catch(IOException){updateAutomatic.Checked=false;}catch(UnauthorizedAccessException){updateAutomatic.Checked=false;}
             updateAutomatic.CheckedChanged+=delegate {try{File.WriteAllText(UpdatePreferencePath,updateAutomatic.Checked?"on":"off");}catch(Exception error){ShowError(error.Message);}};
             stack.Controls.Add(updateAutomatic,0,1);updateStatus.Name="UpdateStatus";stack.Controls.Add(updateStatus,0,2);

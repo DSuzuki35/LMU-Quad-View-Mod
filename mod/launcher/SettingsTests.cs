@@ -20,6 +20,7 @@ class SettingsTests
         Require(typeof(LauncherSettings).GetProperty("FocusOffsetXPercent")!=null,"Horizontal offset setting missing");
         Require(typeof(LauncherSettings).GetProperty("FocusOffsetYPercent")!=null,"Vertical offset setting missing");
         Require(!new LauncherSettings().BenchmarkEnabled,"Benchmark must default off");
+        Require(!new LauncherSettings().DiagnosticsEnabled&&!new LauncherSettings().NativeOuterResolution&&!new LauncherSettings().DebugFocus&&new LauncherSettings().OuterBlur==0,"Fresh settings must disable diagnostics, overlays and rendering experiments");
         Require(new LauncherSettings().BenchmarkVisibilityButton==-1&&new LauncherSettings().BenchmarkRecordingButton==-1,"Default joystick bindings must be unassigned");
         s.BenchmarkEnabled=true;s.BenchmarkTemplate=1;s.BenchmarkX=-1.25m;s.BenchmarkY=0.5m;s.BenchmarkDistance=2.5m;s.BenchmarkWidth=0.8m;
         s.BenchmarkVisibilityDevice=Guid.NewGuid().ToString("D");s.BenchmarkVisibilityName="Wheel <left>";s.BenchmarkVisibilityButton=127;
@@ -79,7 +80,7 @@ class SettingsTests
         QvfrSettings.Validate(s);s.FocusOffsetXPercent=-50;s.FocusOffsetYPercent=12.5m;
         Require(QvfrSettings.ProfileText(old,s)==text,"Offsets leaked into provider profile");
         Require(loaded.RenderProfiling,"Profiling setting did not roundtrip");
-        Require(!loaded.DiagnosticsEnabled&&new LauncherSettings().DiagnosticsEnabled,"Diagnostics off setting/default lost");
+        Require(!loaded.DiagnosticsEnabled&&!new LauncherSettings().DiagnosticsEnabled,"Diagnostics off setting/default lost");
         Require(loaded.StereoDrawAudit&&!new LauncherSettings().StereoDrawAudit,"Stereo audit preference/default lost");
         Require(loaded.StereoShaderCapture&&!new LauncherSettings().StereoShaderCapture,"Shader capture preference/default lost");
         Require(loaded.StereoPairProof&&loaded.CpuUploadReuse&&!new LauncherSettings().StereoPairProof&&!new LauncherSettings().CpuUploadReuse&&!new LauncherSettings().CpuUploadBatch,"Prototype preferences/defaults lost");
@@ -91,7 +92,9 @@ class SettingsTests
         Require(loaded.FocusAspectRatio==s.FocusAspectRatio,"Measured FOV calibration lost on roundtrip");
         File.WriteAllText(xml,"<QuadView><GameDirectory>D:\\Game</GameDirectory><DebugFocus>true</DebugFocus></QuadView>");
         loaded=QvfrSettings.Load(xml); Require(loaded.Backend=="Native" && loaded.DebugFocus && loaded.OuterPercent==25,"Old settings migration");
-        Require(loaded.DiagnosticsEnabled,"Existing settings must retain diagnostic logging");
+        Require(!loaded.DiagnosticsEnabled&&!loaded.NativeOuterResolution,"Missing options must not enable diagnostic logging or experiments");
+        File.WriteAllText(xml,"<QuadView><DiagnosticsEnabled>true</DiagnosticsEnabled><NativeOuterResolution>true</NativeOuterResolution></QuadView>");
+        var explicitOptIn=QvfrSettings.Load(xml);Require(explicitOptIn.DiagnosticsEnabled&&explicitOptIn.NativeOuterResolution,"Explicit saved opt-ins must be preserved");
         Require(!loaded.StereoDrawAudit,"Existing settings must not enable draw auditing");
         Require(!loaded.StereoShaderCapture,"Existing settings must not enable shader capture");
         Require(!loaded.StereoPairProof&&!loaded.CpuUploadReuse&&!loaded.CpuUploadBatch,"Existing settings must not enable prototype options");
