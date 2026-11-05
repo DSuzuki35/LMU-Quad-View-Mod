@@ -30,7 +30,34 @@ normal and far depth conventions remain separate, including reversed Z. FOV
 coefficients are calculated once per focus eye and shared between its two depth
 projections. No native methods are called on copied objects.
 
-The right current/derived matrices reuse the existing restricted camera model:
+The native cockpit producer now reads the world origin, camera rotation and
+pre-eye local offsets at the second VR-state copy in the cockpit camera update.
+Windows unwind records recover the caller's nonvolatile registers; only bounded
+stack numbers are copied. The producer applies each eye's translation with the
+native float operation order. After the original camera setter, it requires a
+bit-identical left position and matrix translation before constructing the right
+matrix from the same orientation and its independently produced position.
+The setter's addition of the view translation is retained even when it is zero,
+including its signed-zero behavior.
+This avoids reconstructing the world origin with a rounded inverse-left-eye
+product. It runs once per eye, without scanning scene objects or locating a new
+XR frame. It is restricted to the pinned cockpit camera, camera mode 0, transform
+mode 1, matching head angles, zero extra view offsets and no pending scale refresh.
+
+The focus input pair records whether this native world-pose path was available,
+and owns the corresponding shader-constant positions. Native right-view
+equivalence is checked when LMU later constructs that view. This connection has
+automated arithmetic, stack-reader and real Windows unwind tests; live right-eye
+equivalence has not yet been established for this revision. No native camera
+updates or draws are suppressed.
+An observed right-pose mismatch disables this direct producer for the session.
+Session epochs prevent an unconsumed thread-local pose from crossing teardown
+and reinstallation. The input reader follows the documented Windows
+[unwind API](https://learn.microsoft.com/en-us/windows/win32/api/winnt/nf-winnt-rtlvirtualunwind)
+and [x64 calling convention](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention).
+
+When the native producer is unavailable, the right current/derived matrices
+retain the existing restricted numeric prediction for projection preparation:
 camera mode 0, transform mode 1, rigid equal-orientation relative eyes, zero extra
 view offsets and matching native scalar constraints. Canted XR eyes, malformed
 poses/FOVs, unsupported perspective or FP controls refuse the whole pair. This
@@ -42,8 +69,8 @@ then right order. It requires the exact frame, thread, scene and view identities
 and bit-identical expected native outer normal/far projections. A camera/depth
 change, duplicate eye, wrong order or stale frame discards the pair and uses
 ordinary per-eye projection construction. The predicted right current/derived
-matrices do not overwrite the native right view. Native camera world position,
-transform-record metadata, history, frustum/cache updates and both eye draws
+matrices do not overwrite the native right view. Transform-record metadata,
+history, frustum/cache updates and both eye draws
 continue through their existing paths.
 
 This is an actual runtime producer and projection consumer, with no per-draw
@@ -91,8 +118,9 @@ has live raw-description evidence, with native equivalence and complete root
 coverage still open. Camera-number ownership does not own the native scene or
 its mutable meshes/materials/resources.
 
-Next validate that producer, preserve independent per-eye candidate membership/
-order, and assemble owned draw inputs. Native side effects, right engine world
-position/history and legal HDR/depth target seeding/consumers must be established
+Next complete native bounds metadata, preserve independent per-eye candidate
+membership/order, and assemble owned draw inputs. Native preparation side
+effects, right-pose equivalence/history and legal HDR/depth target
+seeding/consumers must be established
 before suppressing native work.
 The existing private portable instancing backend then supplies paired draws.

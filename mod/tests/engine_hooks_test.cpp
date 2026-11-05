@@ -40,6 +40,18 @@ void flush_log(){}
 namespace {
 unsigned masks=0,derived=0;
 unsigned ownerForwardCalls=0;
+unsigned cameraStateForwards=0,cameraPoseForwards=0;
+constexpr uint32_t cameraPoseBits[]{0x7fc12345u,0x80000000u,0x3f800000u,0xbf000000u,0x00000000u,0x40000000u};
+void cameraStateForward(void* renderer,void* destination){
+    assert(renderer==reinterpret_cast<void*>(1)&&destination==reinterpret_cast<void*>(2));
+    ++cameraStateForwards;_mm_setcsr(0x1fbf);
+}
+void cameraPoseForward(void* view,float x,float y,float z,float pitch,float yaw,float roll){
+    assert(view==reinterpret_cast<void*>(3));
+    const float values[]{x,y,z,pitch,yaw,roll};
+    for(unsigned i=0;i<6;++i){uint32_t bits=0;std::memcpy(&bits,&values[i],4);assert(bits==cameraPoseBits[i]);}
+    ++cameraPoseForwards;_mm_setcsr(0x1fbf);
+}
 void ownerForward(void* a,void* b,void* c,float bias){
     uint32_t bits=0;std::memcpy(&bits,&bias,sizeof(bits));
     assert(a==reinterpret_cast<void*>(1)&&b==reinterpret_cast<void*>(2)&&c==reinterpret_cast<void*>(3)&&bits==0x7fc12345u);
@@ -265,6 +277,14 @@ void hookTargetTest(){
 }
 int main(int argc,char** argv) {
     using namespace lmuqv;
+    {const auto saved=_mm_getcsr();const bool preparation=spsPreparationOptIn;spsPreparationOptIn=false;
+        nativeCameraStateOriginal=cameraStateForward;nativeCameraPoseOriginal=cameraPoseForward;
+        nativeCameraStateHook(reinterpret_cast<void*>(1),reinterpret_cast<void*>(2));
+        assert(cameraStateForwards==1&&_mm_getcsr()==0x1fbf);
+        float values[6]{};std::memcpy(values,cameraPoseBits,sizeof(values));
+        nativeCameraPoseHook(reinterpret_cast<void*>(3),values[0],values[1],values[2],values[3],values[4],values[5]);
+        assert(cameraPoseForwards==1&&_mm_getcsr()==0x1fbf);
+        spsPreparationOptIn=preparation;_mm_setcsr(saved);}
     {const unsigned saved=_mm_getcsr();uint32_t bits=0x7fc12345u;float bias{};std::memcpy(&bias,&bits,sizeof(bias));
         nativeOwnerOriginal=ownerForward;
         for(bool enabled:{false,true}){nativeOwnerInputEnabled.store(enabled);_mm_setcsr(0x1f80);

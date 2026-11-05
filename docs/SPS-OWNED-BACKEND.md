@@ -14,7 +14,8 @@ original passes. No CPU frametime improvement is established by these tests.
 | `native_stereo_view_inputs.hpp` | Keyed per-eye bounds, classifier and transform inputs; validates native sign-flipped classifier/constant positions | Fresh right-eye world metadata before left rendering; no tracking-space substitution |
 | `native_stereo_owner_plan.hpp` | Independent admission for an ordered forest, shared copied state and emission-time states | Complete native bounds and refresh effects, actual selected-root coverage |
 | `native_stereo_scene_plan.hpp` | Source position caches, per-eye classification, independent distance ordering and mesh keys | Native finalizers/submission callbacks; established bucket comparator and tie behavior |
-| `stereo_constants.hpp` | Owned 52-float helper-shadow patches and paired shader CB banks | Actual helper-shadow-to-native-CB mapping, material/bone/PS preparation |
+| `native_stereo_world_pose.hpp` / `native_stereo_pose_adapter.hpp` | Native cockpit origin/rotation/local-offset input reader; direct eye positions and view matrices with exact left checks | Live right-pose equivalence, bounds metadata and broader camera modes |
+| `stereo_constants.hpp` / `native_stereo_constants.hpp` | Owned helper patches, actual VS/PS shadow-to-buffer mapping, shared PS-b5 alias and paired shader CB banks | Complete material/bone preparation and snapshot/version boundaries |
 | `stereo_gpu_resources.hpp` | Immutable retention or GPU copies of mutable DEFAULT buffers/2D textures; typed SRV leases | Correct content capture/version points; mapped/dynamic sources currently refuse |
 | `stereo_pipeline.hpp` | Exact-byte cached original/converted shaders, owned input layouts, direct or GS array routing | Shader bytecode, binding layouts and supported material families |
 | `stereo_batch_plan.hpp` | Maximum noncrossing common pairs, retaining each eye's original order | Stable unique draw keys, independent valid input sequences |
@@ -106,7 +107,8 @@ Target copies preserve complete depth/MSAA subresources as required by
 
 ## Remaining native implementation
 
-1. Establish early right-eye world metadata and real initial HDR/depth state.
+1. Validate the connected direct cockpit world-pose producer and complete
+   bounds metadata; establish real initial HDR/depth state.
    Copying the current left bank twice does not establish right-eye seeding.
 2. Complete native bounds/world-refresh inputs and source/material/bone/cache
    effects at their original left/right times. The ordinary numeric transform

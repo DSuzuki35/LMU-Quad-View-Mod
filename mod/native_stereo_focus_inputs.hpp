@@ -3,11 +3,13 @@
 #include "native_stereo_camera.hpp"
 #include "native_stereo_transform.hpp"
 #include "native_stereo_view_math.hpp"
+#include "native_stereo_world_pose.hpp"
 
 namespace lmuqv {
 struct NativeStereoFocusEye {
     XrPosef runtimePose{}; // Tracking-space pose, not an engine world position.
     Matrix current{},projection{},farProjection{},derived{};
+    std::array<float,3> constantPosition{};
 };
 struct NativeStereoFocusInputs {
     bool complete=false;
@@ -18,6 +20,7 @@ struct NativeStereoFocusInputs {
     // Numeric production does not establish object/resource ownership, native
     // side effects, right-eye visibility or target/consumer compatibility.
     bool renderingEligible=false;
+    bool nativeWorldPose=false;
 };
 namespace native_stereo_focus_detail {
 inline bool pose_valid(const XrPosef& p){
@@ -46,7 +49,8 @@ inline bool same_pose(const XrPosef& a,const XrPosef& b){
 // Never invoke native methods on these value objects.
 inline NativeStereoFocusInputs prepare_native_stereo_focus_inputs(
     const QuadFrameInputs& frame,const NativeStereoCameraSnapshot& left,
-    float nearZ,float farZ,float scaleX=1.f,float scaleY=1.f) noexcept {
+    float nearZ,float farZ,float scaleX=1.f,float scaleY=1.f,
+    const NativeStereoWorldPosePair* worldPose=nullptr) noexcept {
     NativeStereoFpGuard restore;
     const auto refuse=[](const char* reason){NativeStereoFocusInputs out;out.reason=reason;return out;};
     if(!native_stereo_transform_default_controls(_mm_getcsr()))return refuse("unsupported floating-point controls");
@@ -69,7 +73,21 @@ inline NativeStereoFocusInputs prepare_native_stereo_focus_inputs(
     out.outerProjection[1]=replace_fov(left.projection,left.engineProjection[1]);
     out.outerFarProjection[1]=replace_fov(left.farProjection,left.engineFarProjection[1]);
     out.eyes[0].current=left.current;
-    out.eyes[1].current=multiply(multiply(left.current,left.relativeEye[1]),
+    if(worldPose){
+        if(!worldPose->complete||!native_world_pose_detail::same(worldPose->current[0],left.current))
+            return refuse("native world pose does not match left camera");
+        for(unsigned eye=0;eye<2;++eye){
+            if(!native_camera_detail::rigid(worldPose->current[eye])||
+               !native_camera_detail::finite(worldPose->constantPosition[eye]))return refuse("invalid native world pose");
+            if(!native_world_pose_detail::same(worldPose->current[eye],
+                native_world_pose_detail::set_position(worldPose->current[eye],worldPose->constantPosition[eye]))||
+               std::memcmp(worldPose->current[0].data(),worldPose->current[eye].data(),12*sizeof(float)))
+                return refuse("inconsistent native world pose");
+            out.eyes[eye].current=worldPose->current[eye];
+            out.eyes[eye].constantPosition=worldPose->constantPosition[eye];
+        }
+        out.nativeWorldPose=true;
+    }else out.eyes[1].current=multiply(multiply(left.current,left.relativeEye[1]),
         native_camera_detail::rigid_inverse(left.relativeEye[0]));
     for(unsigned eye=0;eye<2;++eye){
         const auto& view=frame.views[eye+2];
@@ -99,9 +117,10 @@ class NativeStereoFocusFrame {
 public:
     void reset(){inputs_={};scene_=view_=0;consumed_=0;}
     bool prepare(const QuadFrameInputs& frame,const NativeStereoCameraSnapshot& left,
-        uint64_t scene,uint64_t view,float nearZ,float farZ,float scaleX=1.f,float scaleY=1.f){
+        uint64_t scene,uint64_t view,float nearZ,float farZ,float scaleX=1.f,float scaleY=1.f,
+        const NativeStereoWorldPosePair* worldPose=nullptr){
         reset();if(!scene||!view){inputs_.reason="missing native scene/view identity";return false;}
-        inputs_=prepare_native_stereo_focus_inputs(frame,left,nearZ,farZ,scaleX,scaleY);
+        inputs_=prepare_native_stereo_focus_inputs(frame,left,nearZ,farZ,scaleX,scaleY,worldPose);
         if(!inputs_.complete)return false;
         scene_=scene;view_=view;return true;
     }
