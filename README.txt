@@ -1,5 +1,12 @@
 LMU QUAD VIEW MOD — v0.4.0
 
+CPU PERFORMANCE
+Preliminary measurements and user reports suggest around 0.5 ms lower CPU
+render time from the optimizations, depending on the scene and setup.
+Quad Views still adds roughly 3-4 ms CPU frametime compared with no mod.
+It is worthwhile only with enough CPU headroom. If already CPU-limited,
+performance can get worse even when GPU time improves.
+
 SIGNED BUILD
 I bought a code-signing certificate for this project. The DLL and executables
 are signed through Certum SimplySign, with SHA-256 and a timestamp.

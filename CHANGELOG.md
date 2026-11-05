@@ -6,10 +6,12 @@ Versions before 1.0 remain experimental and may change compatibility or settings
 
 ## 0.4.0 - 2026-11-05
 
+- Performance expectations: preliminary measurements and user reports indicate around **0.5 ms less CPU render time**, depending on the workload. Quad Views still adds roughly **3–4 ms CPU frametime versus no mod**, so it is worthwhile only with sufficient CPU headroom; GPU gains can be outweighed when CPU-limited.
 - Add portable rendering profiles contributed by **Markus Stahl**: save, load, rename, delete, import and export `.lmuqv` files. Paths, devices, diagnostics, benchmark placement and headset calibration remain local. Imports reject DTD/entities, oversized files, unsupported format versions and invalid setting ranges.
 - Refresh the native Windows launcher with an OpenGrid XR inspired dark violet palette, rounded cards and clearer navigation. Keep the small .NET distribution.
 - Show live allowed slider intervals with dimmed unavailable sections. Constrain QVFR resolution/focus combinations consistently across dragging, keyboard and numeric entry, including calibrated headset units.
 - Keep slider dragging responsive by updating only changed bounds and drawing range captions without repeated row layouts.
+- Offer opt-in CPU upload reuse in Setup. Profiling sessions can toggle focus-only reuse with Ctrl+Alt+F10 between captures; active captures keep a fixed setting.
 - Offer a per-user installer alongside the portable ZIP. Preserve settings, profiles and logs across upgrades.
 - Check for stable GitHub updates in the launcher. Downloads and installation require user action; verify the installer SHA256 and timestamped publisher signature, and require LMU to be closed.
 - Reduce repeated cached outer-bank validation and stop hidden benchmark bitmap/preview work. Add opt-in lock-wait profiling to investigate CPU frametime spikes; no multi-millisecond game improvement is established yet.

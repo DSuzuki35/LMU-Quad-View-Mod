@@ -8,6 +8,13 @@ stereo runtime.
 **v0.4.0 is an experimental offline build.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
+**CPU headroom matters:** preliminary measurements and user reports suggest around
+**0.5 ms lower CPU render time** from the optimizations, depending on the setup.
+Quad Views still adds roughly **3–4 ms of CPU frametime compared with no mod**.
+The small savings do not remove that penalty. Use the mod when you have enough
+CPU headroom; on a CPU-limited system it can make performance worse even if GPU
+time improves.
+
 Version 0.4.0 retains the **Benchmark** page with Minimal and
 Detailed in-headset overlays, separate joystick bindings for visibility and
 manual recording, local HTML/CSV/JSON reports, and latest-launch diagnostics.
