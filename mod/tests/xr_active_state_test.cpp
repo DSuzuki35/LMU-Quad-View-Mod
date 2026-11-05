@@ -35,7 +35,7 @@ void lifecycle(){
         destroyResult=XR_ERROR_RUNTIME_FAILURE;assert(layerDestroySession(s.session)==destroyResult);expect(mode==0,mode==1);
         destroyResult=XR_SUCCESS;assert(layerDestroySession(s.session)==XR_SUCCESS);expect(false,false);
         modes(mode==0,mode==1);start();expect(mode==0,mode==1);
-        {std::lock_guard<std::recursive_mutex> lock(stateMutex);clearSession();}expect(false,false);
+        {std::unique_lock<std::recursive_mutex> lock(stateMutex);clearSession(lock);}expect(false,false);
         modes(mode==0,mode==1);start();expect(mode==0,mode==1);
         assert(layerDestroyInstance(reinterpret_cast<XrInstance>(1))==XR_SUCCESS);expect(false,false);
     }

@@ -83,7 +83,7 @@ struct Outer {
     XrSwapchain chain{};
     std::vector<XrSwapchainImageD3D11KHR> images;
     std::vector<ID3D11RenderTargetView*> rtvs;
-    bool acquired=false, waited=false;
+    bool acquired=false, waited=false,runtimeBusy=false;
     uint32_t index=0;
     uint32_t width=0,height=0;
     uint32_t outputWidth=0,outputHeight=0;
@@ -156,6 +156,7 @@ struct State {
     unsigned captureMask=0;
     uint64_t frames=0;
 } s;
+bool frameOperationInFlight(){return s.focusBeginInFlight||s.outer[0].runtimeBusy||s.outer[1].runtimeBusy;}
 std::atomic<bool> quadActive{false},vrsActive{false};
 // Called under stateMutex when lifecycle state changes. These are coarse mode
 // snapshots, not ownership of the session or any of its graphics resources.
@@ -306,15 +307,44 @@ void diagnosePixelSlot(unsigned slot,ID3D11Texture2D* texture) {
     s.pixelMask|=1u<<slot;
     if(readPixelStats(texture,names[slot],slot))s.pixelSuccessMask|=1u<<slot;
 }
-bool releaseOuters() {
+// Caller owns the one outer-operation reservation while the runtime is free
+// to block. Lifecycle/Begin/End entry points reject work until it completes.
+bool acquireOuterImage(unsigned eye,std::unique_lock<std::recursive_mutex>& lock){
+    auto& outer=s.outer[eye];
+    if(outer.runtimeBusy||!outer.chain||outer.images.empty())return false;
+    if(outer.acquired&&outer.waited)return true;
+    const auto chain=outer.chain;
+    bool acquired=outer.acquired,waited=outer.waited;uint32_t index=outer.index;
+    outer.runtimeBusy=true;
+    lock.unlock();
+    XrResult result=XR_SUCCESS;
+    if(!acquired){
+        auto info=structure<XrSwapchainImageAcquireInfo>(XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO);
+        result=next.AcquireSwapchainImage(chain,&info,&index);
+        acquired=XR_SUCCEEDED(result);
+    }
+    if(acquired&&!waited){
+        auto info=structure<XrSwapchainImageWaitInfo>(XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO);info.timeout=XR_INFINITE_DURATION;
+        result=next.WaitSwapchainImage(chain,&info);waited=result==XR_SUCCESS;
+    }
+    lock.lock();
+    outer.index=index;outer.acquired=acquired;outer.waited=waited;outer.runtimeBusy=false;
+    if(!acquired||!waited)logf("outer acquire/wait eye=%u acquired=%d waited=%d result=%d (ownership retained)",eye,acquired,waited,result);
+    return acquired&&waited;
+}
+bool releaseOuters(std::unique_lock<std::recursive_mutex>& lock) {
     bool okay=true;
     for(unsigned eye=0;eye<2;++eye) {
         auto& outer=s.outer[eye];
         if(!outer.acquired)continue;
+        if(outer.runtimeBusy){okay=false;continue;}
+        outer.runtimeBusy=true;
         if(!outer.waited){
             auto wait=structure<XrSwapchainImageWaitInfo>(XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO);wait.timeout=0;
+            lock.unlock();
             XrResult r=next.WaitSwapchainImage(outer.chain,&wait);
-            if(r!=XR_SUCCESS){logf("outer cleanup wait eye=%u result=%d (acquisition retained)",eye,r);okay=false;continue;}
+            lock.lock();
+            if(r!=XR_SUCCESS){outer.runtimeBusy=false;logf("outer cleanup wait eye=%u result=%d (acquisition retained)",eye,r);okay=false;continue;}
             outer.waited=true;
         }
         if(outer.index<outer.rtvs.size())drawFocusDebug(eye,false,outer.croppedRtv?outer.croppedRtv:outer.rtvs[outer.index]);
@@ -333,28 +363,30 @@ bool releaseOuters() {
         }
         if(outer.index<outer.images.size())diagnosePixelSlot(eye,outer.images[outer.index].texture);
         auto release=structure<XrSwapchainImageReleaseInfo>(XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO);
+        lock.unlock();
         XrResult r=next.ReleaseSwapchainImage(outer.chain,&release);
+        lock.lock();outer.runtimeBusy=false;
         if(XR_SUCCEEDED(r)){outer.acquired=false;outer.waited=false;}
         else {logf("release outer %u result=%d",eye,r);okay=false;}
     }
     return okay;
 }
-void destroyOuter() {
-    releaseOuters();
+void destroyOuter(std::unique_lock<std::recursive_mutex>& lock) {
+    releaseOuters(lock);
     for(auto& eye:s.outer) {
         for(auto* rtv:eye.rtvs) if(rtv)rtv->Release();
         if(eye.croppedRtv)eye.croppedRtv->Release();
         if(eye.croppedTexture)eye.croppedTexture->Release();
-        if(eye.chain) { XrResult r=next.DestroySwapchain(eye.chain);logf("destroy outer swapchain result=%d acquired=%d",r,eye.acquired); }
+        if(eye.chain) {eye.runtimeBusy=true;lock.unlock();XrResult r=next.DestroySwapchain(eye.chain);lock.lock();logf("destroy outer swapchain result=%d acquired=%d",r,eye.acquired);}
         eye=Outer{};
     }
     s.colorInfo={};
 }
-void clearSession() {
+void clearSession(std::unique_lock<std::recursive_mutex>& lock) {
     vrsGaze.resetSession();
     benchmarkReset();
     for(auto& entry:s.appChains)clearFocusRtvs(entry.second);
-    destroyOuter();
+    destroyOuter(lock);
     outerResample.reset();cropResample.reset();
     if(s.context) s.context->Release();
     if(s.device) s.device->Release();
@@ -433,7 +465,7 @@ XrResult createInputSwapchain(XrSession session,const XrSwapchainCreateInfo& inf
         static_cast<unsigned long long>(info.usageFlags),static_cast<unsigned long long>(info.usageFlags|XR_SWAPCHAIN_USAGE_SAMPLED_BIT));
     return result;
 }
-bool createOuter(const XrSwapchainCreateInfo& info) {
+bool createOuter(const XrSwapchainCreateInfo& info,std::unique_lock<std::recursive_mutex>& lock) {
     if(s.outer[0].chain && s.outer[1].chain) return true;
     if(!s.device || info.sampleCount!=1 || info.arraySize!=1 || info.faceCount!=1 || info.mipCount!=1 ||
        info.createFlags || !(info.usageFlags & XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT)) {
@@ -448,15 +480,15 @@ bool createOuter(const XrSwapchainCreateInfo& info) {
         auto& eye=s.outer[i];
         if(s.runtimeSettings){own.width=s.runtimeOutputWidth[i];own.height=s.runtimeOutputHeight[i];}
         XrResult r=createInputSwapchain(s.session,own,&eye.chain,i?"outer1":"outer0");
-        if(XR_FAILED(r)) { logf("create outer %u result=%d",i,r);destroyOuter();return false; }
+        if(XR_FAILED(r)) { logf("create outer %u result=%d",i,r);destroyOuter(lock);return false; }
         eye.outputWidth=own.width;eye.outputHeight=own.height;
         eye.width=lmuqv::crop_dimension(own.width,s.cropWidth.percent);eye.height=lmuqv::crop_dimension(own.height,s.cropHeight.percent);
         uint32_t count=0;r=next.EnumerateSwapchainImages(eye.chain,0,&count,nullptr);
-        if(XR_FAILED(r)||!count||count>64) {logf("outer image count %u result=%d count=%u",i,r,count);destroyOuter();return false;}
+        if(XR_FAILED(r)||!count||count>64) {logf("outer image count %u result=%d count=%u",i,r,count);destroyOuter(lock);return false;}
         eye.images.resize(count);
         for(auto& image:eye.images) image=structure<XrSwapchainImageD3D11KHR>(XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR);
         r=next.EnumerateSwapchainImages(eye.chain,count,&count,reinterpret_cast<XrSwapchainImageBaseHeader*>(eye.images.data()));
-        if(XR_FAILED(r)||count>eye.images.size()) {logf("enumerate outer %u result=%d",i,r);destroyOuter();return false;}
+        if(XR_FAILED(r)||count>eye.images.size()) {logf("enumerate outer %u result=%d",i,r);destroyOuter(lock);return false;}
         eye.images.resize(count);
         eye.rtvs.resize(count,nullptr);
         D3D11_RENDER_TARGET_VIEW_DESC desc{};
@@ -475,7 +507,7 @@ bool createOuter(const XrSwapchainCreateInfo& info) {
                 desc.Format=swapchainFormat;
                 hr=s.device->CreateRenderTargetView(eye.images[image].texture,&desc,&eye.rtvs[image]);
             }
-            if(FAILED(hr)){logf("outer RTV eye=%u image=%u result=%08lx",i,image,static_cast<unsigned long>(hr));destroyOuter();return false;}
+            if(FAILED(hr)){logf("outer RTV eye=%u image=%u result=%08lx",i,image,static_cast<unsigned long>(hr));destroyOuter(lock);return false;}
             D3D11_TEXTURE2D_DESC resource{};eye.images[image].texture->GetDesc(&resource);
             logf("outer RTV eye=%u image=%u resourceFormat=%u swapchainFormat=%u uiFormat=%u",i,image,resource.Format,swapchainFormat,desc.Format);
             desc.Format=uiFormat;
@@ -487,7 +519,7 @@ bool createOuter(const XrSwapchainCreateInfo& info) {
             HRESULT hr=s.device->CreateTexture2D(&cropped,nullptr,&eye.croppedTexture);
             eye.rtvs[0]->GetDesc(&desc);
             if(SUCCEEDED(hr))hr=s.device->CreateRenderTargetView(eye.croppedTexture,&desc,&eye.croppedRtv);
-            if(FAILED(hr)){logf("outer crop target failed eye=%u result=%08lx",i,static_cast<unsigned long>(hr));destroyOuter();return false;}
+            if(FAILED(hr)){logf("outer crop target failed eye=%u result=%08lx",i,static_cast<unsigned long>(hr));destroyOuter(lock);return false;}
             logf("outer crop target eye=%u render=%ux%u fullFovOutput=%ux%u",i,eye.width,eye.height,eye.outputWidth,eye.outputHeight);
         }
     }
@@ -510,9 +542,9 @@ unsigned formatFamily(DXGI_FORMAT f) {
 
 XrResult XRAPI_CALL layerDestroyInstance(XrInstance instance) {
     std::unique_lock<std::recursive_mutex> lock(stateMutex);
-    if(s.focusBeginInFlight)return XR_ERROR_CALL_ORDER_INVALID;
+    if(frameOperationInFlight())return XR_ERROR_CALL_ORDER_INVALID;
     logf("xrDestroyInstance");
-    if(s.session) {lmuqv::engine_stop();clearSession();}
+    if(s.session) {lmuqv::engine_stop();clearSession(lock);}
     lmuqv::stereo_audit_stop(); // Also releases early hooks when no session was created.
     lock.unlock();
     XrResult r=next.DestroyInstance(instance);
@@ -580,7 +612,7 @@ XrResult XRAPI_CALL layerEnumerateEnvironmentBlendModes(XrInstance instance,XrSy
     return next.EnumerateEnvironmentBlendModes(instance,system,s.quad&&type==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO?XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO:type,cap,count,out);
 }
 XrResult XRAPI_CALL layerCreateSession(XrInstance instance,const XrSessionCreateInfo* info,XrSession* session) {
-    std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    std::unique_lock<std::recursive_mutex> lock(stateMutex);
     logf("xrCreateSession quad=%d",s.quad);
     if(s.session)return XR_ERROR_LIMIT_REACHED;
     if(s.quad){const XrResult selection=selectFoveation(instance,info->systemId);if(XR_FAILED(selection))return selection;}
@@ -604,7 +636,7 @@ XrResult XRAPI_CALL layerCreateSession(XrInstance instance,const XrSessionCreate
         const bool started=lmuqv::engine_start(s.context);logf("engine_start result=%d",started);
         if((s.runtimeSettings||s.vrs)&&!started){
             logf("Runtime settings mode requires successful engine hooks; refusing session");
-            lmuqv::engine_stop();vrsGaze.resetSession();next.DestroySession(*session);clearSession();*session=XR_NULL_HANDLE;
+            lmuqv::engine_stop();vrsGaze.resetSession();next.DestroySession(*session);clearSession(lock);*session=XR_NULL_HANDLE;
             return XR_ERROR_INITIALIZATION_FAILED;
         }
     }
@@ -612,25 +644,26 @@ XrResult XRAPI_CALL layerCreateSession(XrInstance instance,const XrSessionCreate
     return r;
 }
 XrResult XRAPI_CALL layerDestroySession(XrSession session) {
-    std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    if(s.focusBeginInFlight)return XR_ERROR_CALL_ORDER_INVALID;
+    std::unique_lock<std::recursive_mutex> lock(stateMutex);
+    if(frameOperationInFlight())return XR_ERROR_CALL_ORDER_INVALID;
     logf("xrDestroySession");lmuqv::engine_stop();benchmarkReset();vrsGaze.resetSession();
     outerResample.reset();
     for(auto& entry:s.appChains)clearFocusRtvs(entry.second);
-    destroyOuter();
+    destroyOuter(lock);
     XrResult r=next.DestroySession(session);
-    if(XR_SUCCEEDED(r))clearSession();
+    if(XR_SUCCEEDED(r))clearSession(lock);
     return r;
 }
 XrResult XRAPI_CALL layerBeginSession(XrSession session,const XrSessionBeginInfo* info) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    if(frameOperationInFlight())return XR_ERROR_CALL_ORDER_INVALID;
     auto modified=*info;if(s.quad)modified.primaryViewConfigurationType=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_QUAD_VARJO;
     XrResult r=next.BeginSession(session,&modified);s.running=XR_SUCCEEDED(r);publishActiveModes();benchmarkRuntimeResult(r);
     logf("xrBeginSession app=%d runtime=%d result=%d",info->primaryViewConfigurationType,modified.primaryViewConfigurationType,r);return r;
 }
 XrResult XRAPI_CALL layerEndSession(XrSession session) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    if(s.focusBeginInFlight)return XR_ERROR_CALL_ORDER_INVALID;
+    if(frameOperationInFlight())return XR_ERROR_CALL_ORDER_INVALID;
     if(s.focusOwnership&&heldFocusImages()){logf("stereo_pass end-session refused: focus lease must be resolved or session destroyed");return XR_ERROR_CALL_ORDER_INVALID;}
     XrResult r=next.EndSession(session);benchmarkRuntimeResult(r);
     if(XR_SUCCEEDED(r)){benchmarkGpu.stop(false);s.running=false;publishActiveModes();clearFrame();if(benchmarkEnabled){benchmarkGpu.stop(false);benchmarkPreviousSceneQpc=0;benchmarkTransport.data()->header.running=0;benchmarkTransport.data()->header.status=1;benchmarkTransport.data()->header.reason=0;}}logf("xrEndSession result=%d",r);return r;
@@ -650,6 +683,7 @@ XrResult beginFrameImpl(XrSession session,const XrFrameBeginInfo* info,bool norm
     if(normalize&&(s.frame||s.earlyBeginPending||!s.quad||!s.runtimeSettings||session!=s.session||!s.running||
         !s.waitPending||!s.waitShouldRender||!s.located||s.locateTime!=s.pendingTime||
         s.outer[0].acquired||s.outer[1].acquired))return XR_SUCCESS;
+    if(frameOperationInFlight())return XR_ERROR_CALL_ORDER_INVALID;
     if(s.earlyBeginPending){
         if(session!=s.session)return XR_ERROR_HANDLE_INVALID;
         if(info&&(info->type!=XR_TYPE_FRAME_BEGIN_INFO||info->next))return XR_ERROR_VALIDATION_FAILURE;
@@ -657,7 +691,6 @@ XrResult beginFrameImpl(XrSession session,const XrFrameBeginInfo* info,bool norm
         if(xrDiagnosticFrameLog())logf("xrBeginFrame late app call acknowledged frame=%llu result=%d; rendered captures preserved",static_cast<unsigned long long>(s.frames),result);
         return result;
     }
-    if(s.focusBeginInFlight)return XR_ERROR_CALL_ORDER_INVALID;
     if(s.focusOwnership&&heldFocusImages()){logf("stereo_pass begin-frame refused: prior focus lease unresolved");return XR_ERROR_CALL_ORDER_INVALID;}
     s.focusBeginInFlight=true;
     // Reserve this Wait before leaving the lock. A pipelined Wait may
@@ -671,7 +704,7 @@ XrResult beginFrameImpl(XrSession session,const XrFrameBeginInfo* info,bool norm
     lock.lock();
     s.focusBeginInFlight=false;benchmarkRuntimeResult(r);
     // Flush an abandoned/discarded frame before accepting new engine captures.
-    bool released=normalize?true:releaseOuters();
+    bool released=normalize?true:releaseOuters(lock);
     s.renderViewsLocked=false;
     s.frame=XR_SUCCEEDED(r)&&hadWait&&released;
     if(hadWait){s.predictedTime=predictedTime;s.framePeriod=framePeriod;s.shouldRender=shouldRender;}
@@ -687,6 +720,11 @@ XrResult beginFrameImpl(XrSession session,const XrFrameBeginInfo* info,bool norm
     std::fill(std::begin(s.debugDrawn),std::end(s.debugDrawn),false);
     if(XR_FAILED(r))s.located=false;
     if(normalize){s.earlyBeginResult=r;s.earlyBeginPending=true;}
+    if(s.quad&&s.frame&&s.shouldRender){
+        // Runtime ownership is ready before outer/focus engine rendering. A
+        // failed wait retains ownership and can be retried by the copy path.
+        for(unsigned eye=0;eye<2;++eye)acquireOuterImage(eye,lock);
+    }
     if(xrDiagnosticFrameLog()||XR_FAILED(r)||!s.frame)logf("xrBeginFrame mode=%s frame=%llu pendingWait=%d renderable=%d shouldRender=%d result=%d",s.quad?"quad":"trace",static_cast<unsigned long long>(s.frames),hadWait,s.frame,s.shouldRender,r);
     return r;
 }
@@ -699,7 +737,7 @@ XrResult XRAPI_CALL layerBeginFrame(XrSession session,const XrFrameBeginInfo* in
 // returning control to engine rendering. Accessors never call the runtime.
 XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* info,XrViewState* state,uint32_t cap,uint32_t* count,XrView* out) {
     std::unique_lock<std::recursive_mutex> lock(stateMutex);
-    if(s.focusBeginInFlight)return XR_ERROR_CALL_ORDER_INVALID;
+    if(frameOperationInFlight())return XR_ERROR_CALL_ORDER_INVALID;
     if(!s.quad||info->viewConfigurationType!=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO){
         XrResult r=next.LocateViews(session,info,state,cap,count,out);
         if(s.vrs&&info->viewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO){
@@ -775,7 +813,8 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
     return r;
 }
 XrResult XRAPI_CALL layerCreateSwapchain(XrSession session,const XrSwapchainCreateInfo* info,XrSwapchain* chain) {
-    std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    std::unique_lock<std::recursive_mutex> lock(stateMutex);
+    if(frameOperationInFlight())return XR_ERROR_CALL_ORDER_INVALID;
     XrResult r=createInputSwapchain(session,*info,chain,"app");
     logf("xrCreateSwapchain %ux%u format=%lld samples=%u array=%u usage=%llu result=%d",info->width,info->height,static_cast<long long>(info->format),info->sampleCount,info->arraySize,static_cast<unsigned long long>(info->usageFlags),r);
     if(XR_SUCCEEDED(r)){
@@ -786,7 +825,7 @@ XrResult XRAPI_CALL layerCreateSwapchain(XrSession session,const XrSwapchainCrea
         if(focusCandidate)app.eye=s.nextAppEye++;
         if(s.runtimeSettings)logf("Swapchain role=unassigned handle=%p dimensions=%ux%u; awaiting native eye identity",static_cast<void*>(*chain),info->width,info->height);
         s.appChains[*chain]=std::move(app);
-        if(s.quad&&focusCandidate&&!createOuter(*info)&&s.runtimeSettings){
+        if(s.quad&&focusCandidate&&!createOuter(*info,lock)&&s.runtimeSettings){
             next.DestroySwapchain(*chain);s.appChains.erase(*chain);--s.nextAppEye;*chain=XR_NULL_HANDLE;
             return XR_ERROR_RUNTIME_FAILURE;
         }
@@ -795,12 +834,14 @@ XrResult XRAPI_CALL layerCreateSwapchain(XrSession session,const XrSwapchainCrea
 }
 XrResult XRAPI_CALL layerDestroySwapchain(XrSwapchain chain) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    if(frameOperationInFlight())return XR_ERROR_CALL_ORDER_INVALID;
     const auto held=s.appChains.find(chain);if(held!=s.appChains.end()&&held->second.focusLease){logf("stereo_pass destroy-swapchain refused: focus lease unresolved");return XR_ERROR_CALL_ORDER_INVALID;}
     auto found=s.appChains.find(chain);if(found!=s.appChains.end())clearFocusRtvs(found->second);
     XrResult r=next.DestroySwapchain(chain);if(XR_SUCCEEDED(r))s.appChains.erase(chain);logf("xrDestroySwapchain result=%d",r);return r;
 }
 XrResult XRAPI_CALL layerEnumerateSwapchainImages(XrSwapchain chain,uint32_t cap,uint32_t* count,XrSwapchainImageBaseHeader* images) {
-    std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    std::unique_lock<std::recursive_mutex> lock(stateMutex);
+    if(frameOperationInFlight())return XR_ERROR_CALL_ORDER_INVALID;
     auto identity=s.appChains.find(chain);
     if(s.quad&&s.runtimeSettings&&identity!=s.appChains.end()&&identity->second.eye==2){
         const unsigned eye=lmuqv::engine_game_eye(chain);
@@ -818,7 +859,7 @@ XrResult XRAPI_CALL layerEnumerateSwapchainImages(XrSwapchain chain,uint32_t cap
             }
             // LMU ignores enumeration errors and later dereferences the images.
             // Always preserve its image lifecycle, even when quad use is refused.
-            if(eligible&&createOuter(ci)){
+            if(eligible&&createOuter(ci,lock)){
                 app.eye=eye;
                 logf("Swapchain role=game-focus proof=native-eye-vector eye=%u chain=%p dimensions=%ux%u",eye,static_cast<void*>(chain),ci.width,ci.height);
             }else logf("Native game eye remains unassigned eye=%u; forwarding image enumeration to preserve app lifecycle",eye);
@@ -911,8 +952,8 @@ bool validInner(const XrSwapchainSubImage& image,unsigned eye) {
            uint64_t(image.imageRect.offset.y)+image.imageRect.extent.height<=info.height;
 }
 XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) {
-    std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    if(s.focusBeginInFlight)return XR_ERROR_CALL_ORDER_INVALID;
+    std::unique_lock<std::recursive_mutex> lock(stateMutex);
+    if(frameOperationInFlight())return XR_ERROR_CALL_ORDER_INVALID;
     if(s.earlyBeginPending){logf("xrEndFrame refused: late application xrBeginFrame not received");return XR_ERROR_CALL_ORDER_INVALID;}
     if(s.focusOwnership&&heldFocusImages()){logf("stereo_pass end-frame refused: unresolved focus image owner; no downstream release/submission");return XR_ERROR_CALL_ORDER_INVALID;}
     if(!s.quad){
@@ -947,7 +988,7 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
         return r;
     }
     // UI drawing uses the acquired RTVs. Runtime ownership resumes before submission.
-    bool released=releaseOuters();
+    bool released=releaseOuters(lock);
     constexpr size_t inlineLayerCapacity = 16;
     std::array<const XrCompositionLayerBaseHeader*, inlineLayerCapacity+1> stackLayers;
     std::vector<const XrCompositionLayerBaseHeader*> largeLayers;
@@ -1172,7 +1213,7 @@ void xr_scene_focus_complete(unsigned eye) {
 }
 OuterTarget xr_outer_target(unsigned eye) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    if (eye > 1 || !s.frame || !s.shouldRender || !s.captures[eye]) return {};
+    if (frameOperationInFlight() || eye > 1 || !s.frame || !s.shouldRender || !s.captures[eye]) return {};
     const auto& outer = s.outer[eye];
     if (!outer.acquired || !outer.waited || outer.index >= outer.rtvs.size()) return {};
     if (!outer.rtvs[outer.index]) return {};
@@ -1226,14 +1267,14 @@ void prepareNormalizedRenderFrame(){
 }
 bool xr_frame_views(XrView (&views)[4]) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    if(s.focusBeginInFlight||!s.quad||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
+    if(frameOperationInFlight()||!s.quad||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
     prepareNormalizedRenderFrame();
     s.renderViewsLocked=true;
     std::copy(std::begin(s.views),std::end(s.views),std::begin(views));return true;
 }
 bool xr_frame_full_outer_fov(XrFovf (&fov)[2]) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    if(s.focusBeginInFlight||!s.quad||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
+    if(frameOperationInFlight()||!s.quad||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
     prepareNormalizedRenderFrame();
     std::copy(std::begin(s.fullOuterFov),std::end(s.fullOuterFov),std::begin(fov));return true;
 }
@@ -1271,9 +1312,9 @@ bool xr_retire_focus_image(FocusImageLease& lease){
 bool xr_copy_outer(unsigned eye,ID3D11Texture2D* source) {
     if(eye>1)return false;
     ProfileScope lockProfile(profile_eye(ProfileSlot::outer_lock0,eye));
-    std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    std::unique_lock<std::recursive_mutex> lock(stateMutex);
     lockProfile.end();
-    if(!source||!s.quad||!s.frame||!s.shouldRender||!s.located||!s.context||s.captures[eye])return false;
+    if(frameOperationInFlight()||!source||!s.quad||!s.frame||!s.shouldRender||!s.located||!s.context||s.captures[eye])return false;
     auto& outer=s.outer[eye];if(!outer.chain)return false;
     D3D11_TEXTURE2D_DESC src{};source->GetDesc(&src);
     const bool fullSize=src.Width==s.colorInfo.width&&src.Height==s.colorInfo.height;
@@ -1290,8 +1331,7 @@ bool xr_copy_outer(unsigned eye,ID3D11Texture2D* source) {
     }
     ID3D11Device* sourceDevice{};source->GetDevice(&sourceDevice);bool same=sourceDevice==s.device;if(sourceDevice)sourceDevice->Release();if(!same){logf("outer copy rejected different device");return false;}
     ProfileScope waitProfile(profile_eye(ProfileSlot::outer_wait0,eye));
-    if(!outer.acquired){auto acquire=structure<XrSwapchainImageAcquireInfo>(XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO);XrResult r=next.AcquireSwapchainImage(outer.chain,&acquire,&outer.index);if(XR_FAILED(r)){logf("acquire outer %u result=%d",eye,r);return false;}outer.acquired=true;}
-    if(!outer.waited){auto wait=structure<XrSwapchainImageWaitInfo>(XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO);wait.timeout=XR_INFINITE_DURATION;XrResult r=next.WaitSwapchainImage(outer.chain,&wait);if(r!=XR_SUCCESS){logf("wait outer %u result=%d (acquisition retained)",eye,r);return false;}outer.waited=true;}
+    if(!acquireOuterImage(eye,lock))return false;
     waitProfile.end();
     bool copied=false;
     if(outer.index<outer.images.size()&&outer.images[outer.index].texture){

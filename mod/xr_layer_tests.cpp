@@ -85,6 +85,9 @@ std::filesystem::path testBuildRoot() {
     return std::filesystem::path(executable).parent_path();
 }
 std::string currentLog() {
+    // Test-only barrier: production flush_log is deliberately asynchronous.
+    // The service can restart when the next adapter message is queued.
+    lmuqv::stop_log();
     std::ifstream input(testBuildRoot()/"xr-layer-test-trace.log");
     return {std::istreambuf_iterator<char>(input),std::istreambuf_iterator<char>()};
 }
@@ -708,11 +711,11 @@ int main(int argc,char** argv) {
         XrView engineViews[4]{};assert(!lmuqv::xr_frame_views(engineViews));
     };
     begin();finish();assert(submittedLayers==0&&submittedViews==0);
-    begin();assert(!lmuqv::xr_copy_outer(0,wrongSize));finish();assert(submittedLayers==0&&acquireCount==0);
+    begin();assert(!lmuqv::xr_copy_outer(0,wrongSize));finish();assert(submittedLayers==0&&acquireCount==successfulReleases);
     if(scaledRequested||outerBlurRequested){
         auto noSampleDesc=sourceDesc;noSampleDesc.Width=32;noSampleDesc.BindFlags&=~D3D11_BIND_SHADER_RESOURCE;
         ID3D11Texture2D* noSample=nullptr;assert(SUCCEEDED(device->CreateTexture2D(&noSampleDesc,nullptr,&noSample)));
-        begin();assert(!lmuqv::xr_copy_outer(0,noSample));finish();assert(submittedLayers==0&&acquireCount==0);noSample->Release();
+        begin();assert(!lmuqv::xr_copy_outer(0,noSample));finish();assert(submittedLayers==0&&acquireCount==successfulReleases);noSample->Release();
     }
     auto checkOuterTarget=[&](unsigned eye,bool available){
         const auto target=lmuqv::xr_outer_target(eye);
@@ -727,22 +730,24 @@ int main(int argc,char** argv) {
         texture->Release();resource->Release();
     };
     checkOuterTarget(0,false);checkOuterTarget(1,false);checkOuterTarget(2,false);
-    begin();assert(lmuqv::xr_copy_outer(0,source));assert(releaseCount==0);assert(lmuqv::xr_outer_rtv(0));
+    const auto partialReleaseBase=releaseCount;
+    begin();assert(lmuqv::xr_copy_outer(0,source));assert(releaseCount==partialReleaseBase);assert(lmuqv::xr_outer_rtv(0));
     checkOuterTarget(0,true);checkOuterTarget(1,false);
     D3D11_RENDER_TARGET_VIEW_DESC outerView{};lmuqv::xr_outer_rtv(0)->GetDesc(&outerView);
     assert(outerView.Format==(typedSrgbRuntime?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:DXGI_FORMAT_R8G8B8A8_UNORM));
     assertRenderPixels(0);
-    finish();assert(submittedLayers==0&&releaseCount==1);
+    finish();assert(submittedLayers==0&&releaseCount==partialReleaseBase+2);
     assertPaddedPixels(0);
     assert(!lmuqv::xr_outer_rtv(0));
     checkOuterTarget(0,false);
     frameCalls.clear();
-    begin();assert(lmuqv::xr_copy_outer(0,source));assert(lmuqv::xr_copy_outer(1,source));assert(releaseCount==1);
+    const auto completeReleaseBase=releaseCount;
+    begin();assert(lmuqv::xr_copy_outer(0,source));assert(lmuqv::xr_copy_outer(1,source));assert(releaseCount==completeReleaseBase);
     checkOuterTarget(0,true);checkOuterTarget(1,true);
     finish();assert(submittedLayers==1&&submittedViews==4);checkOuterTarget(0,false);checkOuterTarget(1,false);
     assert(frameCalls=="WBLE"); // LMU 5cb94b -> 5cb96b -> 5cba9c -> render -> 5cb6a2.
     runtimeShouldRender=false;begin();assert(!lmuqv::xr_copy_outer(0,source));finish();assert(submittedLayers==0);
-    assert(acquireCount==3&&releaseCount==3);
+    assert(acquireCount==successfulReleases&&releaseCount==successfulReleases);
     runtimeShouldRender=true;
     begin();assert(lmuqv::xr_copy_outer(0,source));assert(lmuqv::xr_copy_outer(1,source));
     // The next WaitFrame is permitted while current-frame engine/UI work remains active.
