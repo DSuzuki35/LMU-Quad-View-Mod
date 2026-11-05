@@ -17,8 +17,18 @@ LMU was running during these attempts, so these were not isolated GPU runs.
 Concurrent game activity is a possible confounder, not an established cause.
 Driver success codes and WARP correctness do not prove hardware correctness.
 
-Do not enable this backend in LMU or run another hardware experiment until the
-other task has released the GPU and an isolated test is arranged. The explicit
+A user-authorized repeat at 09:29:48 UTC on the same day used the unchanged
+test binary (`B81D52C65B62AAD226E51926E3776A9146DD95115CE1BAAF1EBF0EA96B265B6F`)
+and the same NVIDIA driver. No LMU process was present before or after the
+3.84-second run. The MVR4 three-vertex test again failed on readback:
+`Map=0x887a0005`, `GetDeviceRemovedReason=0x887a0006` (`DEVICE_HUNG`).
+LMU being open is therefore not necessary to reproduce the failure. This does
+not yet distinguish a prototype/API-use problem from a driver problem.
+The local evidence is in `diagnostics/20261105-mvr-isolated-retest` in the
+outer workspace. The default software/mock test passes before and after this run.
+
+Do not enable this backend in LMU. The repeat without LMU still failed, so
+further hardware experiments need a specific code/API or driver hypothesis. The explicit
 `--hardware` test remains opt-in. There is no demonstrated in-game SPS/MVR CPU
 improvement. Classic SPS and arbitrary four-position MVR are distinct paths.
 
