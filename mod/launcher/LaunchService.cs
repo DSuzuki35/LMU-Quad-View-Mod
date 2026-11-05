@@ -255,13 +255,20 @@ namespace LmuQuadViewLauncher {
         // user-owned. Prepare may run inside an autoload helper while LMU is alive.
         internal static readonly TimeSpan RuntimeRetention=TimeSpan.FromDays(1);
         internal static void PruneRuntime(string directory,DateTime nowUtc) {
+            PruneRuntime(directory,nowUtc,delegate {
+                var games=Process.GetProcessesByName("Le Mans Ultimate");bool running=games.Length!=0;
+                foreach(var game in games)game.Dispose();
+                return running;
+            });
+        }
+        // Fixtures supply process presence without depending on an unrelated
+        // live game. Production always uses the real process lookup above.
+        internal static void PruneRuntime(string directory,DateTime nowUtc,Func<bool> gameIsRunning) {
             try {
                 if(!Directory.Exists(directory))return;
                 var info=new DirectoryInfo(directory);
                 for(var parent=info;parent!=null;parent=parent.Parent)if((parent.Attributes&FileAttributes.ReparsePoint)!=0)return;
-                var games=Process.GetProcessesByName("Le Mans Ultimate");bool running=games.Length!=0;
-                foreach(var game in games)game.Dispose();
-                if(running)return;
+                if(gameIsRunning())return;
                 foreach(var child in info.GetDirectories("layers-*")) {
                     if(!Regex.IsMatch(child.Name,"^layers-[0-9]{8}-[0-9]{6}-[0-9a-f]{8}$")||nowUtc-child.LastWriteTimeUtc<RuntimeRetention)continue;
                     if((child.Attributes&FileAttributes.ReparsePoint)!=0)continue;

@@ -38,20 +38,28 @@ class HardeningTests
             var foreignJson = layer("layers-20261101-101012-0123abcd", now.AddDays(-3));
             File.WriteAllText(Path.Combine(foreignJson,"notes.json"),"user data");
             Directory.SetLastWriteTimeUtc(foreignJson,now.AddDays(-3));
-            LaunchService.PruneRuntime(runtime, now);
+            var filesBefore=Directory.GetFiles(runtime,"*",SearchOption.AllDirectories).ToDictionary(path=>path,File.ReadAllText);
+            var directoriesBefore=Directory.GetDirectories(runtime,"*",SearchOption.AllDirectories);
+            int presenceChecks=0;
+            LaunchService.PruneRuntime(runtime,now,()=>{++presenceChecks;return true;});
+            Require(presenceChecks==1,"running-game guard was not checked");
+            Require(Directory.GetFiles(runtime,"*",SearchOption.AllDirectories).Length==filesBefore.Count&&
+                filesBefore.All(file=>File.Exists(file.Key)&&File.ReadAllText(file.Key)==file.Value)&&
+                directoriesBefore.All(Directory.Exists),"running game did not preserve all runtime files and folders");
+            LaunchService.PruneRuntime(runtime,now,()=>false);
             Require(File.Exists(Path.Combine(foreignJson,"notes.json")),"foreign JSON removed");
             Require(!Directory.Exists(stale), "stale generated layer folder kept");
             Require(Directory.Exists(fresh), "recent layer folder removed (may belong to a running game)");
             Require(Directory.Exists(foreign), "non-generated folder name removed");
             Require(Directory.Exists(unexpected) && File.Exists(Path.Combine(unexpected, "notes.txt")), "folder with a non-manifest file removed");
             Require(!File.Exists(oldIni) && File.Exists(newIni) && File.Exists(otherIni), "autoload INI pruning wrong");
-            LaunchService.PruneRuntime(Path.Combine(root, "missing"), now); // must not throw
+            LaunchService.PruneRuntime(Path.Combine(root, "missing"), now,()=>false); // must not throw
             var outside=Path.Combine(root,"outside");Directory.CreateDirectory(outside);
             var linkedRuntime=Path.Combine(root,"linked-runtime");
             var linkedIni=Path.Combine(outside,"autoload-"+new string('c',32)+".ini");File.WriteAllText(linkedIni,"keep");File.SetLastWriteTimeUtc(linkedIni,now.AddDays(-2));
             var linkStart=new System.Diagnostics.ProcessStartInfo("cmd.exe","/c mklink /J \""+linkedRuntime+"\" \""+outside+"\"") {UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
             using(var link=System.Diagnostics.Process.Start(linkStart)){link.WaitForExit();Require(link.ExitCode==0,"junction fixture creation failed");}
-            try{LaunchService.PruneRuntime(linkedRuntime,now);Require(File.Exists(linkedIni),"linked runtime target modified");}
+            try{LaunchService.PruneRuntime(linkedRuntime,now,()=>false);Require(File.Exists(linkedIni),"linked runtime target modified");}
             finally{Directory.Delete(linkedRuntime,false);}
 
             // --- QVFR backups and encoding
