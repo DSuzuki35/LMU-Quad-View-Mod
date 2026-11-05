@@ -100,8 +100,15 @@ int main(){
     }
     // An owned producer may supply the actual helper center/corners and two
     // independent bounds views. Raw copying alone never fabricates these.
-    Fixture::put(f.owner[1].data(),0,uint32_t(0x80000));out=capture(f);
-    auto& bounds=out.owners[1].bounds;bounds.available=true;bounds.radius=1;
+    Fixture::put(f.owner[1].data(),0,uint32_t(0x80000));
+    std::array<NativeStereoClassifyFloat3,8> nativeCorners{};
+    for(unsigned i=0;i<8;++i)nativeCorners[i]={20+(i&1?2.f:-2.f),30+(i&2?3.f:-3.f),40+(i&4?4.f:-4.f)};
+    Fixture::put(f.owner[1].data(),0x150,nativeCorners);Fixture::put(f.owner[1].data(),0xe8,7.f);out=capture(f);
+    assert(out.owners[1].bounds.available&&out.owners[1].bounds.radius==7&&out.owners[1].bounds.center.x==20&&
+        out.owners[1].bounds.center.y==30&&out.owners[1].bounds.center.z==40);
+    blocked=reinterpret_cast<uintptr_t>(f.owner[1].data())+0x150;empty(capture(f),"unreadable");blocked=0;
+    Fixture::put(f.owner[1].data(),0xe8,-1.f);empty(capture(f),"invalid native owner bounds");Fixture::put(f.owner[1].data(),0xe8,7.f);
+    auto& bounds=out.owners[1].bounds;bounds.available=true;bounds.center={};bounds.radius=1;
     for(unsigned i=0;i<8;++i)bounds.corners[i]={i&1?.5f:-.5f,i&2?.5f:-.5f,i&4?.5f:-.5f};
     std::array<NativeStereoOwnerView,2> views{{{1,true},{3,true}}};
     for(auto& view:views){view.bounds.available=true;view.bounds.range=100;

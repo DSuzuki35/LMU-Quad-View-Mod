@@ -20,9 +20,20 @@ The caller supplies the actual bounds center, radius, eight world-space corners,
 and each eye's independent world position, range and six outward frustum planes.
 The center must represent the native bounds helper's center. An object origin,
 tracking-space XR eye position or the other eye's planes cannot substitute for
-those inputs. The current raw description collector does not establish this
-complete input contract. In particular, helper `0x3b7270` has not been decoded;
-this change does not guess that its center equals a cached owner field.
+those inputs. Helper `0x3b7270` is now decoded: it computes AABB extrema from
+the eight corners, and the admission caller averages those extrema. The input
+producer copies ready world corners at owner `+0x150` and radius at `+0xe8`, then
+computes that exact center. It preserves native MINSS/MAXSS operand order,
+including signed-zero ties. Owners awaiting world refresh keep stale bounds
+ineligible for numeric use.
+
+The connected view producer supplies each eye's classifier position, shader
+position and separate bounds position. Bounds position uses the native cofactor
+inverse with its reciprocal/Newton step, then transforms the view's anchor.
+The paired inputs come from the pinned cockpit's common source-camera controls
+and independent eye transforms/FOVs. Actual left/right view comparisons check
+the mask, controls, positions, full inverse/derived matrices and all six planes.
+Live comparisons for this revision have not yet been run in LMU.
 
 The distance gate compares squared distance with squared range plus radius,
 including the equality boundary. Sphere tests preserve native scalar operation
@@ -48,7 +59,11 @@ Tests exercise exact distance/plane boundaries, all six directions, sphere-first
 intersection followed by corner rejection, sticky sign flags, ordered writes,
 right-only trees, mask/bounds rejection side effects, attachment bypass, invalid
 input/arithmetic and FP preservation at both MSVC optimization levels. Native
-bounds equivalence and the complete center/view producer remain open. Every
+bounds equivalence at the traversal boundary remains open. The numeric inverse/
+bounds calculation matches 48 scalars across 16 saved native main-view samples
+exactly. A separate private reference interprets the saved bounds-helper scalar
+operations without executing captured code: all 768 signed-zero center scalars
+agree. Every
 result remains `renderingEligible=false` through the enclosing planner.
 
 The diagnostic forest collector is separate from camera preparation in source.

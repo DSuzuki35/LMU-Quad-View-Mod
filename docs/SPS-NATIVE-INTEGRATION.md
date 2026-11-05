@@ -14,8 +14,10 @@ collector copied 89 frames without refusals, but duplicated native work and
 caused a severe CPU regression reported by the user. It is now a separate,
 explicit single-frame diagnostic in source; further collector testing is deferred.
 The owned planner now implements regular per-eye bounds admission from explicit
-owned center/corner and view inputs. Producing/validating those complete native
-inputs and resolving world-refresh effects remain open. Full draw-input
+owned center/corner and view inputs. The native producer now copies ready owner
+corners/radius and constructs their exact center; the connected cockpit producer
+supplies both eyes' complete view numbers. Live traversal equivalence and
+world-refresh effects remain open. Full draw-input
 ownership and native consumer scheduling remain open. No native preparation or
 draws are suppressed.
 
@@ -44,8 +46,8 @@ accounting for its copies and synchronization. Neither approach is implemented.
 
 | Input or effect | Existing evidence | Requirement for replacement |
 | --- | --- | --- |
-| Current per-eye camera data | Early focus pair; projection consumers passed 10,379 VectorXR pairs. New direct cockpit producer reads native origin/rotation/local offsets and checks its left position exactly | Establish live right-pose equivalence; complete bounds metadata/history and broader modes. Produced matrices do not overwrite native views. |
-| Owner admission | Owned tree planner with regular distance/sphere/corner gates and verified pre-admission selected-root collection, including right-only subtrees | Supply/validate native bounds centers and both owned bounds views; resolve world refresh, complete root coverage and intervening mutations. Both masks and bounds views are independent. |
+| Current per-eye camera data | Early focus pair; projection consumers passed 10,379 VectorXR pairs. Connected direct cockpit/view producers supply native world, classifier and bounds positions, inverse/derived matrices and planes; automatic original-eye comparisons | Establish live equivalence for the new producers, history and broader modes. Produced matrices do not overwrite native views. |
+| Owner admission | Owned distance/sphere/corner gates, pre-admission selected roots including right-only subtrees, actual ready world corners/radius and native AABB-center computation | Validate native traversal agreement; resolve world refresh, complete root coverage and intervening mutations. Each eye uses its own bounds view; pinned common masks are checked against both originals. |
 | Candidate membership/order | Numeric classifier agreement and late ordered packet observations | Independently valid candidates and sorting for each eye. Neither eye's visible list nor matching draw indices represents the other eye. |
 | Source/mesh lifetime | Owned bounded source/mesh descriptions copied at the early owner entry | Own the actual draw payloads and resources. Description fields and identity tokens do not retain mutable native arrays or objects. |
 | Draw inputs | Shader proof, binding signatures, actual VS/PS constant mapping and CPU-shadow snapshots | Complete preparation payloads and legal lifetimes/content versions for shaders, geometry and material resources. COM references preserve object lifetime, not arbitrary mutable resource contents. |

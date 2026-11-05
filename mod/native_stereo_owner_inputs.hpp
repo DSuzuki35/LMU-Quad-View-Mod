@@ -105,6 +105,12 @@ inline NativeStereoOwnerInputs capture_native_stereo_owner_inputs(
             const bool worldPending=(requirements&NativeOwnerWorldRefresh)!=0;
             out.worldRefreshOwners+=worldPending;
             out.boundsAdmissionOwners+=(requirements&NativeOwnerBoundsAdmission)!=0;
+            if(!worldPending&&(requirements&NativeOwnerBoundsAdmission)){
+                std::array<NativeStereoClassifyFloat3,8> corners{};float radius=0;
+                if(!reader.read(token,0x150,corners)||!reader.read(token,0xe8,radius))return refuse(reason);
+                node.bounds=prepare_native_stereo_owner_bounds(corners,radius);
+                if(!node.bounds.available)return refuse("invalid native owner bounds");
+            }
             Vector children,sources;
             if(!vector(reader,token,0xa0,limits.owners-out.owners.size(),children,reason)||
                !vector(reader,token,0x88,limits.sources-out.sources.size(),sources,reason))return refuse(reason);
@@ -151,7 +157,7 @@ inline NativeStereoOwnerInputs capture_native_stereo_owner_inputs(
             out.owners[index]=std::move(node);
         }
         out.complete=true;out.admissionReady=out.worldRefreshOwners==0&&out.boundsAdmissionOwners==0;
-        out.reason=out.admissionReady?"owned unfiltered owner/source/mesh descriptions":"owned descriptions; native refresh/bounds required";
+        out.reason=out.admissionReady?"owned unfiltered owner/source/mesh descriptions":"owned descriptions; per-eye bounds admission/native refresh pending";
         return out;
     } catch(const std::bad_alloc&){return refuse("owner input allocation failure");}
       catch(...){return refuse("owner input reader failure");}

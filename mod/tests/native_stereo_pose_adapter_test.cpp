@@ -71,5 +71,24 @@ int main(){
         assert(!std::memcmp(&out,&before,sizeof(out)));
     }
     CONTEXT recovered{};assert(!capture_native_caller_context(1,UINTPTR_MAX,recovered,readable));
+    std::array<std::byte,0x5d0> view{};std::array<std::byte,0xc0> manager{};std::array<std::byte,0x100> source{};
+    const auto viewToken=reinterpret_cast<uintptr_t>(view.data()),managerToken=reinterpret_cast<uintptr_t>(manager.data()),sourceToken=reinterpret_cast<uintptr_t>(source.data());
+    const auto put=[](void* base,size_t offset,const auto& value){std::memcpy(static_cast<std::byte*>(base)+offset,&value,sizeof(value));};
+    constexpr size_t sourceOffsets[]{0x38,0x40,0x48,0x50,0,0x58,0x60,0x68,0x70};
+    for(size_t offset:sourceOffsets)if(offset)put(manager.data(),offset,sourceToken);
+    put(view.data(),0x4c,.25f);put(view.data(),0x50,-.5f);put(view.data(),0x10c,uint32_t(5));put(view.data(),0x3e8,int32_t(1));
+    put(source.data(),0x74,200.f);put(source.data(),0x78,.125f);put(source.data(),0x7c,2.f);
+    c.R14=viewToken;c.R15=managerToken;c.Rsi=sourceToken;
+    NativeStereoCockpitViewSettings settings;
+    for(int32_t selected=0;selected<=8;++selected){put(manager.data(),0xa0,selected);
+        const bool copied=capture_native_stereo_cockpit_settings(c,viewToken,managerToken,readable,settings);
+        assert(copied==(selected!=4));if(copied)assert(settings.complete&&settings.mask==5&&settings.mode==1&&
+            settings.scale==2&&settings.range==199.875f&&settings.anchor.x==.25f&&settings.anchor.y==-.5f&&settings.anchor.z==99.9375f);
+    }
+    put(manager.data(),0xa0,int32_t(0));auto saved=settings;
+    assert(!capture_native_stereo_cockpit_settings(c,viewToken,managerToken,refuse,settings));
+    c.Rsi+=8;assert(!capture_native_stereo_cockpit_settings(c,viewToken,managerToken,readable,settings));c.Rsi=sourceToken;
+    put(source.data(),0x78,201.f);assert(!capture_native_stereo_cockpit_settings(c,viewToken,managerToken,readable,settings));
+    assert(!std::memcmp(&settings,&saved,sizeof(settings)));
     std::cout<<"native pose adapter: live Windows unwind, bounded stack/SIMD inputs and ABI refusal passed\n";
 }

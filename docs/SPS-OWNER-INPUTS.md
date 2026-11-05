@@ -19,6 +19,7 @@ then traverses children. The source-emission entry is `0x5e0f10`.
 | Source geometry vector | `+0x88` |
 | Ordered child vector | `+0xa0` |
 | World matrix | `+0x298` |
+| Ready world corners / radius | `+0x150` (eight packed Float3s) / `+0xe8` |
 | Pending / current state | `+0x3d8` / `+0x3e0` |
 | View mask / parent | `+0x10c` / `+0x4b0` |
 | Global mask | RVA `0x1b12c28` |
@@ -52,11 +53,12 @@ payloads. These are admitted-domain limits, not engine limits.
 Description completeness and admission readiness are separate. Null-attachment
 flag `0x400000` records pending native world refresh; it also marks descendants'
 world values pending because the native refresh traverses children. Flag
-`0x80000` records a pending native bounds-admission path. Attachment bypass is
+`0x80000` records a pending bounds-admission path. Ready corners/radius are now
+copied, and the native AABB-center calculation produces owned bounds. Attachment bypass is
 preserved. Dirty world bytes may be copied but are explicitly stale; they are
 never treated as numeric prepared transforms. Ready world matrices must remain
 finite. Source/mesh descriptions are values at capture time, not post-refresh
-payloads. The snapshot does not perform or simulate either native operation.
+payloads. The snapshot does not perform world refresh or apply view admission.
 
 The frame collector shares those budgets across selected roots and rejects
 overlapping trees or changed view/global masks. It publishes after the left
@@ -66,9 +68,12 @@ The existing owner planner accepts a ready copied tree with two explicitly
 supplied view masks, preserving left/right admissions, right-only branches and
 scalar transition order. It refuses pending world refresh. The extended
 [owned bounds evaluator](SPS-OWNER-BOUNDS.md) can resolve regular bounds admission
-when an input producer supplies the actual owned center/corners and two complete
-per-eye bounds views; those values are not yet established by this raw collector.
-It does not silently assume both eyes use the left mask.
+from the copied ready-world center/corners and two complete per-eye bounds views.
+The new connected view producer supplies the latter from common native camera
+settings and independent eye transforms. It requires an exact left comparison
+and later checks the actual right view, including masks; a mismatch disables
+that producer for the session. Complete native traversal equivalence remains
+unverified for this revision.
 
 ## First live run and continuation
 
@@ -120,8 +125,8 @@ frozen callback result. Concurrent changes/coherence and intervening native
 candidate/cache effects are not established by copying. Both the producer and
 planner therefore remain ineligible for native draw/preparation suppression.
 
-Next resolve the recorded native refresh/bounds dependencies, validate selected-root
-coverage and connect independent candidate sorting,
+Next resolve native world refresh and preparation effects, validate selected-root
+coverage and bounds admission against native traversal, and connect independent candidate sorting,
 owned constant payloads and resource versions/lifetimes. Establish complete
 native side effects and legal HDR/depth target seeding/consumers, then connect
 the paired D3D11 backend. Native traversal, cleanup and both eye draws remain

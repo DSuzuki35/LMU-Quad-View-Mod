@@ -20,6 +20,17 @@ void refused(const NativeStereoOwnerBoundsResult& out,Reason reason){
 }
 int main(){
     NativeStereoFpGuard defaults(true);
+    auto inputBox=box(17,-29,51,3,7);
+    auto prepared=prepare_native_stereo_owner_bounds(inputBox.corners,inputBox.radius);
+    assert(prepared.available&&prepared.center.x==17&&prepared.center.y==-29&&prepared.center.z==51&&prepared.radius==7);
+    // An arbitrary ordering of asymmetric corners still uses AABB extrema.
+    inputBox.corners[0]={-11,21,-31};inputBox.corners[7]={23,-43,61};
+    prepared=prepare_native_stereo_owner_bounds(inputBox.corners,7);
+    assert(prepared.available&&prepared.center.x==6&&prepared.center.y==-11&&prepared.center.z==15);
+    inputBox.corners[2].z=NAN;assert(!prepare_native_stereo_owner_bounds(inputBox.corners,7).available);
+    assert(!prepare_native_stereo_owner_bounds(box().corners,-1).available);
+    _mm_setcsr(0x1fbf);assert(prepare_native_stereo_owner_bounds(box().corners,1).available&&_mm_getcsr()==0x1fbf);
+    _mm_setcsr(0x9f80);assert(!prepare_native_stereo_owner_bounds(box().corners,1).available&&_mm_getcsr()==0x9f80);_mm_setcsr(0x1f80);
     auto b=box();auto v=frustum();const auto before=b;const auto viewBefore=v;
     auto out=classify_native_stereo_owner_bounds(b,v,0x80000);
     assert(out.available&&out.admitted&&out.flags==0x90000&&out.writeCount==1);

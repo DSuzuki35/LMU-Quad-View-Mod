@@ -11,6 +11,7 @@ original passes. No CPU frametime improvement is established by these tests.
 | Component | Behavior | Boundary still required from the engine adapter |
 | --- | --- | --- |
 | `native_stereo_view_math.hpp` | Native operation order for derived matrices and six outward normalized frustum planes | Current/projection and the separate native position domains for both eyes |
+| `native_stereo_view_inverse.hpp` / `native_stereo_view_producer.hpp` | Native cofactor inverse/reciprocal order and complete paired view-number production with original-eye comparisons | Live equivalence of the connected cockpit controls and complete preparation effects |
 | `native_stereo_view_inputs.hpp` | Keyed per-eye bounds, classifier and transform inputs; validates native sign-flipped classifier/constant positions | Fresh right-eye world metadata before left rendering; no tracking-space substitution |
 | `native_stereo_owner_plan.hpp` | Independent admission for an ordered forest, shared copied state and emission-time states | Complete native bounds and refresh effects, actual selected-root coverage |
 | `native_stereo_scene_plan.hpp` | Source position caches, per-eye classification, independent distance ordering and mesh keys | Native finalizers/submission callbacks; established bucket comparator and tie behavior |
@@ -107,8 +108,8 @@ Target copies preserve complete depth/MSAA subresources as required by
 
 ## Remaining native implementation
 
-1. Validate the connected direct cockpit world-pose producer and complete
-   bounds metadata; establish real initial HDR/depth state.
+1. Validate the connected cockpit world-pose/view producers and ready owner
+   bounds at native traversal; establish real initial HDR/depth state.
    Copying the current left bank twice does not establish right-eye seeding.
 2. Complete native bounds/world-refresh inputs and source/material/bone/cache
    effects at their original left/right times. The ordinary numeric transform

@@ -56,6 +56,23 @@ and reinstallation. The input reader follows the documented Windows
 [unwind API](https://learn.microsoft.com/en-us/windows/win32/api/winnt/nf-winnt-rtlvirtualunwind)
 and [x64 calling convention](https://learn.microsoft.com/en-us/cpp/build/x64-calling-convention).
 
+`native_stereo_view_producer.hpp` now connects complete view-number production.
+The pinned cockpit reader obtains common clipping/scale/mask/mode controls from
+the selected source camera before eye offsets, and derives each eye's own bounds
+position with the native inverse. After the original focus derived-view update,
+it copies 436 fixed bytes per eye and checks positions, controls, matrices and
+planes bit for bit. A mismatch disables this producer for the session while
+native rendering continues. No scene-tree scan, per-object readback, or new
+manual capture is required. The two view snapshots are comparisons, not proof
+that native preparation effects or right-only object membership are replaced.
+
+Sixteen previously saved main-view samples supplied 48 native bounds-position
+scalars; the new inverse/anchor transform matches all 48 exactly at both MSVC
+optimization levels. Additional inverse tests use an independent double-precision
+Gauss-Jordan reference for 1,000 dense/projective matrices. The source-camera
+reader, observation copies and frame/eye/refusal rules also have automated tests.
+The new connected path has not yet been checked in a game run.
+
 When the native producer is unavailable, the right current/derived matrices
 retain the existing restricted numeric prediction for projection preparation:
 camera mode 0, transform mode 1, rigid equal-orientation relative eyes, zero extra

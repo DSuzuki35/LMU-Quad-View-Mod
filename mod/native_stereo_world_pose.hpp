@@ -3,6 +3,15 @@
 #include "native_stereo_transform.hpp"
 
 namespace lmuqv {
+// Settings read from the pinned cockpit's selected source camera before the
+// eye translations. They are common controls, not copied left-eye visibility.
+struct NativeStereoCockpitViewSettings {
+    bool complete=false;
+    uint32_t mask=0;
+    int32_t mode=0;
+    float scale=0,range=0;
+    NativeStereoClassifyFloat3 anchor{};
+};
 // Numeric inputs at the cockpit camera's second VR-state read (0xc8c174),
 // before either eye translation is added. The nine rotation coefficients are
 // grouped by output world component; they are not a view matrix or XR pose.
@@ -10,12 +19,14 @@ struct NativeStereoWorldPoseInput {
     std::array<float,3> origin{},offset{},viewTranslation{};
     std::array<float,9> rotation{};
     std::array<std::array<float,6>,2> scalars{};
+    NativeStereoCockpitViewSettings settings;
 };
 struct NativeStereoWorldPosePair {
     bool complete=false;
     const char* reason="missing native world pose";
     std::array<Matrix,2> current{};
     std::array<std::array<float,3>,2> constantPosition{};
+    NativeStereoCockpitViewSettings settings;
 };
 namespace native_world_pose_detail {
 inline float add(float a,float b){return _mm_cvtss_f32(_mm_add_ss(_mm_set_ss(a),_mm_set_ss(b)));}
@@ -86,6 +97,7 @@ public:
         pair_.constantPosition=positions_;pair_.current[0]=current;
         pair_.current[1]=native_world_pose_detail::set_position(current,positions_[1]);
         if(!native_camera_detail::finite(pair_.current[1]))return fail("non-finite right native pose");
+        pair_.settings=input_.settings;
         pair_.complete=true;pair_.reason="native cockpit world pose produced before left rendering";return true;
     }
     NativeStereoWorldPosePair take(uintptr_t view,const NativeStereoCameraSnapshot& camera){

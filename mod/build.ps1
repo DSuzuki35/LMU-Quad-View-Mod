@@ -68,7 +68,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "$test tests failed" }
     }
     foreach ($optimization in @('O0','O2')) {
-        foreach($test in @('stereo_batch_plan','stereo_constants','native_stereo_constants','native_stereo_world_pose','native_stereo_pose_adapter')){
+        foreach($test in @('stereo_batch_plan','stereo_constants','native_stereo_constants','native_stereo_world_pose','native_stereo_pose_adapter','native_stereo_view_inverse','native_stereo_view_producer')){
             & g++ -std=c++17 "-$optimization" -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" -o "build/${test}_test_${optimization}.exe"
             if($LASTEXITCODE -ne 0){throw "$test $optimization compilation failed"}
             & ".\build\${test}_test_${optimization}.exe"

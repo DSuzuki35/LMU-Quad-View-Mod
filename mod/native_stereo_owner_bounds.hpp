@@ -10,6 +10,31 @@ struct NativeStereoOwnerBounds {
     NativeStereoClassifyFloat3 center{};
     float radius=0;
 };
+// The native 0x3b7270 helper reduces eight packed corners to an AABB; 0x41c6f0
+// averages its extrema. Preserve MINSS/MAXSS operand order, including zero ties.
+inline NativeStereoOwnerBounds prepare_native_stereo_owner_bounds(
+    const std::array<NativeStereoClassifyFloat3,8>& corners,float radius) noexcept {
+    NativeStereoFpGuard preserve;NativeStereoOwnerBounds out;
+    if((_mm_getcsr()&0xffc0u)!=0x1f80u||std::fegetround()!=FE_TONEAREST||!std::isfinite(radius)||radius<0)return out;
+    constexpr bool currentFirst[8][3]={{false,false,false},{true,false,true},{false,false,false},{false,false,true},
+        {false,false,false},{true,true,true},{false,false,false},{false,true,true}};
+    std::array<float,3> low{1e12f,1e12f,1e12f},high{-1e12f,-1e12f,-1e12f};
+    for(unsigned i=0;i<8;++i){const float point[]{corners[i].x,corners[i].y,corners[i].z};
+        for(unsigned axis=0;axis<3;++axis){
+            if(!std::isfinite(point[axis]))return out;
+            const auto p=_mm_set_ss(point[axis]),l=_mm_set_ss(low[axis]),h=_mm_set_ss(high[axis]);
+            low[axis]=_mm_cvtss_f32(currentFirst[i][axis]?_mm_min_ss(l,p):_mm_min_ss(p,l));
+            high[axis]=_mm_cvtss_f32(currentFirst[i][axis]?_mm_max_ss(h,p):_mm_max_ss(p,h));
+        }
+    }
+    std::array<float,3> center;
+    for(unsigned axis=0;axis<3;++axis){
+        const auto a=_mm_set_ss(axis?high[axis]:low[axis]),b=_mm_set_ss(axis?low[axis]:high[axis]);
+        center[axis]=_mm_cvtss_f32(_mm_mul_ss(_mm_add_ss(a,b),_mm_set_ss(.5f)));
+        if(!std::isfinite(center[axis]))return out;
+    }
+    out.available=true;out.corners=corners;out.center={center[0],center[1],center[2]};out.radius=radius;return out;
+}
 struct NativeStereoOwnerBoundsView {
     bool available=false;
     NativeStereoClassifyFloat3 position{};

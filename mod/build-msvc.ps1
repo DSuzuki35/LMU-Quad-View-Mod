@@ -82,7 +82,7 @@ try {
     foreach($optimization in @('/Od','/O2')){
         $numericCommon=@($common | Where-Object { $_ -ne '/O2' })+@($optimization)
         $suffix=if($optimization -eq '/Od'){'O0'}else{'O2'}
-        foreach($test in @('native_stereo_classify','native_stereo_classify_capture','native_stereo_owner_bounds','native_stereo_owner_plan','native_stereo_transform','native_stereo_focus_inputs','native_stereo_world_pose','native_stereo_pose_adapter','native_stereo_view_inputs','native_stereo_scene_plan','native_stereo_owner_inputs','native_stereo_constants','stereo_batch_plan','stereo_constants')){
+        foreach($test in @('native_stereo_classify','native_stereo_classify_capture','native_stereo_owner_bounds','native_stereo_owner_plan','native_stereo_transform','native_stereo_focus_inputs','native_stereo_world_pose','native_stereo_pose_adapter','native_stereo_view_inputs','native_stereo_view_inverse','native_stereo_view_producer','native_stereo_scene_plan','native_stereo_owner_inputs','native_stereo_constants','stereo_batch_plan','stereo_constants')){
             $name=$test+'_test_'+$suffix
             Compile ($numericCommon+@("tests/${test}_test.cpp",('/Fe'+(Join-Path $build ($name+'.exe')))))
             Run-Test $name
