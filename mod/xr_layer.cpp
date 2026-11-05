@@ -108,6 +108,7 @@ struct State {
     XrSession session{};
     XrSystemId system{};
     bool quad=false, vrs=false, running=false, frame=false, shouldRender=false, located=false;
+    bool locateInFlight=false;
     bool renderViewsLocked=false; // Rendering, UI and submission share one locate snapshot.
     bool renderPreparationPending=false; // Normalized Begin must not use D3D on a locate thread.
     float vrsWidth=.5f,vrsHeight=.5f;
@@ -157,7 +158,7 @@ struct State {
     unsigned captureMask=0;
     uint64_t frames=0;
 } s;
-bool frameOperationInFlight(){return s.focusBeginInFlight||s.submitInFlight||s.outer[0].runtimeBusy||s.outer[1].runtimeBusy;}
+bool frameOperationInFlight(){return s.locateInFlight||s.focusBeginInFlight||s.submitInFlight||s.outer[0].runtimeBusy||s.outer[1].runtimeBusy;}
 std::atomic<bool> quadActive{false},vrsActive{false};
 // Called under stateMutex when lifecycle state changes. These are coarse mode
 // snapshots, not ownership of the session or any of its graphics resources.
@@ -740,15 +741,20 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
     std::unique_lock<std::recursive_mutex> lock(stateMutex);
     if(frameOperationInFlight())return XR_ERROR_CALL_ORDER_INVALID;
     if(!s.quad||info->viewConfigurationType!=XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO){
+        const bool vrsStereo=s.vrs&&info->viewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+        const bool requestEyeTracking=s.requestEyeTracking;
+        s.locateInFlight=true;lock.unlock();
         XrResult r=next.LocateViews(session,info,state,cap,count,out);
-        if(s.vrs&&info->viewConfigurationType==XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO){
+        const XrViewStateFlags valid=XR_VIEW_STATE_ORIENTATION_VALID_BIT|XR_VIEW_STATE_POSITION_VALID_BIT;
+        const bool validVrs=vrsStereo&&XR_SUCCEEDED(r)&&cap>=2&&count&&*count==2&&out&&state&&(state->viewStateFlags&valid)==valid;
+        XrPosef gaze{};
+        const bool tracked=validVrs&&requestEyeTracking&&vrsGaze.ensureAttachedAndSync(session)&&vrsGaze.sample(info->space,info->displayTime,gaze);
+        lock.lock();s.locateInFlight=false;
+        if(vrsStereo){
             s.located=false;
-            const XrViewStateFlags valid=XR_VIEW_STATE_ORIENTATION_VALID_BIT|XR_VIEW_STATE_POSITION_VALID_BIT;
-            if(XR_SUCCEEDED(r)&&cap>=2&&count&&*count==2&&out&&state&&(state->viewStateFlags&valid)==valid){
+            if(validVrs){
                 s.locateTime=info->displayTime;s.locateSpace=info->space;
                 s.located=true;
-                XrPosef gaze{};
-                const bool tracked=s.requestEyeTracking&&vrsGaze.ensureAttachedAndSync(session)&&vrsGaze.sample(info->space,info->displayTime,gaze);
                 s.vrsTracked=tracked;s.vrsGazePose=gaze;
                 bool projected[2]{};
                 for(unsigned eye=0;eye<2;++eye){
@@ -773,7 +779,10 @@ XrResult XRAPI_CALL layerLocateViews(XrSession session,const XrViewLocateInfo* i
     foveated.next=info->next;foveated.foveatedRenderingActive=s.eyeTrackingActive?XR_TRUE:XR_FALSE;
     modified.next=&foveated;
     XrView runtime[4]{};for(auto& v:runtime)v.type=XR_TYPE_VIEW;
-    uint32_t runtimeCount=0;XrResult r=next.LocateViews(session,&modified,state,4,&runtimeCount,runtime);
+    uint32_t runtimeCount=0;
+    s.locateInFlight=true;lock.unlock();
+    XrResult r=next.LocateViews(session,&modified,state,4,&runtimeCount,runtime);
+    lock.lock();s.locateInFlight=false;
     if(XR_FAILED(r))return r;
     if(runtimeCount!=4)return XR_ERROR_RUNTIME_FAILURE;
     XrFovf fullOuter[2]={runtime[0].fov,runtime[1].fov};
@@ -1259,7 +1268,7 @@ bool xr_runtime_sizes(unsigned eye,uint32_t& outerWidth,uint32_t& outerHeight,ui
 bool xr_quad_active(){return quadActive.load(std::memory_order_acquire);}
 bool xr_vrs_active(){return vrsActive.load(std::memory_order_acquire);}
 bool xr_vrs_focus(unsigned eye,VrsFocus& focus){std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    if(eye>1||!s.vrs||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
+    if(frameOperationInFlight()||eye>1||!s.vrs||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime)return false;
     focus=s.vrsFocus[eye];return true;}
 bool xr_vrs_render_focus(unsigned eye,const float* projection,VrsFocus& focus){std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(!xr_vrs_focus(eye,focus))return false;
