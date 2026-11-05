@@ -487,7 +487,7 @@ namespace LmuQuadViewLauncher
             Help(stereoDrawAudit,"Experimental quad-only diagnostic. Ctrl+Alt+F8 captures sampled scene draw state, adding CPU overhead and possible hitches; not a speedup. Disabled for Stereo VRS and the upload fast path.");
             Help(stereoShaderCapture,"Experimental quad-only diagnostic requiring draw audit. Exports captured shader programs locally for development. Adds CPU copying and disk I/O; no GPU speedup. Keep local shader files out of public reports.");
             Help(stereoPairProof,"Experimental quad-only proof, not single-pass stereo. Samples one object in private targets while original game draws remain enabled. Adds CPU and GPU work and may hitch; use with profiling off. Disabled for Stereo VRS.");
-            Help(cpuUploadReuse,"Experimental quad-only upload reuse for focus opaque geometry. May avoid redundant CPU constant-buffer uploads; GPU geometry draw work remains. Visual correctness and performance depend on the scene. Disabled in Stereo VRS and when upload fast path is selected.");
+            Help(cpuUploadReuse,"Skips redundant constant-buffer uploads in focus opaque geometry; preparation and draws remain. Off by default. Save and restart LMU to apply. Works with logging off. For in-session A/B testing, enable diagnostics and render profiling before launch, then use Ctrl+Alt+F10 between captures. Runtime toggling requires focus-only reuse with outer reuse, upload fast path and draw audit off. Disabled in Stereo VRS.");
             Help(cpuUploadBatch,"Experimental quad-only unchanged-upload filtering and small-buffer batching for outer/focus geometry. May reduce CPU upload work; does not merge stereo draws or guarantee GPU savings. Disables draw audit and upload reuse. Compare equivalent on/off runs; disabled in Stereo VRS.");
             Help(cpuOuterReuse,"Experimental, quad views only. Extends unchanged constant-upload filtering to outer and focus opaque group 31 and caches buffer aliases while identities remain unchanged. Implies CPU upload reuse; preparation, bindings, changed uploads and draws still execute. May reduce CPU upload work, with no guaranteed GPU gain. Excludes audit/proof and upload fast path; if saved together, fast path wins. Works with diagnostics off. Compare images and timings.");
             Help(outerSsr,"Experimental, quad views only; requires smaller native outer render targets. Requests smaller outer screen-space reflection resources, never below 40% of either original axis. Unsupported layouts keep native resources. Reflections may look softer; focus resolution is unchanged. May reduce GPU work; no CPU savings or measured gain is promised. Works with diagnostics off. Disabled states preserve the saved preference.");
@@ -707,14 +707,14 @@ namespace LmuQuadViewLauncher
             stack.Controls.Add(Caption("ADVANCED"), 0, 0); stack.Controls.Add(nativeOuter, 0, 1);
             stack.Controls.Add(Caption("Experimental, quad views only. Smaller outer targets may reduce GPU work. Compare with full-size rendering and resampling."), 0, 2);
             stack.Controls.Add(cpuUploadReuse,0,3);
-            stack.Controls.Add(Caption("Focus opaque geometry only. Skips uploads of unchanged constants; needs visual and performance testing."),0,4);
+            stack.Controls.Add(Caption("Skips unchanged focus uploads. Off by default; save and restart LMU to apply. Compare performance and check visuals."),0,4);
             stack.Controls.Add(diagnosticsEnabled,0,5);
             stack.Controls.Add(Caption("Untick for normal play. Stops mod logs and profiling. Applies next launch; VectorXR logging is separate."),0,6);
             stack.Controls.Add(renderProfiling,0,7);
             var durationRow=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=new Padding(0)};
             durationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));durationRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,86));
             durationRow.Controls.Add(Theme.Label("Capture length (seconds)",10F,Theme.Text),0,0);profileDuration.Margin=new Padding(2,4,0,0);durationRow.Controls.Add(profileDuration,1,0);stack.Controls.Add(durationRow,0,8);
-            stack.Controls.Add(Caption("Press Ctrl+Alt+F9 on track. 30-300 seconds; closing LMU saves a partial capture."),0,9);
+            stack.Controls.Add(Caption("Ctrl+Alt+F9: capture. Ctrl+Alt+F10: toggle focus upload reuse between captures (start with reuse enabled; outer reuse, fast path and draw audit off)."),0,9);
             stack.Controls.Add(stereoDrawAudit,0,10);
             stack.Controls.Add(Caption("Diagnostic only: captures two scene frames with overhead. Stereo optimization is still under development."),0,11);
             stack.Controls.Add(stereoShaderCapture,0,12);
