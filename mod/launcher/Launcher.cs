@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -12,15 +14,15 @@ namespace LmuQuadViewLauncher
 {
     static class Theme
     {
-        public static readonly Color Background = Color.FromArgb(18, 19, 24);
-        public static readonly Color Sidebar = Color.FromArgb(22, 23, 29);
-        public static readonly Color Card = Color.FromArgb(29, 30, 38);
-        public static readonly Color Field = Color.FromArgb(22, 23, 30);
-        public static readonly Color Line = Color.FromArgb(49, 50, 63);
-        public static readonly Color Text = Color.FromArgb(237, 236, 245);
-        public static readonly Color Muted = Color.FromArgb(153, 154, 174);
-        public static readonly Color Accent = Color.FromArgb(137, 111, 246);
-        public static readonly Color AccentDark = Color.FromArgb(49, 40, 79);
+        public static readonly Color Background = Color.FromArgb(16, 16, 19);
+        public static readonly Color Sidebar = Color.FromArgb(20, 19, 25);
+        public static readonly Color Card = Color.FromArgb(25, 24, 30);
+        public static readonly Color Field = Color.FromArgb(20, 19, 25);
+        public static readonly Color Line = Color.FromArgb(51, 46, 62);
+        public static readonly Color Text = Color.FromArgb(231, 230, 236);
+        public static readonly Color Muted = Color.FromArgb(158, 150, 174);
+        public static readonly Color Accent = Color.FromArgb(172, 154, 245);
+        public static readonly Color AccentDark = Color.FromArgb(49, 38, 70);
         public static Label Label(string text, float size, Color color)
         {
             return new Label { Text = text, ForeColor = color, BackColor = Color.Transparent,
@@ -29,8 +31,8 @@ namespace LmuQuadViewLauncher
         }
         public static Button Button(string text, bool primary)
         {
-            var b = new Button { Text = text, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
-                BackColor = primary ? Accent : Card, ForeColor = Text, Height = 42,
+            var b = new RoundedButton { Text = text, FlatStyle = FlatStyle.Flat, Cursor = Cursors.Hand,
+                BackColor = primary ? Color.FromArgb(112,89,221) : Card, ForeColor = Text, Height = 42,
                 Font = new Font("Segoe UI", 10F, FontStyle.Bold), UseVisualStyleBackColor = false };
             b.FlatAppearance.BorderColor = primary ? Accent : Line;
             b.FlatAppearance.MouseOverBackColor = primary ? Color.FromArgb(155, 131, 255) : AccentDark;
@@ -75,7 +77,11 @@ namespace LmuQuadViewLauncher
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
-            using (var p = new Pen(Theme.Line)) e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
+            var parent=Parent;while(parent!=null&&parent.BackColor.A<255)parent=parent.Parent;
+            e.Graphics.Clear(parent==null?Theme.Background:parent.BackColor);e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
+            if(Width<2||Height<2)return;
+            using(var path=NativeChrome.Rounded(new RectangleF(.5f,.5f,Width-1,Height-1),10*DeviceDpi/96f))
+            using(var fill=new SolidBrush(BackColor))using(var p=new Pen(Theme.Line)){e.Graphics.FillPath(fill,path);e.Graphics.DrawPath(p,path);}
         }
     }
 
@@ -283,7 +289,7 @@ namespace LmuQuadViewLauncher
         }
     }
 
-    sealed class Launcher : Form
+    sealed partial class Launcher : Form
     {
         readonly string root = AppDomain.CurrentDomain.BaseDirectory;
         readonly ComboBox backend = Choice(new[] { "Native OpenXR (Pimax, etc.)", "Quad-Views-Foveated (mbucchia)", "VectorXR (experimental)", "Stereo VRS (NVIDIA, experimental)" });
@@ -333,6 +339,20 @@ namespace LmuQuadViewLauncher
         readonly Button renderingNav = Theme.Button("  Rendering", false);
         readonly Button setupNav = Theme.Button("  Setup", false);
         readonly Button benchmarkNav = Theme.Button("  Benchmark", false);
+        readonly Button profilesNav = Theme.Button("  Profiles", false);
+        readonly DarkScrollPage profilesPage = new DarkScrollPage { Name = "ProfilesPage" };
+        readonly TextBox profileName = Field();
+        readonly Button profileSave = Theme.Button("Save current settings", true);
+        readonly ListBox profileList = new ListBox { Name = "ProfileList", Dock = DockStyle.Fill, BackColor = Theme.Field, ForeColor = Theme.Text,
+            BorderStyle = BorderStyle.FixedSingle, Font = new Font("Segoe UI", 10.5F), IntegralHeight = false, Margin = new Padding(0, 4, 0, 4) };
+        readonly Label profileDetails = Caption("");
+        readonly Label activeProfile = Caption("");
+        readonly Button profileLoad = Theme.Button("Load", true);
+        readonly Button profileRename = Theme.Button("Rename", false);
+        readonly Button profileDelete = Theme.Button("Delete", false);
+        readonly Button profileExport = Theme.Button("Export...", false);
+        readonly Button profileImport = Theme.Button("Import...", false);
+        ProfileStore profiles;
         readonly DarkScrollPage benchmarkPage = new DarkScrollPage { Name = "BenchmarkPage" };
         readonly CheckBox benchmarkEnabled = Toggle("Enable benchmark on next launch");
         readonly ComboBox benchmarkTemplate = Choice(new[] { "Minimal", "Detailed" });
@@ -368,6 +388,14 @@ namespace LmuQuadViewLauncher
         {
             var c = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat,
                 BackColor = Theme.Field, ForeColor = Theme.Text, Dock = DockStyle.Fill, Font = new Font("Segoe UI", 10F) };
+            c.DrawMode=DrawMode.OwnerDrawFixed;
+            c.DrawItem+=delegate(object sender,DrawItemEventArgs e){
+                bool selected=(e.State&DrawItemState.Selected)!=0;
+                using(var fill=new SolidBrush(selected?Theme.AccentDark:Theme.Field))e.Graphics.FillRectangle(fill,e.Bounds);
+                if(e.Index>=0)TextRenderer.DrawText(e.Graphics,c.Items[e.Index].ToString(),c.Font,e.Bounds,
+                    c.Enabled?Theme.Text:Theme.Muted,TextFormatFlags.VerticalCenter|TextFormatFlags.Left|TextFormatFlags.EndEllipsis);
+                e.DrawFocusRectangle();
+            };
             c.Items.AddRange(choices); c.SelectedIndex = 0; return c;
         }
         static TextBox Field() { return new TextBox { Dock = DockStyle.Fill, BackColor = Theme.Field, ForeColor = Theme.Text,
@@ -457,13 +485,17 @@ namespace LmuQuadViewLauncher
                     else Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
                 }
             } catch (ArgumentException) { }
-            renderingNav.Name = "RenderingNav"; setupNav.Name = "SetupNav"; benchmarkNav.Name="BenchmarkNav";
+            renderingNav.Name = "RenderingNav"; setupNav.Name = "SetupNav"; benchmarkNav.Name="BenchmarkNav"; profilesNav.Name="ProfilesNav";
+            profileName.Name="ProfileName"; profileSave.Name="ProfileSave"; profileLoad.Name="ProfileLoad"; profileRename.Name="ProfileRename";
+            profileDelete.Name="ProfileDelete"; profileExport.Name="ProfileExport"; profileImport.Name="ProfileImport";
+            profiles = new ProfileStore(Path.Combine(root, "profiles"));
             save.Name = "SaveButton"; launch.Name = "LaunchButton";
             backend.Name = "ProviderSelector";
             vrsRate.Name="VrsPeripheralRate";vrsRate.SelectedIndex=1;
             manifest.Name="QvfrManifest";vectorManifest.Name="VectorXrManifest";
             outer.Name="OuterResolution";inner.Name="InnerResolution";
             ClientSize = new Size(1050, 780); MinimumSize = new Size(900, 700); StartPosition = FormStartPosition.CenterScreen;
+            HandleCreated+=delegate {NativeChrome.DarkTitleBar(this);};
             var frame = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0) };
             frame.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             frame.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 204)); frame.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -476,8 +508,8 @@ namespace LmuQuadViewLauncher
             var heading = Stack(2); heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); heading.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
             heading.Controls.Add(header, 0, 0); heading.Controls.Add(subheader, 0, 1); main.Controls.Add(heading, 0, 0);
             var pages = new Panel { Dock = DockStyle.Fill, Margin = new Padding(0) };
-            pages.Controls.Add(benchmarkPage); pages.Controls.Add(setupPage); pages.Controls.Add(renderingPage); main.Controls.Add(pages, 0, 1);
-            BuildRendering(); BuildSetup(); BuildBenchmark(); main.Controls.Add(BuildFooter(), 0, 2);ConfigureHelp();
+            pages.Controls.Add(profilesPage); pages.Controls.Add(benchmarkPage); pages.Controls.Add(setupPage); pages.Controls.Add(renderingPage); main.Controls.Add(pages, 0, 1);
+            BuildRendering(); BuildSetup(); BuildBenchmark(); BuildProfiles(); main.Controls.Add(BuildFooter(), 0, 2);ConfigureHelp();
             backend.SelectedIndexChanged += delegate { UpdateProvider(); };
             diagnosticsEnabled.Name="DiagnosticsEnabled";
             stereoDrawAudit.Name="StereoDrawAudit";
@@ -490,7 +522,7 @@ namespace LmuQuadViewLauncher
             diagnosticsEnabled.CheckedChanged+=delegate {UpdateBenchmarkNotice();UpdateAdvanced();};
             stereoDrawAudit.CheckedChanged+=delegate {UpdateAdvanced();};
             renderProfiling.CheckedChanged+=delegate {UpdateAdvanced();};
-            renderingNav.Click += delegate { ShowPage(false); }; setupNav.Click += delegate { ShowPage(true); }; benchmarkNav.Click += delegate { ShowBenchmarkPage(); };
+            renderingNav.Click += delegate { ShowPage(false); }; setupNav.Click += delegate { ShowPage(true); }; benchmarkNav.Click += delegate { ShowBenchmarkPage(); }; profilesNav.Click += delegate { ShowProfilesPage(); };
             save.Click += delegate { SaveSettings(); }; launch.Click += delegate { StartGame(); };
             AcceptButton = launch;
             try {
@@ -505,30 +537,31 @@ namespace LmuQuadViewLauncher
             KeyPreview=true;
             KeyDown+=delegate(object sender,KeyEventArgs e) { if(e.KeyCode==Keys.Escape&&joystick!=null&&joystick.Listening) {joystick.CancelListen();bindingStatus.Text="Button assignment cancelled.";e.Handled=true;} };
             Shown+=delegate { if(joystick==null) {joystick=new JoystickInput(new DirectInputButtonSource(Handle));UpdateBindings();joystick.VisibilityPressed+=delegate {benchmark.ToggleOverlay();};joystick.RecordingPressed+=delegate {benchmark.ToggleRecording();};benchmarkTimer.Start();} };
+            Shown+=delegate {InitializeUpdates();};
             benchmarkTimer.Tick+=delegate { PollBenchmark(); };
             steamLifetime.Tick+=delegate { if(steamGame!=null&&!AutoStart.IsProcessRunning(steamGame.Id))Close(); };
         }
         Control BuildSidebar()
         {
-            var side = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 8,
+            var side = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 9,
                 BackColor = Theme.Sidebar, Padding = new Padding(16, 26, 16, 14), Margin = new Padding(0) };
             side.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             side.RowStyles.Add(new RowStyle(SizeType.AutoSize)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 49));
-            side.RowStyles.Add(new RowStyle(SizeType.Absolute, 49)); side.RowStyles.Add(new RowStyle(SizeType.Absolute,49)); side.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            side.RowStyles.Add(new RowStyle(SizeType.Absolute, 49)); side.RowStyles.Add(new RowStyle(SizeType.Absolute,49)); side.RowStyles.Add(new RowStyle(SizeType.Absolute,49)); side.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             side.RowStyles.Add(new RowStyle(SizeType.Absolute, 26)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 89)); side.RowStyles.Add(new RowStyle(SizeType.Absolute, 65));
             var brand = Stack(3); brand.AutoSize = true; brand.Dock = DockStyle.Top; brand.Margin = new Padding(0, 0, 0, 24);
             brand.RowStyles.Add(new RowStyle(SizeType.AutoSize)); brand.RowStyles.Add(new RowStyle(SizeType.AutoSize)); brand.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             var lmu = new BrandLabel("LMU", 25F, Theme.Text); lmu.Name = "BrandTitle"; lmu.Font = new Font("Segoe UI", 25F, FontStyle.Bold);
             brand.Controls.Add(lmu, 0, 0); brand.Controls.Add(new BrandLabel("QUAD VIEW", 12F, Theme.Accent) {Name="BrandSubtitle"}, 0, 1); brand.Controls.Add(new BrandLabel("OPENXR RENDERING", 9F, Theme.Muted) {Name="BrandRenderer"}, 0, 2); side.Controls.Add(brand, 0, 0);
             foreach (Control label in brand.Controls) { ((Label)label).AutoSize = true; label.Dock = DockStyle.Top; label.Margin = new Padding(0, 0, 0, 5); }
-            foreach (var nav in new[] { renderingNav, setupNav, benchmarkNav }) { nav.Dock = DockStyle.Fill; nav.TextAlign = ContentAlignment.MiddleLeft; nav.Margin = new Padding(0, 3, 0, 5); nav.FlatAppearance.BorderSize = 0; }
-            side.Controls.Add(renderingNav, 0, 1); side.Controls.Add(setupNav, 0, 2); side.Controls.Add(benchmarkNav,0,3);
-            side.Controls.Add(Caption("OPTIONAL SUPPORT"), 0, 5);
+            foreach (var nav in new[] { renderingNav, setupNav, benchmarkNav, profilesNav }) { nav.Dock = DockStyle.Fill; nav.TextAlign = ContentAlignment.MiddleLeft; nav.Margin = new Padding(0, 3, 0, 5); nav.FlatAppearance.BorderSize = 0; }
+            side.Controls.Add(renderingNav, 0, 1); side.Controls.Add(setupNav, 0, 2); side.Controls.Add(benchmarkNav,0,3); side.Controls.Add(profilesNav,0,4);
+            side.Controls.Add(Caption("OPTIONAL SUPPORT"), 0, 6);
             var support = Stack(2); support.RowStyles.Add(new RowStyle(SizeType.Absolute, 41)); support.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
             var coffee = Theme.Button("Buy me a coffee", false); coffee.Name = "CoffeeButton"; coffee.Dock = DockStyle.Fill; coffee.Font = new Font("Segoe UI", 9F); coffee.Margin = new Padding(0, 0, 0, 4);
             coffee.Click += delegate { OpenLink("https://buymeacoffee.com/dansuzuki"); }; support.Controls.Add(coffee, 0, 0);
-            Link(support, "Shop via affiliate links", "https://dansuzuki.com/discounts/", 1); side.Controls.Add(support, 0, 6);
-            var tag = Theme.Label("Always free.\nDonations are completely\noptional.", 8F, Theme.Muted); tag.Name="FreeNotice"; side.Controls.Add(tag, 0, 7); return side;
+            Link(support, "Shop via affiliate links", "https://dansuzuki.com/discounts/", 1); side.Controls.Add(support, 0, 7);
+            var tag = Theme.Label("Always free.\nDonations are completely\noptional.", 8F, Theme.Muted); tag.Name="FreeNotice"; side.Controls.Add(tag, 0, 8); return side;
         }
         void BuildRendering()
         {
@@ -608,11 +641,11 @@ namespace LmuQuadViewLauncher
         }
         void BuildSetup()
         {
-            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 6, Margin = new Padding(0) };
+            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 7, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 153)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 900)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 250)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 50)); setupPage.SetContent(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 270)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 310)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 900));grid.RowStyles.Add(new RowStyle(SizeType.Absolute,50)); setupPage.SetContent(grid);
             var browseGame = Theme.Button("Browse", false); browseGame.Click += delegate {
                 using (var d = new FolderBrowserDialog { Description = "Select the folder containing Le Mans Ultimate.exe", ShowNewFolderButton = false }) {
                     if (Directory.Exists(game.Text)) d.SelectedPath = game.Text;
@@ -651,16 +684,19 @@ namespace LmuQuadViewLauncher
             stack.Controls.Add(Caption("Extends upload filtering to outer and focus geometry; preparation and draws still run. Implies upload reuse. Excludes audit/proof and upload fast path; no measured gain yet."),0,19);
             stack.Controls.Add(outerSsr,0,20);
             stack.Controls.Add(Caption("Requires smaller native outer targets. Reduces outer reflection resources with a 40% per-axis floor; reflections may soften, focus stays unchanged. Unsupported layouts keep native resources."),0,21);
-            options.Controls.Add(stack); grid.Controls.Add(options, 0, 3);
+            options.Controls.Add(stack); grid.Controls.Add(options, 0, 5);
             var steamCard=new Surface {Name="SteamLaunchCard",Dock=DockStyle.Fill,Margin=new Padding(0,0,0,14),Padding=new Padding(17,12,17,10)};
-            var steamStack=Stack(4);steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,32));steamStack.RowStyles.Add(new RowStyle(SizeType.Percent,100));steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,44));steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,44));
+            var steamStack=Stack(5);steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,32));steamStack.RowStyles.Add(new RowStyle(SizeType.Percent,100));steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,44));steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,44));steamStack.RowStyles.Add(new RowStyle(SizeType.Absolute,44));
             steamStack.Controls.Add(Theme.Label("Launch from Steam",13F,Theme.Text),0,0);
             steamStack.Controls.Add(Caption("Install once (administrator approval), then choose Steam's OpenXR mode. No custom launch option needed. Saved settings apply next launch. Keep this package in its current folder; reinstall after moving or updating it."),0,1);
             var install=Theme.Button("Install / update automatic startup",false);install.Name="AutoStartInstall";install.Dock=DockStyle.Fill;
             var remove=Theme.Button("Remove automatic startup",false);remove.Name="AutoStartRemove";remove.Dock=DockStyle.Fill;
             install.Click+=delegate {ConfigureAutoStart(true);};remove.Click+=delegate {ConfigureAutoStart(false);};
             steamStack.Controls.Add(install,0,2);steamStack.Controls.Add(remove,0,3);steamCard.Controls.Add(steamStack);grid.Controls.Add(steamCard,0,4);
-            grid.Controls.Add(Caption("Keep your headset's OpenXR runtime active. Configure VectorXR's LMU Quadviews profile when using it; select one quad-view provider."), 0, 5);
+            var integrity=Theme.Button("Check installed files / signatures",false);integrity.Name="AutoStartIntegrity";integrity.Dock=DockStyle.Fill;
+            integrity.Click+=delegate {CheckStartupIntegrity();};steamStack.Controls.Add(integrity,0,4);
+            grid.Controls.Add(Caption("Keep your headset's OpenXR runtime active. Configure VectorXR's LMU Quadviews profile when using it; select one quad-view provider."), 0, 6);
+            grid.Controls.Add(BuildUpdateCard(),0,3);
         }
         static NumericUpDown BenchmarkNumber(string name,decimal min,decimal max,decimal value) {
             return new SpacedNumericUpDown {Name=name,AccessibleName=name,Minimum=min,Maximum=max,Value=value,DecimalPlaces=2,Increment=0.05m,Dock=DockStyle.Fill,BackColor=Theme.Field,ForeColor=Theme.Text,BorderStyle=BorderStyle.FixedSingle,TextAlign=HorizontalAlignment.Right};
@@ -760,10 +796,220 @@ namespace LmuQuadViewLauncher
             benchmarkStatus.Text=benchmark.Status;benchmarkVisible.Text=benchmark.OverlayVisible?"Hide overlay":"Show overlay";
             benchmarkRecord.Text=benchmark.Recording?"Stop recording":"Start recording";benchmarkRecord.Enabled=benchmark.Connected||benchmark.Recording;
             benchmarkReport.Enabled=!String.IsNullOrEmpty(benchmark.LastReportPath);
-            if(++previewTicks>=4) {previewTicks=0;if(benchmarkPage.Visible)RefreshBenchmarkPreview();}
+            if(++previewTicks>=4) {previewTicks=0;if(benchmarkPage.Visible&&Visible&&WindowState!=FormWindowState.Minimized)RefreshBenchmarkPreview();}
+        }
+        // Profiles contributed by Markus Stahl. Store portable rendering choices only;
+        // local paths, joystick buttons, diagnostics and FOV calibration stay here.
+        void BuildProfiles()
+        {
+            var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, RowCount = 2, Margin = new Padding(0) };
+            grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 190)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 368));
+            profilesPage.SetContent(grid);
+
+            var saveCard = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14), Padding = new Padding(17, 12, 17, 12) };
+            var saveGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 4, Margin = new Padding(0) };
+            saveGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); saveGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 214));
+            saveGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 29)); saveGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+            saveGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 42)); saveGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            saveGrid.Controls.Add(Theme.Label("Create profile", 13F, Theme.Text), 0, 0); saveGrid.SetColumnSpan(saveGrid.GetControlFromPosition(0, 0), 2);
+            saveGrid.Controls.Add(Caption("Profile name"), 0, 1); saveGrid.SetColumnSpan(saveGrid.GetControlFromPosition(0, 1), 2);
+            profileName.MaxLength = ProfileStore.MaxNameLength; profileName.Margin = new Padding(0, 6, 10, 4);
+            profileSave.Dock = DockStyle.Fill; profileSave.Margin = new Padding(0, 2, 0, 2);
+            saveGrid.Controls.Add(profileName, 0, 2); saveGrid.Controls.Add(profileSave, 1, 2);
+            var saveHint = Caption("Saves the current provider, foveation, resolution, focus, crop and performance options. Game folder, provider paths, joystick buttons, diagnostics and headset FOV calibration stay on this PC. Using an existing name replaces that profile.");
+            saveHint.Name = "ProfileSaveHint";
+            saveHint.TextAlign = ContentAlignment.TopLeft; saveHint.Margin = new Padding(0, 6, 0, 0);
+            saveGrid.Controls.Add(saveHint, 0, 3); saveGrid.SetColumnSpan(saveHint, 2);
+            saveCard.Controls.Add(saveGrid); grid.Controls.Add(saveCard, 0, 0);
+
+            var listCard = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0), Padding = new Padding(17, 12, 17, 12) };
+            var listGrid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Margin = new Padding(0) };
+            listGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            listGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 29)); listGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+            listGrid.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); listGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            listGrid.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+            listGrid.Controls.Add(Theme.Label("Your profiles", 13F, Theme.Text), 0, 0);
+            listGrid.Controls.Add(activeProfile, 0, 1);
+            listGrid.Controls.Add(profileList, 0, 2);
+            profileDetails.TextAlign = ContentAlignment.TopLeft; profileDetails.Margin = new Padding(0, 6, 0, 0);
+            listGrid.Controls.Add(profileDetails, 0, 3);
+            var actions = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 5, RowCount = 1, Margin = new Padding(0), Padding = new Padding(0, 4, 0, 0) };
+            actions.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            foreach (var button in new[] { profileLoad, profileRename, profileDelete, profileExport, profileImport })
+            { actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 20)); button.Dock = DockStyle.Fill; button.Margin = new Padding(0, 0, button == profileImport ? 0 : 8, 0); button.Font = new Font("Segoe UI", 9.5F, FontStyle.Bold); actions.Controls.Add(button); }
+            listGrid.Controls.Add(actions, 0, 4);
+            listCard.Controls.Add(listGrid); grid.Controls.Add(listCard, 0, 1);
+
+            Help(profileName, "A name of up to " + ProfileStore.MaxNameLength + " characters, for example \"Race - eye tracking\" or \"VRS 2x2 endurance\".");
+            Help(profileSave, "Store the settings currently shown in Rendering and Setup under this name. Nothing is changed for LMU until you load a profile.");
+            Help(profileLoad, "Apply the selected profile to Rendering and save it as the current launcher settings. Restart LMU to use it.");
+            Help(profileExport, "Write the selected profile to a .lmuqv file you can share. It contains no paths, device IDs or personal data.");
+            Help(profileImport, "Add a .lmuqv profile from another user. Unsupported or out-of-range rendering values are rejected; extra fields are ignored. Your paths and bindings stay local.");
+            // Enter is a WinForms dialog key, processed before TextBox/ListBox KeyDown.
+            profileName.Enter += delegate { if (profilesPage.Visible) AcceptButton = profileSave; };
+            profileName.Leave += delegate { if (profilesPage.Visible) AcceptButton = profileLoad; };
+            profileList.Enter += delegate { if (profilesPage.Visible) AcceptButton = profileLoad; };
+            profileSave.Click += delegate { SaveProfileFromCurrent(); };
+            profileName.KeyDown += delegate(object sender, KeyEventArgs e) { if (e.KeyCode == Keys.Enter) { SaveProfileFromCurrent(); e.Handled = e.SuppressKeyPress = true; } };
+            profileLoad.Click += delegate { LoadSelectedProfile(); };
+            profileList.DoubleClick += delegate { LoadSelectedProfile(); };
+            profileList.SelectedIndexChanged += delegate { UpdateProfileSelection(); };
+            profileList.KeyDown += delegate(object sender, KeyEventArgs e) {
+                if (e.KeyCode == Keys.Delete) { DeleteSelectedProfile(); e.Handled = true; }
+                else if (e.KeyCode == Keys.F2) { RenameSelectedProfile(); e.Handled = true; }
+                else if (e.KeyCode == Keys.Enter) { LoadSelectedProfile(); e.Handled = true; } };
+            profileRename.Click += delegate { RenameSelectedProfile(); };
+            profileDelete.Click += delegate { DeleteSelectedProfile(); };
+            profileExport.Click += delegate { ExportSelectedProfile(); };
+            profileImport.Click += delegate { ImportProfile(); };
+            RefreshProfiles(null);
+        }
+        void ShowProfilesPage()
+        {
+            AcceptButton = profileLoad;
+            renderingPage.Visible = setupPage.Visible = benchmarkPage.Visible = false; profilesPage.Visible = true;
+            header.Text = "Profiles"; subheader.Text = "Save, share and switch complete rendering setups.";
+            renderingNav.BackColor = setupNav.BackColor = benchmarkNav.BackColor = Theme.Sidebar;
+            renderingNav.ForeColor = setupNav.ForeColor = benchmarkNav.ForeColor = Theme.Muted;
+            profilesNav.BackColor = Theme.AccentDark; profilesNav.ForeColor = Theme.Text;
+            RefreshProfiles(SelectedProfileName());
+        }
+        string SelectedProfileName() { var item = profileList.SelectedItem as SettingsProfile; return item == null ? null : item.Name; }
+        string activeProfileName;
+        void RefreshProfiles(string select)
+        {
+            IList<SettingsProfile> items;
+            try { items = profiles.List(); }
+            catch (Exception error) { items = new List<SettingsProfile>(); profileDetails.Text = "Profiles could not be read: " + error.Message; }
+            profileList.BeginUpdate();
+            profileList.DisplayMember = "Name"; profileList.Items.Clear();
+            foreach (var item in items) profileList.Items.Add(item);
+            profileList.EndUpdate();
+            int index = -1;
+            if (select != null) for (int i = 0; i < items.Count; i++) if (String.Equals(items[i].Name, select, StringComparison.CurrentCultureIgnoreCase)) index = i;
+            if (index < 0 && items.Count > 0) index = 0;
+            profileList.SelectedIndex = index;
+            if (activeProfileName != null && !items.Any(p => String.Equals(p.Name, activeProfileName, StringComparison.CurrentCultureIgnoreCase))) activeProfileName = null;
+            activeProfile.Text = activeProfileName == null ? "Profiles are stored in this package's \"profiles\" folder." : "Last loaded: " + activeProfileName;
+            UpdateProfileSelection();
+        }
+        void UpdateProfileSelection()
+        {
+            var item = profileList.SelectedItem as SettingsProfile;
+            profileLoad.Enabled = profileRename.Enabled = profileDelete.Enabled = profileExport.Enabled = item != null;
+            if (profileList.Items.Count == 0) profileDetails.Text = "No profiles yet. Save your current settings above, or import a .lmuqv file from another user.";
+            else if (item != null) profileDetails.Text = item.Summary() + "\nChanged " + item.ModifiedUtc.ToLocalTime().ToString("g", System.Globalization.CultureInfo.CurrentCulture);
+        }
+        LauncherSettings CurrentForProfiles()
+        {
+            // Validate after replacing rendering fields: an unfinished rendering edit
+            // must not send the user's unsaved local paths and bindings back to disk values.
+            return ReadValues(false);
+        }
+        void ProfileStatus(string text) { status.ForeColor = Theme.Muted; status.Text = text; }
+        void SaveProfileFromCurrent()
+        {
+            if (busy) return;
+            try {
+                var name = ProfileStore.CleanName(profileName.Text);
+                var current = Values();
+                bool exists = profiles.Exists(name);
+                if (exists && MessageBox.Show(this, "A profile named \"" + name + "\" already exists. Replace it with the current settings?", "LMU Quad View",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+                profiles.Save(SettingsProfile.Capture(name, current), exists);
+                RefreshProfiles(name); profileName.Clear();
+                ProfileStatus((exists ? "Profile replaced: " : "Profile saved: ") + name);
+            } catch (Exception error) { ShowError(error.Message); }
+        }
+        void LoadSelectedProfile()
+        {
+            if (busy) return;
+            var name = SelectedProfileName(); if (name == null) return;
+            try {
+                var applied = profiles.Load(name).ApplyTo(CurrentForProfiles());
+                Fill(applied); SaveSettings();
+                if (status.ForeColor != Theme.Muted) return; // SaveSettings reported an error
+                activeProfileName = name; RefreshProfiles(name);
+                ProfileStatus("Profile loaded: " + name + ". Settings saved; restart LMU to apply.");
+            } catch (Exception error) { ShowError(error.Message); }
+        }
+        void RenameSelectedProfile()
+        {
+            var name = SelectedProfileName(); if (name == null) return;
+            var renamed = Prompt("Rename profile", "New name for \"" + name + "\":", name);
+            if (renamed == null) return;
+            try {
+                renamed = ProfileStore.CleanName(renamed);
+                if (renamed == name) return;
+                profiles.Rename(name, renamed);
+                if (activeProfileName != null && String.Equals(activeProfileName, name, StringComparison.CurrentCultureIgnoreCase)) activeProfileName = renamed;
+                RefreshProfiles(renamed); ProfileStatus("Profile renamed: " + renamed);
+            } catch (Exception error) { ShowError(error.Message); }
+        }
+        void DeleteSelectedProfile()
+        {
+            var name = SelectedProfileName(); if (name == null) return;
+            if (MessageBox.Show(this, "Delete the profile \"" + name + "\"? Your current settings are not changed.", "LMU Quad View",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
+            try { profiles.Delete(name); RefreshProfiles(null); ProfileStatus("Profile deleted: " + name); }
+            catch (Exception error) { ShowError(error.Message); }
+        }
+        void ExportSelectedProfile()
+        {
+            var name = SelectedProfileName(); if (name == null) return;
+            using (var dialog = new SaveFileDialog { Title = "Export profile", Filter = "LMU Quad View profile (*.lmuqv)|*.lmuqv",
+                DefaultExt = "lmuqv", AddExtension = true, OverwritePrompt = true, FileName = ProfileStore.FileStem(name) + ProfileStore.Extension }) {
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                try { profiles.Export(name, dialog.FileName); ProfileStatus("Profile exported: " + dialog.FileName); }
+                catch (Exception error) { ShowError(error.Message); }
+            }
+        }
+        void ImportProfile()
+        {
+            using (var dialog = new OpenFileDialog { Title = "Import profile", Filter = "LMU Quad View profile (*.lmuqv)|*.lmuqv|All files (*.*)|*.*", CheckFileExists = true, Multiselect = true }) {
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                string last = null; int imported = 0;
+                foreach (var file in dialog.FileNames) {
+                    try {
+                        var profile = ProfileStore.ReadImport(file);
+                        bool replace = false;
+                        if (profiles.Exists(profile.Name)) {
+                            var choice = MessageBox.Show(this, "A profile named \"" + profile.Name + "\" already exists.\n\nYes: replace it\nNo: keep both (import as \"" + profiles.AvailableName(profile.Name) + "\")\nCancel: skip this file",
+                                "Import profile", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2);
+                            if (choice == DialogResult.Cancel) continue;
+                            if (choice == DialogResult.Yes) replace = true; else profile.Name = profiles.AvailableName(profile.Name);
+                        }
+                        profiles.Save(profile, replace); last = profile.Name; imported++;
+                    } catch (Exception error) { ShowError(Path.GetFileName(file) + ": " + error.Message); }
+                }
+                if (last == null) return;
+                RefreshProfiles(last);
+                ProfileStatus(imported == 1 ? "Profile imported: " + last + ". Select Load to apply it." : imported + " profiles imported. Select one and choose Load to apply it.");
+            }
+        }
+        string Prompt(string title, string text, string value)
+        {
+            using (var form = new Form { Text = title, FormBorderStyle = FormBorderStyle.FixedDialog, MinimizeBox = false, MaximizeBox = false, ShowInTaskbar = false,
+                StartPosition = FormStartPosition.CenterParent, BackColor = Theme.Background, ForeColor = Theme.Text, ClientSize = new Size(440, 150), Font = new Font("Segoe UI", 10F) })
+            {
+                var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(16, 12, 16, 12) };
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 28)); layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40)); layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+                var input = Field(); input.Text = value; input.MaxLength = ProfileStore.MaxNameLength; input.Margin = new Padding(0, 4, 0, 4);
+                var ok = Theme.Button("OK", true); var cancel = Theme.Button("Cancel", false);
+                ok.DialogResult = DialogResult.OK; cancel.DialogResult = DialogResult.Cancel; ok.Width = cancel.Width = 100; ok.Height = cancel.Height = 36;
+                var buttons = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.RightToLeft, Margin = new Padding(0) };
+                buttons.Controls.Add(cancel); buttons.Controls.Add(ok);
+                layout.Controls.Add(Theme.Label(text, 10F, Theme.Text), 0, 0); layout.Controls.Add(input, 0, 1); layout.Controls.Add(buttons, 0, 2);
+                form.Controls.Add(layout); form.AcceptButton = ok; form.CancelButton = cancel;
+                form.Shown += delegate { input.SelectAll(); input.Focus(); };
+                return form.ShowDialog(this) == DialogResult.OK ? input.Text : null;
+            }
         }
         void ShowBenchmarkPage() {
-            renderingPage.Visible=setupPage.Visible=false;benchmarkPage.Visible=true;
+            AcceptButton = launch;
+            renderingPage.Visible=setupPage.Visible=profilesPage.Visible=false;benchmarkPage.Visible=true;
+            profilesNav.BackColor=Theme.Sidebar;profilesNav.ForeColor=Theme.Muted;
             header.Text="Benchmark";subheader.Text="Measure a lap. Compare the result. See what changed.";
             renderingNav.BackColor=setupNav.BackColor=Theme.Sidebar;renderingNav.ForeColor=setupNav.ForeColor=Theme.Muted;
             benchmarkNav.BackColor=Theme.AccentDark;benchmarkNav.ForeColor=Theme.Text;RefreshBenchmarkPreview();
@@ -796,7 +1042,9 @@ namespace LmuQuadViewLauncher
         }
         void ShowPage(bool setup)
         {
+            AcceptButton = launch;
             benchmarkPage.Visible=false; benchmarkNav.BackColor=Theme.Sidebar;benchmarkNav.ForeColor=Theme.Muted;
+            profilesPage.Visible=false; profilesNav.BackColor=Theme.Sidebar;profilesNav.ForeColor=Theme.Muted;
             setupPage.Visible = setup; renderingPage.Visible = !setup;
             header.Text = setup ? "Setup" : "Rendering";
             subheader.Text = setup ? "Connect the game, the provider, and your headset." : "Fine-tune image quality where it matters.";
@@ -890,6 +1138,10 @@ namespace LmuQuadViewLauncher
         }
         LauncherSettings Values()
         {
+            return ReadValues(true);
+        }
+        LauncherSettings ReadValues(bool validate)
+        {
             var s = new LauncherSettings { GameDirectory = game.Text.Trim(), QuadViewsManifest = manifest.Text.Trim(),VectorXrManifest=vectorManifest.Text.Trim(),
                 Backend = backend.SelectedIndex==3?"VRS":backend.SelectedIndex == 2 ? "VectorXR" : backend.SelectedIndex == 1 ? "QVFR" : "Native", FoveationMode = mode.SelectedIndex == 1 ? "fixed" : "auto",
                 VrsPeripheralRate=vrsRate.SelectedIndex==2?4:vrsRate.SelectedIndex==0?1:2,
@@ -905,7 +1157,7 @@ namespace LmuQuadViewLauncher
                 FocusHeightPercent = focusGeometry==null||focusDisplayedAsVrs?focusHeight.Value:focusGeometry.ProviderHeight(focusHeight.Value),
                 FocusOffsetXPercent=focusOffsetX.Value,FocusOffsetYPercent=focusOffsetY.Value,
                 FocusAspectRatio=focusGeometry==null?0:focusGeometry.Aspect, OuterBlur = outerBlur.Value };
-            QvfrSettings.Validate(s); return s;
+            if (validate) QvfrSettings.Validate(s); return s;
         }
         void RefreshFocusGeometry() {
             try {
@@ -930,7 +1182,7 @@ namespace LmuQuadViewLauncher
         }
         void SetBusy(bool value)
         {
-            busy = value; save.Enabled = launch.Enabled = !value; renderingPage.Enabled = setupPage.Enabled = !value;
+            busy = value; save.Enabled = launch.Enabled = !value; renderingPage.Enabled = setupPage.Enabled = profilesPage.Enabled = !value;
             launch.Text = value ? "Starting..." : "Launch LMU"; UseWaitCursor = value;
         }
         void StartGame()

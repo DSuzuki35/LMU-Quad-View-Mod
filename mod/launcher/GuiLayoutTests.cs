@@ -123,6 +123,20 @@ class GuiLayoutTests {
             foreach(var name in new[]{"BenchmarkVisibilityButton","BenchmarkRecordButton","AssignVisibility","AssignRecording","ClearVisibility","ClearRecording","BenchmarkReportButton","BenchmarkDiagnoseButton"})TextFits(Named(form,name));
             var preview=(PictureBox)Named(form,"BenchmarkPreview");Check(preview.Image!=null,"Benchmark preview bitmap missing");
         }
+        if(pageName=="ProfilesPage") {
+            foreach(var name in new[]{"ProfileName","ProfileSave"}) {
+                var control=Named(form,name);control.Focus();Settle(form);FullyVisible(control);
+                if(control is Button)TextFits(control);
+            }
+            scroll.Value=scroll.Maximum;Settle(form);
+            foreach(var name in new[]{"ProfileLoad","ProfileRename","ProfileDelete","ProfileExport","ProfileImport"}) {
+                var control=Named(form,name);FullyVisible(control);TextFits(control);
+            }
+            var hint=Named(form,"ProfileSaveHint");
+            var wrapped=TextRenderer.MeasureText(hint.Text,hint.Font,new Size(hint.ClientSize.Width,Int32.MaxValue),TextFormatFlags.WordBreak);
+            Check(wrapped.Height<=hint.ClientSize.Height,"Profile save explanation is clipped");
+            scroll.Value=0;Settle(form);
+        }
         NumericSpacing(page);BrandAlignment(form);
         NoNativeScrollBars(form);
         var freeNotice=Named(form,"FreeNotice");
@@ -146,7 +160,7 @@ class GuiLayoutTests {
         foreach(var name in new[]{"SaveButton","LaunchButton","CoffeeButton"})FullyVisible(Named(form,name));
         NoNativeScrollBars(form);
         if(pageName=="SetupPage") {
-            foreach(var name in new[]{"CpuOuterReuse","OuterSsr"}) {
+            foreach(var name in new[]{"CpuOuterReuse","OuterSsr","UpdateAutomatic","UpdateCheck","AutoStartIntegrity"}) {
                 var control=Named(form,name);control.Focus();Settle(form);FullyVisible(control);TextFits(control);
             }
         }
@@ -178,7 +192,21 @@ class GuiLayoutTests {
             string output=args.Length>0?Path.GetFullPath(args[0]):Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"gui-qa");
             Directory.CreateDirectory(output);
             using(var form=new Launcher()) {
+                form.Opacity=0;form.ShowInTaskbar=false;form.StartPosition=FormStartPosition.Manual;form.Location=new Point(-16000,-16000);
+                form.Show();Settle(form);
                 var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+                var unsavedLocal=new LauncherSettings {Backend="QVFR",GameDirectory=@"F:\Unsaved LMU",QuadViewsManifest=@"F:\Unsaved QVFR.json",FocusAspectRatio=1.25m,OuterPercent=400};
+                typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{unsavedLocal});
+                var profileLocal=(LauncherSettings)typeof(Launcher).GetMethod("CurrentForProfiles",flags).Invoke(form,null);
+                Check(profileLocal.GameDirectory==unsavedLocal.GameDirectory&&profileLocal.QuadViewsManifest==unsavedLocal.QuadViewsManifest&&profileLocal.FocusAspectRatio==unsavedLocal.FocusAspectRatio,"Loading profile discarded unsaved local values when current rendering is invalid");
+                typeof(Launcher).GetMethod("ShowProfilesPage",flags).Invoke(form,null);
+                Check(form.AcceptButton==Named(form,"ProfileLoad"),"Profiles page Enter can trigger Launch LMU");
+                typeof(Control).GetMethod("OnEnter",flags).Invoke(Named(form,"ProfileName"),new object[]{EventArgs.Empty});
+                Check(form.AcceptButton==Named(form,"ProfileSave"),"Profile name Enter does not save profile");
+                typeof(Control).GetMethod("OnEnter",flags).Invoke(Named(form,"ProfileList"),new object[]{EventArgs.Empty});
+                Check(form.AcceptButton==Named(form,"ProfileLoad"),"Profile list Enter does not load profile");
+                typeof(Launcher).GetMethod("ShowPage",flags).Invoke(form,new object[]{false});
+                Check(form.AcceptButton==Named(form,"LaunchButton"),"Rendering default launch button was not restored");
                 var experiments=new LauncherSettings {CpuOuterReuse=true,OuterSsr=true,DiagnosticsEnabled=false,StereoDrawAudit=true,StereoShaderCapture=true,StereoPairProof=true};
                 typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{experiments});
                 var experimentValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
@@ -295,6 +323,7 @@ class GuiLayoutTests {
                     Page(form,"RenderingPage","RenderingNav",output,stem);
                     Page(form,"SetupPage","SetupNav",output,stem);
                     Page(form,"BenchmarkPage","BenchmarkNav",output,stem);
+                    Page(form,"ProfilesPage","ProfilesNav",output,stem);
                     ((ComboBox)Named(form,"ProviderSelector")).SelectedIndex=3;
                     ((Button)Named(form,"RenderingNav")).PerformClick();
                     ((DarkScrollBar)Named(Named(form,"RenderingPage"),"PageScrollBar")).Value=0;Settle(form);

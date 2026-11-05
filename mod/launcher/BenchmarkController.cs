@@ -119,7 +119,7 @@ namespace LmuQuadViewLauncher
         public BenchmarkController(string root) { this.root = root; Snapshot = new BenchmarkSnapshot(); }
         public bool Connected { get { return view != null; } }
         public bool Recording { get { return capture != null; } }
-        public bool OverlayVisible { get { return visible; } set { visible = value; WriteConfigSafely(); } }
+        public bool OverlayVisible { get { return visible; } set { if(value&&!visible)nextBitmap=DateTime.MinValue;visible = value; WriteConfigSafely(); } }
         public int Template { get { return template; } set { template = value == 1 ? 1 : 0; WriteConfigSafely(); } }
         public float OverlayX { get { return x; } set { x = Clamp(value, -2, 2, 0); WriteConfigSafely(); } }
         public float OverlayY { get { return y; } set { y = Clamp(value, -2, 2, -.25F); WriteConfigSafely(); } }
@@ -158,9 +158,8 @@ namespace LmuQuadViewLauncher
                 if (now >= nextBitmap)
                 {
                     nextBitmap = now.AddMilliseconds(200);
-                    Snapshot.FrameHistory = history.ToArray();
                     WriteConfig();
-                    using (Bitmap bitmap = RenderPreview()) WriteBitmap(bitmap);
+                    if(visible)using (Bitmap bitmap = RenderPreview()) WriteBitmap(bitmap);
                 }
             }
             catch (Exception ex) { if (ex is OutOfMemoryException) throw; Disconnect("Benchmark connection interrupted: " + ex.Message, true); }
@@ -302,7 +301,7 @@ namespace LmuQuadViewLauncher
             }
             finally { bitmap.UnlockBits(data); }
         }
-        public Bitmap RenderPreview() { return BenchmarkOverlay.Render(Snapshot, template, Recording, Connected); }
+        public Bitmap RenderPreview() { Snapshot.FrameHistory=history.ToArray();return BenchmarkOverlay.Render(Snapshot, template, Recording, Connected); }
         public void OpenLastReport()
         {
             try { string path = LastReportPath; if (!String.IsNullOrEmpty(path) && File.Exists(path)) Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); else status = "No completed report yet."; }

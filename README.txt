@@ -1,4 +1,4 @@
-LMU QUAD VIEW MOD — v0.3.3
+LMU QUAD VIEW MOD — v0.4.0
 
 SIGNED BUILD
 I bought a code-signing certificate for this project. The DLL and executables

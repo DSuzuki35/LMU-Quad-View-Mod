@@ -70,6 +70,15 @@ namespace LmuQuadViewLauncher
     }
     public static class QvfrSettings
     {
+        // Independent copy used when a portable profile is applied over local settings.
+        public static LauncherSettings Clone(LauncherSettings source)
+        {
+            if (source == null) throw new ArgumentNullException("source");
+            var copy = new LauncherSettings();
+            foreach (var property in typeof(LauncherSettings).GetProperties())
+                if (property.CanRead && property.CanWrite) property.SetValue(copy, property.GetValue(source, null), null);
+            return copy;
+        }
         const string Begin = "# BEGIN LMU QUAD VIEW MOD PROFILE";
         const string End = "# END LMU QUAD VIEW MOD PROFILE";
         public static void Validate(LauncherSettings s)

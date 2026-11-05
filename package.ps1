@@ -18,6 +18,10 @@ New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $stage = Join-Path $OutputDirectory ('package-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $stage,(Join-Path $stage 'build'),(Join-Path $stage 'licenses'),(Join-Path $stage 'tools'),(Join-Path $stage 'docs') | Out-Null
 $files = @{
+    'tools/check-autostart-integrity.ps1' = 'tools/check-autostart-integrity.ps1'
+    'docs/EAC.md' = 'docs/EAC.md'
+    'docs/INSTALLER.md' = 'docs/INSTALLER.md'
+    'docs/CPU-040.md' = 'docs/CPU-040.md'
     'mod/build/lmu_quadview.dll' = 'build/lmu_quadview.dll'
     'mod/build/lmu_autostart.dll' = 'build/lmu_autostart.dll'
     'mod/build/LMU-QuadView-Launcher.exe' = 'LMU-QuadView-Launcher.exe'

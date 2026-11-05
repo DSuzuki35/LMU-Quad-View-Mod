@@ -39,7 +39,6 @@ private:
         if(!read(container,0x70)||at<void*>(container,0x28))return false;
         inputs={at<void*>(container,0x20),at<void*>(container,0x30),nullptr,nullptr,at<void*>(container,0x68)};
         if(!vectorFirst(container,0x38,inputs[2],read)||!vectorFirst(container,0x50,inputs[3],read))return false;
-        for(auto* input:inputs)if(input&&!read(input,sizeof(void*)))return false;
         return true;
     }
     bool cloneEntry(Entry& e,unsigned index,Readable read,Log log){
@@ -57,6 +56,10 @@ private:
         if(!read(container,0x70)||at<void*>(container,0x28))return reject("container");
         std::array<void*,5> inputs{};
         if(!sourceInputs(container,inputs,read))return reject("resource_views");
+        // Fresh interfaces must be readable before the first COM call. Cached
+        // identities are held by AddRef below and are only compared on reuse;
+        // their addresses cannot expire or be recycled until reset().
+        for(auto* input:inputs)if(input&&!read(input,sizeof(void*)))return reject("resource_views");
         e.inputs=inputs;
         // Hold the accepted identities until reset, including on partial
         // failure. Native view replacement cannot then reuse a cached address.
@@ -142,8 +145,10 @@ private:
         if(e.ssrMetadata[0]&&(at<unsigned>(e.original,0x28)!=e.ssrMetadata[0]||
             at<unsigned>(e.original,0x2c)!=e.ssrMetadata[1]||at<unsigned>(e.original,0x34)!=e.ssrMetadata[2]))return false;
         void* container=at<void*>(e.original,0xa0);
-        // Views cannot change their underlying resource. Replacing any view
-        // (even with a null direct resource slot) must revalidate/rebuild.
+        // Views cannot change their underlying resource. Recheck native
+        // wrapper/container/vector storage and every retained interface identity.
+        // A changed interface (including a null direct resource slot) rebuilds
+        // through cloneEntry's full validation before it can be dereferenced.
         std::array<void*,5> inputs{};
         return sourceInputs(container,inputs,read)&&inputs==e.inputs;
     }

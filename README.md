@@ -5,10 +5,10 @@ A free Windows x64 / D3D11 mod that adds two outer and two focus views to
 Quad-Views-Foveated (QVFR) or VectorXR separately to provide quad views on a
 stereo runtime.
 
-**v0.3.3 is an experimental offline build.** Headset and runtime compatibility
+**v0.4.0 is an experimental offline build.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
-Version 0.3.3 retains the **Benchmark** page with Minimal and
+Version 0.4.0 retains the **Benchmark** page with Minimal and
 Detailed in-headset overlays, separate joystick bindings for visibility and
 manual recording, local HTML/CSV/JSON reports, and latest-launch diagnostics.
 Enable Benchmark before launching and leave the launcher open. See
@@ -81,7 +81,13 @@ contributions are welcome. See [the contribution guide](CONTRIBUTING.md).
 
 ## Install and launch
 
-1. Use the complete `LMU-Quad-View-Mod-0.3.3.zip` package. Published builds are on [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
+Use the **Setup-x64.exe installer** for Start menu and uninstall integration, or extract the complete portable ZIP. Both contain the same native launcher and rendering layer; no Electron runtime is required. Updates are offered in Setup and installation follows your approval. Close LMU before updating, then reinstall automatic startup from the updated package.
+
+Use **Profiles** to save or share rendering settings as `.lmuqv` files. Imports keep your local paths, devices, diagnostics and calibration. Copy the `profiles` folder when moving a portable package. Profile support was contributed by **Markus Stahl**.
+
+See [CPU work and profiling](docs/CPU-040.md), [installer behavior](docs/INSTALLER.md) and [EAC integrity diagnosis](docs/EAC.md) for details.
+
+1. Use the complete `LMU-Quad-View-Mod-0.4.0.zip` package. Published builds are on [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
 2. Extract the **complete ZIP** to a writable folder outside the LMU installation.
 3. Open **LMU-QuadView-Launcher.exe**. Keep its `.exe.config` file beside it.
 4. In **Setup**, select the LMU game folder. Ensure your headset's OpenXR runtime

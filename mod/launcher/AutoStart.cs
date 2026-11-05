@@ -102,7 +102,7 @@ namespace LmuQuadViewLauncher {
                 settings.Backend=="Native"||settings.Backend=="VRS"?"":provider.Library),Encoding.Unicode);
         }
         static string Hash(string path) {using(var file=File.OpenRead(path))using(var sha=SHA256.Create())return BitConverter.ToString(sha.ComputeHash(file)).Replace("-","").ToLowerInvariant();}
-        static void CheckSigned(IEnumerable<string> paths) {
+        internal static void CheckSigned(IEnumerable<string> paths) {
             var script=new StringBuilder("$ErrorActionPreference='Stop';");
             foreach(var path in paths)script.Append("$s=Get-AuthenticodeSignature -LiteralPath '").Append(path.Replace("'","''")).Append("';if($s.Status -ne 'Valid' -or $s.SignerCertificate.Thumbprint -ne '").Append(Signer).Append("' -or !$s.TimeStamperCertificate){exit 1};");
             script.Append("exit 0");

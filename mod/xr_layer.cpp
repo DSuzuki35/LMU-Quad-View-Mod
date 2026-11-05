@@ -1238,8 +1238,11 @@ bool xr_retire_focus_image(FocusImageLease& lease){
     }return false;
 }
 bool xr_copy_outer(unsigned eye,ID3D11Texture2D* source) {
+    if(eye>1)return false;
+    ProfileScope lockProfile(profile_eye(ProfileSlot::outer_lock0,eye));
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    if(eye>1||!source||!s.quad||!s.frame||!s.shouldRender||!s.located||!s.context||s.captures[eye])return false;
+    lockProfile.end();
+    if(!source||!s.quad||!s.frame||!s.shouldRender||!s.located||!s.context||s.captures[eye])return false;
     auto& outer=s.outer[eye];if(!outer.chain)return false;
     D3D11_TEXTURE2D_DESC src{};source->GetDesc(&src);
     const bool fullSize=src.Width==s.colorInfo.width&&src.Height==s.colorInfo.height;

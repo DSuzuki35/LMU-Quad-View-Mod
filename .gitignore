@@ -12,6 +12,7 @@
 *.bin
 *.zip
 launcher-settings.xml
+profiles/
 .vs/
 .vscode/
 __pycache__/

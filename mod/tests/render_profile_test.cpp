@@ -39,6 +39,10 @@ int main(int argc,char** argv){
         quiet.configure(true,log,120,flush);
         for(unsigned i=0;i<1000;++i){quiet.xr_frame_begin();quiet.frame(nullptr,true);
             auto token=quiet.begin(lmuqv::ProfileSlot::outer0);quiet.end(token);
+            for(auto slot:{lmuqv::ProfileSlot::outer_lock0,lmuqv::ProfileSlot::outer_lock1,
+                    lmuqv::ProfileSlot::non_scene_outer_lock0,lmuqv::ProfileSlot::non_scene_outer_lock1}){
+                auto wait=quiet.begin(slot);quiet.end(wait);
+            }
             assert(!quiet.gpu_start(nullptr,0));quiet.xr_frame_end(nullptr);}
         quiet.shutdown();
         assert(!quiet.enabled()&&Clock::reads==0&&Clock::frequencies==0&&Gpu::starts==0&&Gpu::polls==0&&lines.empty());
@@ -119,5 +123,29 @@ int main(int argc,char** argv){
     Clock::ticks+=30000;menus->xr_frame_end(nullptr);assert(!menus->collecting());
     assert(contains("slot=non_scene_provider_submit samples=750 calls=750 dropped=0")&&contains("max_ms=3.000000"));
     assert(contains("reason=duration"));menus->shutdown();
+    // Removing the non-scene remapping, combining lock acquisition with the
+    // runtime image wait, or misnaming a new bucket must break these assertions.
+    lines.clear();BasicRenderProfile<Clock,Gpu,32> locks;
+    locks.configure(true,log,30);locks.frame(nullptr,true);
+    auto leftLock=locks.begin(ProfileSlot::outer_lock0);Clock::ticks+=2;locks.end(leftLock);
+    auto rightLock=locks.begin(ProfileSlot::outer_lock1);Clock::ticks+=3;locks.end(rightLock);
+    auto imageWait=locks.begin(ProfileSlot::outer_wait0);Clock::ticks+=7;locks.end(imageWait);
+    locks.xr_frame_end(nullptr);
+    locks.xr_frame_begin();
+    leftLock=locks.begin(ProfileSlot::outer_lock0);Clock::ticks+=5;locks.end(leftLock);
+    rightLock=locks.begin(ProfileSlot::outer_lock1);Clock::ticks+=11;locks.end(rightLock);
+    imageWait=locks.begin(ProfileSlot::outer_wait0);Clock::ticks+=13;locks.end(imageWait);
+    locks.xr_frame_end(nullptr);
+    assert(locks.samples(ProfileSlot::outer_lock0)==1&&locks.samples(ProfileSlot::outer_lock1)==1);
+    assert(locks.samples(ProfileSlot::non_scene_outer_lock0)==1&&locks.samples(ProfileSlot::non_scene_outer_lock1)==1);
+    Clock::ticks+=15000;locks.xr_frame_begin();locks.xr_frame_end(nullptr);
+    assert(contains("outer_lock_both=5.000000"));
+    locks.shutdown();
+    assert(contains("slot=outer_lock0 samples=1 calls=1 dropped=0 unit=ms_per_frame_with_scope mean_ms=2.000000"));
+    assert(contains("slot=outer_lock1 samples=1 calls=1 dropped=0 unit=ms_per_frame_with_scope mean_ms=3.000000"));
+    assert(contains("slot=non_scene_outer_lock0 samples=1 calls=1 dropped=0 unit=ms_per_frame_with_scope mean_ms=5.000000"));
+    assert(contains("slot=non_scene_outer_lock1 samples=1 calls=1 dropped=0 unit=ms_per_frame_with_scope mean_ms=11.000000"));
+    assert(contains("slot=outer_wait0 samples=1 calls=1 dropped=0 unit=ms_per_frame_with_scope mean_ms=7.000000"));
+    assert(contains("slot=non_scene_outer_wait0 samples=1 calls=1 dropped=0 unit=ms_per_frame_with_scope mean_ms=13.000000"));
     std::cout<<"Render profiling tests passed: opt-in/hotkey/timeout, 30/120/300 seconds, >4096 frames, checkpoints, same/cross-thread shutdown, flush, inclusive scopes, bounds, sparse GPU, stale tokens\n";
 }

@@ -4,6 +4,16 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
+## 0.4.0 - 2026-11-05
+
+- Add portable rendering profiles contributed by **Markus Stahl**: save, load, rename, delete, import and export `.lmuqv` files. Paths, devices, diagnostics, benchmark placement and headset calibration remain local. Imports reject DTD/entities, oversized files, unsupported format versions and invalid setting ranges.
+- Refresh the native Windows launcher with an OpenGrid XR inspired dark violet palette, rounded cards and clearer navigation. Keep the small .NET distribution.
+- Offer a per-user installer alongside the portable ZIP. Preserve settings, profiles and logs across upgrades.
+- Check for stable GitHub updates in the launcher. Downloads and installation require user action; verify the installer SHA256 and timestamped publisher signature, and require LMU to be closed.
+- Reduce repeated cached outer-bank validation and stop hidden benchmark bitmap/preview work. Add opt-in lock-wait profiling to investigate CPU frametime spikes; no multi-millisecond game improvement is established yet.
+- Add a read-only automatic-start integrity check for signature/hash/activation problems. Valid signatures do not guarantee Easy Anti-Cheat acceptance.
+- Retain the 0.3.3 hook, startup and Pimax frame-order fixes. New headset/runtime combinations still need testing.
+
 ## 0.3.3 - 2026-11-04
 
 Based on a patch contributed by **Markus Stahl**, reviewed and extended for the Windows build.

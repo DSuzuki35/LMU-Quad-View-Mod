@@ -16,7 +16,10 @@ enum class ProfileSlot : unsigned {
     outer_copy0,outer_copy1,outer_wait0,outer_wait1,native_prepare0,native_prepare1,
     native_restore0,native_restore1,sort_outer0,sort_outer1,sort_focus0,sort_focus1,
     ui,provider_submit,frame_interval,non_scene_ui,non_scene_provider_submit,
-    non_scene_outer_wait0,non_scene_outer_wait1,count
+    non_scene_outer_wait0,non_scene_outer_wait1,
+    // Elapsed wall time acquiring the XR state mutex, including contention;
+    // nested in outer_copy/focus_hook, not exclusive CPU execution time.
+    outer_lock0,outer_lock1,non_scene_outer_lock0,non_scene_outer_lock1,count
 };
 inline ProfileSlot profile_eye(ProfileSlot left,unsigned eye){return ProfileSlot(unsigned(left)+eye);}
 struct NativeProfileClock {
@@ -87,6 +90,8 @@ public:
             else if(slot==ProfileSlot::provider_submit)slot=ProfileSlot::non_scene_provider_submit;
             else if(slot==ProfileSlot::outer_wait0)slot=ProfileSlot::non_scene_outer_wait0;
             else if(slot==ProfileSlot::outer_wait1)slot=ProfileSlot::non_scene_outer_wait1;
+            else if(slot==ProfileSlot::outer_lock0)slot=ProfileSlot::non_scene_outer_lock0;
+            else if(slot==ProfileSlot::outer_lock1)slot=ProfileSlot::non_scene_outer_lock1;
         }
         return {Clock::now(),generation_,Clock::thread(),slot,frameSerial_};
     }
@@ -174,7 +179,8 @@ private:
         "outer_copy0","outer_copy1","outer_wait0","outer_wait1","native_prepare0","native_prepare1",
         "native_restore0","native_restore1","sort_outer0","sort_outer1","sort_focus0","sort_focus1",
         "ui","provider_submit","frame_interval","non_scene_ui","non_scene_provider_submit",
-        "non_scene_outer_wait0","non_scene_outer_wait1"};
+        "non_scene_outer_wait0","non_scene_outer_wait1",
+        "outer_lock0","outer_lock1","non_scene_outer_lock0","non_scene_outer_lock1"};
     std::atomic<bool> enabled_{false};std::atomic<DWORD> owner_{0};
     mutable std::mutex mutex_;
     bool active_=false,keyWasDown_=false,sampleGpu_=false;
@@ -200,9 +206,9 @@ private:
         auto mean=[&](ProfileSlot slot){const auto& b=buckets_[unsigned(slot)];return b.count+b.dropped?b.sumTicks*1000.0/frequency_/(b.count+b.dropped):0;};
         auto pair=[&](ProfileSlot slot){return mean(slot)+mean(profile_eye(slot,1));};
         char line[1536]{};
-        std::snprintf(line,sizeof(line),"render_profile checkpoint capture=%llu elapsed_s=%.3f frames=%llu cpu_wall_mean_ms outer_both=%.6f focus_hook_both=%.6f focus_scene_both=%.6f focus_prepare_both=%.6f focus_restore_both=%.6f outer_copy_both=%.6f outer_wait_both=%.6f native_prepare_both=%.6f native_restore_both=%.6f sort_outer_both=%.6f sort_focus_both=%.6f ui=%.6f provider_submit=%.6f frame_interval=%.6f; cumulative completed scopes; final percentiles saved at capture/session end",
+        std::snprintf(line,sizeof(line),"render_profile checkpoint capture=%llu elapsed_s=%.3f frames=%llu cpu_wall_mean_ms outer_both=%.6f focus_hook_both=%.6f focus_scene_both=%.6f focus_prepare_both=%.6f focus_restore_both=%.6f outer_copy_both=%.6f outer_wait_both=%.6f outer_lock_both=%.6f native_prepare_both=%.6f native_restore_both=%.6f sort_outer_both=%.6f sort_focus_both=%.6f ui=%.6f provider_submit=%.6f frame_interval=%.6f; cumulative completed scopes; final percentiles saved at capture/session end",
             static_cast<unsigned long long>(generation_),double(now-started_)/frequency_,static_cast<unsigned long long>(frames_),
-            pair(ProfileSlot::outer0),pair(ProfileSlot::focus_hook0),pair(ProfileSlot::focus_scene0),pair(ProfileSlot::focus_prepare0),pair(ProfileSlot::focus_restore0),pair(ProfileSlot::outer_copy0),pair(ProfileSlot::outer_wait0),pair(ProfileSlot::native_prepare0),pair(ProfileSlot::native_restore0),pair(ProfileSlot::sort_outer0),pair(ProfileSlot::sort_focus0),mean(ProfileSlot::ui),mean(ProfileSlot::provider_submit),mean(ProfileSlot::frame_interval));emit(line);
+            pair(ProfileSlot::outer0),pair(ProfileSlot::focus_hook0),pair(ProfileSlot::focus_scene0),pair(ProfileSlot::focus_prepare0),pair(ProfileSlot::focus_restore0),pair(ProfileSlot::outer_copy0),pair(ProfileSlot::outer_wait0),pair(ProfileSlot::outer_lock0),pair(ProfileSlot::native_prepare0),pair(ProfileSlot::native_restore0),pair(ProfileSlot::sort_outer0),pair(ProfileSlot::sort_focus0),mean(ProfileSlot::ui),mean(ProfileSlot::provider_submit),mean(ProfileSlot::frame_interval));emit(line);
     }
 };
 using RenderProfile=BasicRenderProfile<>;

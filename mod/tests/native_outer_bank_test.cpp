@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <map>
 #include <string>
+#include <algorithm>
 
 namespace {
 void require(bool ok,const char* message){if(!ok)throw std::runtime_error(message);}
@@ -16,6 +17,8 @@ unsigned liveWrappers=0,liveContainers=0;
 bool failFactory=false;
 std::map<std::string,Wrapper*> liveNames;
 unsigned nameCollisions=0;
+std::vector<const void*> watchedInterfaces;
+unsigned memoryProbes=0,interfaceProbes=0;
 void addref(void* p){++reinterpret_cast<Wrapper*>(p)->refs;}
 void destroyContainer(void* p){
     if(!p)return;
@@ -56,6 +59,8 @@ template<bool Depth>void setView(void* p,void* value){
 void install(void* wrapper,void** c){field<void*>(wrapper,0xa0)=*c;*c=nullptr;}
 void discard(void*,void* c){destroyContainer(c);}
 bool readable(const void* p,std::size_t bytes){
+    ++memoryProbes;
+    if(bytes==sizeof(void*))for(auto* input:watchedInterfaces)if(input==p){++interfaceProbes;break;}
     MEMORY_BASIC_INFORMATION info{};
     return p&&VirtualQuery(p,&info,sizeof(info))==sizeof(info)&&info.State==MEM_COMMIT&&
         !(info.Protect&(PAGE_NOACCESS|PAGE_GUARD))&&
@@ -121,6 +126,56 @@ struct Fixture {
         }
     }
 };
+void cached_identity_probes(){
+    Fixture f;lmuqv::NativeOuterBank bank;
+    require(f.prepare(bank,false),"cached probe baseline");
+    for(auto* original:f.originals){
+        auto* container=static_cast<Container*>(field<void*>(original,0xa0));
+        for(auto* input:{field<void*>(container,0x20),field<void*>(container,0x30),container->rtv,container->dsv,field<void*>(container,0x68)})
+            if(input)watchedInterfaces.push_back(input);
+    }
+    memoryProbes=interfaceProbes=0;
+    const auto wrappers=liveWrappers;
+    require(f.prepare(bank,false)&&liveWrappers==wrappers,"cached identity validation rebuilt bank");
+    const auto cachedProbes=memoryProbes,cachedInterfaceProbes=interfaceProbes;
+    watchedInterfaces.clear();
+    std::cout<<"Cached native bank probes="<<cachedProbes<<" retained_interface_probes="<<cachedInterfaceProbes<<'\n';
+    require(cachedProbes>0,"cached validation skipped native storage checks");
+    require(cachedInterfaceProbes==0,"cached bank re-probed retained COM interfaces");
+
+    auto* container=static_cast<Container*>(field<void*>(f.originals[0],0xa0));
+    auto*& srv=field<void*>(container,0x30);auto* savedSrv=srv;
+    srv=reinterpret_cast<void*>(1);
+    require(!f.prepare(bank,false),"unreadable replacement interface accepted");
+    srv=savedSrv;require(f.prepare(bank,false),"replacement interface recovery failed");
+    auto& begin=field<std::uintptr_t>(container,0x38);auto& end=field<std::uintptr_t>(container,0x40);
+    const auto savedBegin=begin,savedEnd=end;
+    end=begin+16;
+    require(!f.prepare(bank,false),"multi-element view vector accepted");
+    begin=savedBegin;end=savedEnd;require(f.prepare(bank,false),"view vector size recovery failed");
+    begin=1;end=9;
+    require(!f.prepare(bank,false),"unreadable view vector accepted");
+    begin=savedBegin;end=savedEnd;require(f.prepare(bank,false),"view vector storage recovery failed");
+    require(bank.reset(),"cached probe reset");
+}
+void benchmark_cached(){
+    Fixture f;lmuqv::NativeOuterBank bank;
+    require(f.prepare(bank,false),"benchmark prepare");
+    constexpr unsigned iterations=2000;
+    std::array<double,7> batches{};
+    LARGE_INTEGER frequency{};QueryPerformanceFrequency(&frequency);
+    for(auto& batch:batches){
+        LARGE_INTEGER begin{},end{};QueryPerformanceCounter(&begin);
+        for(unsigned i=0;i<iterations;++i)require(f.prepare(bank,false),"benchmark cached prepare");
+        QueryPerformanceCounter(&end);
+        batch=double(end.QuadPart-begin.QuadPart)*1000000.0/double(frequency.QuadPart)/iterations;
+    }
+    std::sort(batches.begin(),batches.end());
+    memoryProbes=0;require(f.prepare(bank,false),"benchmark probe count");
+    std::cout<<"Synthetic cached prepare median_us="<<batches[batches.size()/2]<<" memory_probes="<<memoryProbes
+        <<" batches="<<batches.size()<<" iterations="<<iterations<<"; WARP fixture, not game frametime\n";
+    require(bank.reset(),"benchmark reset");
+}
 void view_backed_depth_resolve(){
     for(unsigned samples:{1u,2u}){
         Fixture f(samples);lmuqv::NativeOuterBank bank;
@@ -266,5 +321,5 @@ void run(){
     require(bank.reset(),"failed reset");
 }
 }
-int main(){try{view_backed_depth_resolve();independent_bank_names();run();require(!liveWrappers&&!liveContainers&&liveNames.empty(),"native ownership leak");std::cout<<"NativeOuterBank view-backed DepthResolve and SSR WARP/native ABI fixture passed\n";return 0;}
+int main(int argc,char** argv){try{if(argc==2&&!std::strcmp(argv[1],"--benchmark")){benchmark_cached();return 0;}cached_identity_probes();view_backed_depth_resolve();independent_bank_names();run();require(!liveWrappers&&!liveContainers&&liveNames.empty(),"native ownership leak");std::cout<<"NativeOuterBank cached probes, view-backed DepthResolve and SSR WARP/native ABI fixture passed\n";return 0;}
 catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
