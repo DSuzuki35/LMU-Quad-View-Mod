@@ -139,6 +139,7 @@ struct State {
     bool runtimeSettings=false,runtimeSizesReady=false,rawFovLogged=false;
     bool sampledInputs=false;
     bool focusOwnership=false,focusBeginInFlight=false; // No production renderer enables this yet.
+    bool submitInFlight=false; // Pins submitted frame resources while EndFrame is unlocked.
     bool requestEyeTracking=true;
     bool eyeTrackingActive=false,foveationResolved=false;
     XrSystemId foveationSystem=XR_NULL_SYSTEM_ID;
@@ -156,7 +157,7 @@ struct State {
     unsigned captureMask=0;
     uint64_t frames=0;
 } s;
-bool frameOperationInFlight(){return s.focusBeginInFlight||s.outer[0].runtimeBusy||s.outer[1].runtimeBusy;}
+bool frameOperationInFlight(){return s.focusBeginInFlight||s.submitInFlight||s.outer[0].runtimeBusy||s.outer[1].runtimeBusy;}
 std::atomic<bool> quadActive{false},vrsActive{false};
 // Called under stateMutex when lifecycle state changes. These are coarse mode
 // snapshots, not ownership of the session or any of its graphics resources.
@@ -951,6 +952,20 @@ bool validInner(const XrSwapchainSubImage& image,unsigned eye) {
            uint64_t(image.imageRect.offset.x)+image.imageRect.extent.width<=info.width&&
            uint64_t(image.imageRect.offset.y)+image.imageRect.extent.height<=info.height;
 }
+// The caller's layer records and this adapter's local converted arrays stay
+// alive until the runtime returns. The reservation pins session/swapchain state;
+// a pipelined Wait may still publish the following frame under stateMutex.
+// The optional diagnostic benchmark overlay keeps its own image lifecycle calls
+// in the existing serialized prepare path; only downstream EndFrame is split.
+XrResult submitFrameUnlocked(XrSession session,const XrFrameEndInfo* info,std::unique_lock<std::recursive_mutex>& lock){
+    const auto submit=next.EndFrame;
+    s.submitInFlight=true;
+    lock.unlock();
+    const XrResult result=submit(session,info);
+    lock.lock();
+    s.submitInFlight=false;
+    return result;
+}
 XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) {
     std::unique_lock<std::recursive_mutex> lock(stateMutex);
     if(frameOperationInFlight())return XR_ERROR_CALL_ORDER_INVALID;
@@ -977,7 +992,7 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
             }
         }
         const int64_t before=benchmarkEnabled?lmuqv::benchmark::ticks():0;
-        XrResult r=next.EndFrame(session,layers.empty()?info:&modified);
+        XrResult r=submitFrameUnlocked(session,layers.empty()?info:&modified,lock);
         if(benchmarkEnabled)benchmarkPublish(submitted,0,before,lmuqv::benchmark::ticks(),r);
         if(s.vrs)lmuqv::renderProfile.xr_frame_end(s.context);
         if(xrDiagnosticFrameLog()||XR_FAILED(r)){
@@ -1058,7 +1073,7 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
     modified.layers = layerCount ? layers : nullptr;
     XrResult r;
     const int64_t benchmarkPreSubmit=benchmarkEnabled?lmuqv::benchmark::ticks():0;
-    {lmuqv::ProfileScope submitProfile(lmuqv::ProfileSlot::provider_submit);r=next.EndFrame(session,&modified);}
+    {lmuqv::ProfileScope submitProfile(lmuqv::ProfileSlot::provider_submit);r=submitFrameUnlocked(session,&modified,lock);}
     if(benchmarkEnabled)benchmarkPublish(submitted,benchmarkReason,benchmarkPreSubmit,lmuqv::benchmark::ticks(),r);
     lmuqv::renderProfile.xr_frame_end(s.context);
     lmuqv::stereo_audit_frame_end();
