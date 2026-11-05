@@ -744,18 +744,47 @@ void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool late
             view->eye_index,static_cast<unsigned long long>(count),width,height,fullW,fullH);log_line(line);
     }
 }
+// 0.5.0 (from 0.3.5): the four pre-render blocks below used to validate the same native eye
+// snapshot and device context independently (up to 12 VirtualQuery calls per eye).
+// No game code runs between them, so validate once per call and share the result.
+struct NativeEyeProbe {
+    bool checked=false,contextChecked=false,viewValid=false,contextValid=false;
+    ViewSnapshot* view=nullptr;ID3D11DeviceContext* context=nullptr;
+    void probe(){
+        if(checked)return;checked=true;
+        view=*address<ViewSnapshot*>(0x1a51370);
+        viewValid=readable(view,sizeof(*view))&&view->eye_index>=0&&view->eye_index<=1;
+    }
+    void probeContext(){
+        probe();
+        if(contextChecked||!viewValid)return;contextChecked=true;
+        const auto renderer=*address<std::uintptr_t>(0x1b12be8);
+        if(!readable(reinterpret_cast<void*>(renderer+0x76f68),sizeof(void*)))return;
+        context=*reinterpret_cast<ID3D11DeviceContext**>(renderer+0x76f68);
+        contextValid=readable(context,sizeof(void*));
+        if(!contextValid)context=nullptr;
+    }
+};
+// 0.5.0 (from 0.3.5): refusal paths can repeat every frame. Log the first few and then periodically.
+bool logThrottled(std::uint64_t& counter,const char* message){
+    const auto n=++counter;
+    if(!diagnostics_enabled()||!(n<=8||n%600==0))return false;
+    if(n<=8){log_line(message);return true;}
+    char line[256]{};std::snprintf(line,sizeof(line),"%s (repeated %llu times)",message,static_cast<unsigned long long>(n));log_line(line);return true;
+}
+std::uint64_t obliqueRefusals=0,poseRefusals=0,projectionRefusals=0,conventionRefusals=0;
 void renderHook(void* unknown, bool laterPass) {
     suspendUnexpectedVrs();
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
     ID3D11DeviceContext* profileContext=nullptr;
     unsigned profileEye=0;
+    NativeEyeProbe native;
     if((renderProfile.enabled()||stereo_audit_enabled())&&!insideHook&&installed.load()&&caller==base+0xcd1763&&(xr_quad_active()||xr_vrs_active())){
-        auto* before=*address<ViewSnapshot*>(0x1a51370);
-        const auto renderer=*address<std::uintptr_t>(0x1b12be8);
-        if(readable(before,sizeof(*before))&&before->eye_index>=0&&before->eye_index<=1&&
-           readable(reinterpret_cast<void*>(renderer+0x76f68),sizeof(void*))){
-            auto* context=*reinterpret_cast<ID3D11DeviceContext**>(renderer+0x76f68);
-            if(readable(context,sizeof(void*))){
+        native.probeContext();
+        auto* before=native.view;
+        if(native.viewValid){
+            auto* context=native.context;
+            if(native.contextValid){
                 profileContext=context;profileEye=unsigned(before->eye_index);
                 if(profileEye==0){
                     const bool wasCollecting=renderProfile.collecting();
@@ -779,12 +808,11 @@ void renderHook(void* unknown, bool laterPass) {
     bool outerTimed=false,outerCounted=false;
     const bool benchmark=!benchmarkPath.empty();
     if(!insideHook && installed.load() && caller==base+0xcd1763 && (benchmark||timingReady())) {
-        auto* before=*address<ViewSnapshot*>(0x1a51370);
-        const auto renderer=*address<std::uintptr_t>(0x1b12be8);
-        if(readable(before,sizeof(*before)) && before->eye_index>=0 && before->eye_index<=1 &&
-           readable(reinterpret_cast<void*>(renderer+0x76f68),sizeof(void*))) {
-            timingContext=*reinterpret_cast<ID3D11DeviceContext**>(renderer+0x76f68);
-            if(readable(timingContext,sizeof(void*))) {
+        native.probeContext();
+        auto* before=native.view;
+        if(native.viewValid) {
+            timingContext=native.context;
+            if(native.contextValid) {
                 if(benchmark) {
                     if(before->eye_index==0)benchmarkFrame(timingContext,before);
                     benchmarkPoll(timingContext);
@@ -802,13 +830,11 @@ void renderHook(void* unknown, bool laterPass) {
     selectedOuterView=nullptr;outerVrsContext=nullptr;outerMainPassMarker=false;
     if(worldVrsOptIn && !worldVrsFailed && !insideHook && installed.load() &&
        (xr_quad_active()||xr_vrs_active()) && caller==base+0xcd1763) {
-        auto* before=*address<ViewSnapshot*>(0x1a51370);
-        const auto renderer=*address<std::uintptr_t>(0x1b12be8);
-        if(readable(before,sizeof(*before)) && before->eye_index>=0 && before->eye_index<=1 &&
-           (before->flags&0xc0000000u)==0 &&
-           readable(reinterpret_cast<void*>(renderer+0x76f68),sizeof(void*))) {
-            auto* context=*reinterpret_cast<ID3D11DeviceContext**>(renderer+0x76f68);
-            if(readable(context,sizeof(void*))) {
+        native.probeContext();
+        auto* before=native.view;
+        if(native.viewValid && (before->flags&0xc0000000u)==0) {
+            auto* context=native.context;
+            if(native.contextValid) {
                 bool prepared=true;
                 if(!benchmark && (stereoVrsMode||before->eye_index==0))prepared=prepareWorldVrs(context,before);
                 if(prepared && worldVrs.ready() && !worldVrsFailed && context==worldVrsConfiguredContext) {
@@ -821,9 +847,8 @@ void renderHook(void* unknown, bool laterPass) {
     auto* savedNativeSource=nativeOuterSource;
     nativeOuterExpected=nullptr;nativeOuterSource=nullptr;
     if(((nativeOuterOptIn&&!nativeOuterFailed)||nativeUploadBatchOptIn||nativeUploadOuterOptIn)&&!insideHook&&installed.load()&&xr_quad_active()&&caller==base+0xcd1763){
-        auto* expected=*address<ViewSnapshot*>(0x1a51370);
-        if(readable(expected,sizeof(*expected))&&expected->eye_index>=0&&expected->eye_index<=1)
-            nativeOuterExpected=expected;
+        native.probe();
+        if(native.viewValid)nativeOuterExpected=native.view;
     }
     const bool profileOuterGpu=profileContext&&renderProfile.gpu_start(profileContext,profileEye);
     ProfileScope outerProfile(profile_eye(ProfileSlot::outer0,profileEye),profileContext!=nullptr);
@@ -853,11 +878,11 @@ void renderHook(void* unknown, bool laterPass) {
     const unsigned eye=unsigned(view->eye_index);
     ProfileScope focusHookProfile(profile_eye(ProfileSlot::focus_hook0,eye));
     if(view->flags & 0xc0000000u) {
-        log_line("engine: focus refused for alternative/oblique view projection");return;
+        logThrottled(obliqueRefusals,"engine: focus refused for alternative/oblique view projection");return;
     }
     auto scene=*address<void*>(0x3b4eb88);
     if(!readable(scene,sizeof(void*))) return;
-    if(!equalPose(views[eye].pose,views[eye+2].pose)) { log_line("engine: outer/focus pose mismatch");return; }
+    if(!equalPose(views[eye].pose,views[eye+2].pose)) { logThrottled(poseRefusals,"engine: outer/focus pose mismatch");return; }
     auto* source=smallOuterSource?smallOuterSource:*address<ID3D11Texture2D*>(0x1b1c6b8+eye*8);
     if(!readable(source,sizeof(void*))) return;
     auto calls=++renderCalls;
@@ -876,10 +901,10 @@ void renderHook(void* unknown, bool laterPass) {
     std::memcpy(&farZ,reinterpret_cast<std::byte*>(view)+0x28,4);
     Matrix inner{},innerFar{};
     if(!projection(views[eye+2],nearZ,farZ,inner) || !projection(views[eye+2],nearZ,1000000,innerFar)) {
-        log_line("engine: invalid focus projection parameters");return;
+        logThrottled(projectionRefusals,"engine: invalid focus projection parameters");return;
     }
     if(view->projection[11]!=1.f || view->projection[15]!=0.f) {
-        log_line("engine: unsupported native perspective convention");return;
+        logThrottled(conventionRefusals,"engine: unsupported native perspective convention");return;
     }
     inner=replace_fov(view->projection,inner);
     innerFar=replace_fov(view->far_projection,innerFar);

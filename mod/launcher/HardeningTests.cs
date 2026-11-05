@@ -112,7 +112,21 @@ class HardeningTests
             QvfrSettings.PruneBackups(backupBase,3);
             Require(File.Exists(personal),"personal backup deleted");
             Require(Directory.GetFiles(root,"retention.cfg.lmu-backup-*").Where(p=>p!=personal).Select(File.ReadAllText).OrderBy(t=>t).SequenceEqual(new[]{"3","4","5"}),"newest backups not retained");
-            Console.WriteLine("Hardening tests passed: runtime pruning, bounded QVFR backups, encoding/BOM preservation.");
+            // 0.5.0 (from 0.3.6): implausible benchmark timings become missing values
+            string ring = Path.Combine(root, "ring.bin");
+            using (var fs = new FileStream(ring, FileMode.Create)) fs.SetLength(BenchmarkAbi.Size);
+            using (var file = System.IO.MemoryMappedFiles.MemoryMappedFile.CreateFromFile(ring, FileMode.Open, null, 0, System.IO.MemoryMappedFiles.MemoryMappedFileAccess.ReadWrite))
+            using (var view = file.CreateViewAccessor(0, 0))
+            {
+                long offset = BenchmarkAbi.HeaderSize;
+                view.Write(offset, 1L); view.Write(offset + 24, -5.0); view.Write(offset + 32, 1e9); view.Write(offset + 40, 1.5); view.Write(offset + 48, Double.PositiveInfinity); view.Write(offset + 64, 9u);
+                BenchmarkSample sample;
+                Require(BenchmarkReader.TryRead(view, 1, out sample), "valid slot not read");
+                Require(Double.IsNaN(sample.IntervalMs) && Double.IsNaN(sample.AppWallMs) && sample.ProviderWallMs == 1.5 && Double.IsNaN(sample.GpuMs), "implausible timing accepted");
+                view.Write(offset + 24, 11.25); view.Write(offset + 48, 6.5);
+                Require(BenchmarkReader.TryRead(view, 1, out sample) && sample.IntervalMs == 11.25 && sample.GpuMs == 6.5, "plausible timing rejected");
+            }
+            Console.WriteLine("Hardening tests passed: runtime pruning, bounded QVFR backups, encoding/BOM preservation, benchmark plausibility.");
         }
         finally { try { Directory.Delete(root, true); } catch (IOException) { } }
     }

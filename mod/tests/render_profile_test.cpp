@@ -8,6 +8,23 @@
 #include <vector>
 #include <memory>
 #include <thread>
+#include <cstdlib>
+
+// Track the real sample allocation: shutdown must release it even while the
+// profile object remains alive, rather than merely clearing its sample count.
+namespace allocation_probe { void* large=nullptr; }
+void* operator new(size_t size){
+    if(void* p=std::malloc(size?size:1)){
+        if(size>=1024*1024)allocation_probe::large=p;
+        return p;
+    }
+    throw std::bad_alloc();
+}
+void* operator new[](size_t size){return ::operator new(size);}
+void operator delete(void* p)noexcept{if(p==allocation_probe::large)allocation_probe::large=nullptr;std::free(p);}
+void operator delete[](void* p)noexcept{::operator delete(p);}
+void operator delete(void* p,size_t)noexcept{::operator delete(p);}
+void operator delete[](void* p,size_t)noexcept{::operator delete(p);}
 
 namespace {
 struct Clock {
@@ -49,6 +66,20 @@ int main(int argc,char** argv){
         std::cout<<"Diagnostics off: overrides profile-on, no CPU clock reads, GPU queries or profile messages\n";return 0;
     }
     using namespace lmuqv;
+    {
+        BasicRenderProfile<Clock,Gpu> lifecycle;
+        lifecycle.configure(false,nullptr);
+        assert(!allocation_probe::large);
+        lifecycle.configure(true,nullptr);
+        assert(allocation_probe::large);
+        lifecycle.shutdown();
+        if(allocation_probe::large){std::cerr<<"FAIL: shutdown retained the sample allocation\n";return 1;}
+        lifecycle.configure(true,nullptr);lifecycle.frame(nullptr,true);
+        assert(allocation_probe::large);
+        Clock::id=2;lifecycle.shutdown();Clock::id=1;
+        assert(!allocation_probe::large&&!lifecycle.enabled());
+    }
+    Gpu::starts=Gpu::polls=Gpu::finishes=Gpu::snapshots=0;
     BasicRenderProfile<Clock,Gpu,3> p;
     p.configure(false,log);p.frame(nullptr,true);
     auto ignored=p.begin(ProfileSlot::outer0);Clock::ticks+=10;p.end(ignored);

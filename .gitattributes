@@ -1,0 +1,2 @@
+# Keep cross-build scripts runnable after Windows checkouts too.
+*.sh text eol=lf

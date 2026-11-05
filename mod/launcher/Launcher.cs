@@ -433,6 +433,7 @@ namespace LmuQuadViewLauncher
         readonly Timer benchmarkTimer = new Timer { Interval=50 };
         BenchmarkController benchmark;
         JoystickInput joystick;
+        ExternalCommands externalCommands;
         JoystickBinding visibilityBinding, recordingBinding;
         int previewTicks;
         readonly Button browseManifest = Theme.Button("Browse", false);
@@ -598,10 +599,11 @@ namespace LmuQuadViewLauncher
             ResumeLayout(true);
             KeyPreview=true;
             KeyDown+=delegate(object sender,KeyEventArgs e) { if(e.KeyCode==Keys.Escape&&joystick!=null&&joystick.Listening) {joystick.CancelListen();bindingStatus.Text="Button assignment cancelled.";e.Handled=true;} };
-            Shown+=delegate { if(joystick==null) {joystick=new JoystickInput(new DirectInputButtonSource(Handle));UpdateBindings();joystick.VisibilityPressed+=delegate {benchmark.ToggleOverlay();};joystick.RecordingPressed+=delegate {benchmark.ToggleRecording();};benchmarkTimer.Start();} };
+            Shown+=delegate { if(externalCommands==null)externalCommands=new ExternalCommands();if(joystick==null) {joystick=new JoystickInput(new DirectInputButtonSource(Handle));UpdateBindings();joystick.VisibilityPressed+=delegate {benchmark.ToggleOverlay();};joystick.RecordingPressed+=delegate {benchmark.ToggleRecording();};benchmarkTimer.Start();} };
             Shown+=delegate {InitializeUpdates();};
             benchmarkTimer.Tick+=delegate { PollBenchmark(); };
-            steamLifetime.Tick+=delegate { if(steamGame!=null&&!AutoStart.IsProcessRunning(steamGame.Id))Close(); };
+            // 0.5.1: a protected game process can deny the query (Win32 error); keep waiting instead of crashing every second.
+            steamLifetime.Tick+=delegate { try { if(steamGame!=null&&!AutoStart.IsProcessRunning(steamGame.Id))Close(); } catch(System.ComponentModel.Win32Exception) { } };
         }
         Control BuildSidebar()
         {
@@ -853,8 +855,19 @@ namespace LmuQuadViewLauncher
             if(benchmark==null)return;
             var old=benchmarkPreview.Image;benchmarkPreview.Image=benchmark.RenderPreview();if(old!=null)old.Dispose();
         }
+        string lastPollError;
         void PollBenchmark() {
+            // 0.5.1: this runs every 50 ms. An unexpected failure (DirectInput, overlay
+            // bitmap, external command) must not raise the .NET crash dialog repeatedly.
+            try { PollBenchmarkCore(); lastPollError=null; }
+            catch (Exception error) {
+                if (error is OutOfMemoryException) throw;
+                if (error.Message != lastPollError) { lastPollError = error.Message; benchmarkStatus.Text = "Benchmark update failed: " + error.Message; }
+            }
+        }
+        void PollBenchmarkCore() {
             benchmark.Tick();if(joystick!=null) {joystick.Tick();if(joystick.Listening)bindingStatus.Text=joystick.ListenStatus;}
+            if(externalCommands!=null)externalCommands.Poll(delegate{benchmark.ToggleOverlay();},delegate{benchmark.ToggleRecording();});
             benchmarkStatus.Text=benchmark.Status;benchmarkVisible.Text=benchmark.OverlayVisible?"Hide overlay":"Show overlay";
             benchmarkRecord.Text=benchmark.Recording?"Stop recording":"Start recording";benchmarkRecord.Enabled=benchmark.Connected||benchmark.Recording;
             benchmarkReport.Enabled=!String.IsNullOrEmpty(benchmark.LastReportPath);
@@ -1078,7 +1091,7 @@ namespace LmuQuadViewLauncher
         }
         protected override void Dispose(bool disposing) {
             if(disposing){steamLifetime.Stop();steamLifetime.Dispose();if(steamGame!=null)steamGame.Dispose();}
-            if(disposing) {help.Dispose();benchmarkTimer.Stop();benchmarkTimer.Dispose();if(joystick!=null)joystick.Dispose();if(benchmark!=null)benchmark.Dispose();if(benchmarkPreview.Image!=null) {benchmarkPreview.Image.Dispose();benchmarkPreview.Image=null;}}
+            if(disposing) {help.Dispose();benchmarkTimer.Stop();if(externalCommands!=null)externalCommands.Dispose();benchmarkTimer.Dispose();if(joystick!=null)joystick.Dispose();if(benchmark!=null)benchmark.Dispose();if(benchmarkPreview.Image!=null) {benchmarkPreview.Image.Dispose();benchmarkPreview.Image=null;}}
             base.Dispose(disposing);
         }
         Control PathCard(string title, TextBox field, Button browse, string hint, bool link,string address="https://github.com/mbucchia/Quad-Views-Foveated/wiki")
@@ -1307,9 +1320,27 @@ namespace LmuQuadViewLauncher
             status.Text = message.Length > 190 ? message.Substring(0, 190) + "..." : message;
             MessageBox.Show(this, message, "LMU Quad View", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
+        [DllImport("kernel32.dll", SetLastError = true)] static extern bool SetDefaultDllDirectories(uint flags);
+        // 0.5.0 (from 0.3.5): the elevated install/remove modes run from the user-writable
+        // package folder. Restrict later native DLL loads to System32 against DLL planting.
+        internal static void HardenElevatedDllSearch(string[] args)
+        {
+            if (args.Length != 1 || (args[0] != "--install-autoload" && args[0] != "--uninstall-autoload")) return;
+            try { SetDefaultDllDirectories(0x00000800); } // LOAD_LIBRARY_SEARCH_SYSTEM32
+            catch (EntryPointNotFoundException) { } catch (DllNotFoundException) { }
+        }
+        static bool reportedUnexpectedError;
         [STAThread]
         static void Main(string[] args)
         {
+            HardenElevatedDllSearch(args);
+            // 0.5.1: report unexpected UI-thread errors once in a dialog instead of the .NET crash prompt.
+            Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+            Application.ThreadException += delegate(object sender, System.Threading.ThreadExceptionEventArgs e) {
+                if (e.Exception is OutOfMemoryException) Environment.FailFast("LMU Quad View launcher: out of memory", e.Exception);
+                if (reportedUnexpectedError) return; reportedUnexpectedError = true;
+                MessageBox.Show("An unexpected launcher error occurred and was skipped:\n\n" + e.Exception.Message, "LMU Quad View", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            };
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
             string root=AppDomain.CurrentDomain.BaseDirectory;
             try {

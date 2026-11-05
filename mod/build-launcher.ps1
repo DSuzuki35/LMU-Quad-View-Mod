@@ -11,11 +11,11 @@ $core = @((Join-Path $PSScriptRoot 'launcher/QvfrSettings.cs'),(Join-Path $PSScr
 $ui = @('Launcher.cs','NativeChrome.cs','LauncherUpdates.cs') | ForEach-Object { Join-Path $PSScriptRoot ('launcher/' + $_) }
 $manifest = Join-Path $PSScriptRoot 'launcher/app.manifest'
 $core += $versionFiles.AssemblyPath
-$core += @('BenchmarkController.cs','JoystickInput.cs','LaunchDiagnostics.cs','SteamLaunch.cs','AutoStart.cs','RegistryRestoreScope.cs','ProfileStore.cs','UpdateService.cs') | ForEach-Object { Join-Path $PSScriptRoot ('launcher/' + $_) }
+$core += @('BenchmarkController.cs','JoystickInput.cs','LaunchDiagnostics.cs','SteamLaunch.cs','AutoStart.cs','RegistryRestoreScope.cs','ProfileStore.cs','UpdateService.cs','ExternalCommands.cs') | ForEach-Object { Join-Path $PSScriptRoot ('launcher/' + $_) }
 $icon = Join-Path $PSScriptRoot 'launcher/assets/quadview.ico'
 $appConfig = Join-Path $PSScriptRoot 'launcher/app.config'
 $references = @('/reference:System.Windows.Forms.dll','/reference:System.Drawing.dll','/reference:System.Xml.Linq.dll','/reference:System.Web.Extensions.dll')
-foreach ($test in @('UpdateServiceTests','ProfileStoreTests','RegistrySafetyTests','HardeningTests','SettingsTests','FocusGeometryTests','LaunchServiceTests','SteamLaunchTests','AutoStartTests','RegistryOwnerTests','ProcessPathTests','JoystickInputTests','LaunchDiagnosticsTests','BenchmarkTests')) {
+foreach ($test in @('ExternalCommandsTests','PortableChecksTests','UpdateServiceTests','ProfileStoreTests','RegistrySafetyTests','HardeningTests','SettingsTests','FocusGeometryTests','LaunchServiceTests','SteamLaunchTests','AutoStartTests','RegistryOwnerTests','ProcessPathTests','JoystickInputTests','LaunchDiagnosticsTests','BenchmarkTests')) {
     $testOutput = Join-Path $PSScriptRoot ('build/' + $test + '.exe')
     & $compiler /nologo /target:exe /platform:x64 /optimize+ /warnaserror+ "/main:$test" "/out:$testOutput" @references @core (Join-Path $PSScriptRoot "launcher/$test.cs")
     if ($LASTEXITCODE -ne 0) { throw "$test compilation failed" }

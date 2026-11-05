@@ -7,6 +7,10 @@ class RegistrySafetyTests {
     // kernel. Inspect the compiled imports before running any registry tests.
     static int Main(string[] args) {
         var assembly=args.Length==1?Assembly.LoadFrom(args[0]):Assembly.GetExecutingAssembly();
+        if(args.Length==1 && !Attribute.IsDefined(assembly.EntryPoint,typeof(STAThreadAttribute))) {
+            Console.Error.WriteLine("Launcher entry point must use STA for Windows dialogs and COM controls");
+            return 1;
+        }
         foreach(var type in assembly.GetTypes())
             foreach(var method in type.GetMethods(BindingFlags.Static|BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.DeclaredOnly)) {
                 var import=(DllImportAttribute)Attribute.GetCustomAttribute(method,typeof(DllImportAttribute));

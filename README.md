@@ -5,7 +5,7 @@ A free Windows x64 / D3D11 mod that adds two outer and two focus views to
 Quad-Views-Foveated (QVFR) or VectorXR separately to provide quad views on a
 stereo runtime.
 
-**v0.4.0 is an experimental offline build.** Headset and runtime compatibility
+**v0.5.1 is an experimental development build.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
 **CPU headroom matters:** preliminary measurements and user reports suggest around
@@ -15,7 +15,7 @@ The small savings do not remove that penalty. Use the mod when you have enough
 CPU headroom; on a CPU-limited system it can make performance worse even if GPU
 time improves.
 
-Version 0.4.0 retains the **Benchmark** page with Minimal and
+Version 0.5.1 retains the **Benchmark** page with Minimal and
 Detailed in-headset overlays, separate joystick bindings for visibility and
 manual recording, local HTML/CSV/JSON reports, and latest-launch diagnostics.
 Enable Benchmark before launching and leave the launcher open. See
@@ -86,6 +86,14 @@ If AI-assisted code isn't your thing, you're welcome to skip this project.
 If you'd like to help improve it, thoughtful bug reports, testing and code
 contributions are welcome. See [the contribution guide](CONTRIBUTING.md).
 
+## SimHub (experimental)
+
+The `simhub` folder contains a SimHub plugin that shows live frame timing,
+render resolutions and FOV as `LmuQuadView.*` properties and adds actions to
+toggle the benchmark overlay and recording from wheel buttons. It needs
+Diagnostics and Benchmark enabled and is built on your PC; see
+[simhub/README.md](simhub/README.md).
+
 ## Install and launch
 
 Use the **Setup-x64.exe installer** for Start menu and uninstall integration, or extract the complete portable ZIP. Both contain the same native launcher and rendering layer; no Electron runtime is required. Updates are offered in Setup and installation follows your approval. Close LMU before updating, then reinstall automatic startup from the updated package.
@@ -96,7 +104,7 @@ Rendering sliders show their current **Allowed** interval. Purple marks the usab
 
 See [CPU work and profiling](docs/CPU-040.md), [installer behavior](docs/INSTALLER.md) and [EAC integrity diagnosis](docs/EAC.md) for details.
 
-1. Use the complete `LMU-Quad-View-Mod-0.4.0.zip` package. Published builds are on [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
+1. Use the complete `LMU-Quad-View-Mod-0.5.1.zip` package. Published builds are on [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
 2. Extract the **complete ZIP** to a writable folder outside the LMU installation.
 3. Open **LMU-QuadView-Launcher.exe**. Keep its `.exe.config` file beside it.
 4. In **Setup**, select the LMU game folder. Ensure your headset's OpenXR runtime
@@ -266,7 +274,7 @@ cannot replace headset QA. Release versions come from the root `VERSION` file.
 
 ## Contributors
 
-**Markus Stahl** contributed the 0.3.3 hook-safety, launcher-integrity, cleanup and QVFR encoding patch. The changes were reviewed and extended with Windows regression tests before integration.
+**Markus Stahl** has contributed hook safety, launcher integrity, cleanup, QVFR encoding preservation, portable profiles, SimHub integration, performance improvements and stability fixes. Huge thanks to Markus for the detailed patches, continued testing and all his help improving this project.
 
 ## Optional support
 

@@ -4,6 +4,33 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
+## 0.5.1 - Unreleased
+
+Integrates Markus Stahl's 0.5.0 and 0.5.1 community patches on top of 0.4.0.
+**A huge thank you to Markus Stahl for the performance improvements, SimHub
+integration, stability fixes and all his continued help with this project.**
+
+- Add experimental SimHub telemetry (`LmuQuadView.*`) and wheel-button actions
+  for benchmark visibility and recording. Build the plugin against your local
+  SimHub installation; enable Diagnostics and Benchmark and keep the launcher open.
+- Reduce repeated render-hook pointer validation and repetitive error logging.
+  Avoid routine per-frame allocations in VRS overlay submission and eye-gaze sync.
+- Allocate the render profiler's large sample buffers only while profiling is
+  enabled, and release them when disabled. This reduces the DLL's static data;
+  file-size savings depend on the compiler and are not a measured RAM or
+  frametime saving of the same size.
+- Reject missing OpenXR extension/layer lists and bound application-name logging.
+- Handle protected-process queries and benchmark polling errors in the launcher.
+- Restrict elevated installer DLL lookup to System32, protect benchmark shared
+  memory, check overlay snapshots, and reject implausible benchmark timings.
+- Add Content-Security-Policy and no-referrer headers to local benchmark reports.
+- Clean up generated update downloads older than seven days while retaining
+  unrelated folders and links.
+- Add input-validation, telemetry and launcher regression coverage.
+
+These changes reduce avoidable overhead. A new in-game CPU frametime improvement
+has not yet been measured; the CPU-headroom guidance from 0.4.0 still applies.
+
 ## 0.4.0 - 2026-11-05
 
 - Performance expectations: preliminary measurements and user reports indicate around **0.5 ms less CPU render time**, depending on the workload. Quad Views still adds roughly **3–4 ms CPU frametime versus no mod**, so it is worthwhile only with sufficient CPU headroom; GPU gains can be outweighed when CPU-limited.

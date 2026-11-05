@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -152,10 +153,29 @@ namespace LmuQuadViewLauncher {
             }
             throw new InvalidDataException("Too many installer redirects.");
         }
+        // 0.5.1: earlier downloads were never removed. Delete generated download folders
+        // older than seven days; skip links, foreign names and anything still in use.
+        internal static readonly TimeSpan DownloadRetention=TimeSpan.FromDays(7);
+        internal static void PruneDownloads(string root,DateTime nowUtc) {
+            try {
+                foreach(var child in new DirectoryInfo(root).GetDirectories()) {
+                    if(!Regex.IsMatch(child.Name,@"^[a-f0-9]{32}\z")||(child.Attributes&FileAttributes.ReparsePoint)!=0)continue;
+                    if(nowUtc-child.LastWriteTimeUtc<DownloadRetention)continue;
+                    try {
+                        if(child.GetDirectories().Length!=0)continue;
+                        var files=child.GetFiles();
+                        if(files.Any(f=>(f.Attributes&FileAttributes.ReparsePoint)!=0||!f.Name.EndsWith(".exe",StringComparison.OrdinalIgnoreCase)))continue;
+                        foreach(var file in files)file.Delete();
+                        child.Delete(false);
+                    }catch(IOException){}catch(UnauthorizedAccessException){}
+                }
+            }catch(IOException){}catch(UnauthorizedAccessException){}
+        }
         public static DownloadedUpdate Download(UpdateCandidate candidate) {
             if(candidate==null)throw new ArgumentNullException("candidate");
             if(Comparable(candidate.Version)<=Comparable(CurrentVersion))throw new InvalidOperationException("Only a newer stable release can be installed.");
             string root=UpdatesRoot;PlainPath(root);Directory.CreateDirectory(root);PlainPath(root);
+            PruneDownloads(root,DateTime.UtcNow);
             string directory=Path.Combine(root,Guid.NewGuid().ToString("N"));Directory.CreateDirectory(directory);PlainPath(directory);
             string path=Path.Combine(directory,candidate.FileName);
             try {

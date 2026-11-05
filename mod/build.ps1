@@ -49,8 +49,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'View crop tests compilation failed' }
     & .\build\view_crop_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'View crop tests failed' }
-    foreach ($test in @('benchmark_timing_ownership','benchmark_native','benchmark_overlay','benchmark_frame','benchmark_gpu','xr_active_state','diagnostic_sampling','outer_runtime_lock','end_frame_lock','locate_runtime_lock','app_image_lock')) {
-        & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" async_log.cpp -ld3d11 -ld3dcompiler -ldxguid -luser32 -o "build/${test}_test.exe"
+    foreach ($test in @('benchmark_timing_ownership','benchmark_native','benchmark_overlay','benchmark_frame','benchmark_gpu','xr_active_state','diagnostic_sampling','outer_runtime_lock','end_frame_lock','locate_runtime_lock','app_image_lock','input_validation')) {
+        & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" async_log.cpp -ladvapi32 -ld3d11 -ld3dcompiler -ldxguid -luser32 -o "build/${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test compilation failed" }
         & ".\build\${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test failed" }
@@ -111,11 +111,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Native upload batch compilation failed' }
     & .\build\native_upload_batch_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native upload batch tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/focus_image_lease_test.cpp async_log.cpp -ld3d11 -ld3dcompiler -ldxguid -luser32 -o build/focus_image_lease_test.exe
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/focus_image_lease_test.cpp async_log.cpp -ladvapi32 -ld3d11 -ld3dcompiler -ldxguid -luser32 -o build/focus_image_lease_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Focus image ownership compilation failed' }
     & .\build\focus_image_lease_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Focus image ownership tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/frame_submission_test.cpp async_log.cpp -ld3d11 -ld3dcompiler -ldxguid -luser32 -o build/frame_submission_test.exe
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/frame_submission_test.cpp async_log.cpp -ladvapi32 -ld3d11 -ld3dcompiler -ldxguid -luser32 -o build/frame_submission_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Frame submission tests compilation failed' }
     & .\build\frame_submission_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Frame submission tests failed' }
@@ -150,7 +150,7 @@ try {
         & ".\build\${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests failed" }
     }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party xr_layer.cpp xr_layer_tests.cpp async_log.cpp -ld3d11 -ld3dcompiler -ldxguid -o build/xr_layer_tests.exe
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party xr_layer.cpp xr_layer_tests.cpp async_log.cpp -ladvapi32 -ld3d11 -ld3dcompiler -ldxguid -o build/xr_layer_tests.exe
     if ($LASTEXITCODE -ne 0) { throw 'XR tests compilation failed' }
     foreach ($testArgs in @(@('--focus-offset'),@('--focus-offset','--focus-asymmetric'),@('--focus-offset','--debug-focus'),@('--runtime-settings','--focus-offset'),@('--runtime-settings','--focus-offset','--fixed-foveation'),@('--runtime-settings','--focus-offset','--no-eye-tracking'),@('--runtime-settings','--focus-offset','--debug-focus'),@('--runtime-settings','--focus-offset','--srgb','--debug-focus'),@('--invalid-focus-offset'),@('--runtime-settings','--invalid-focus-offset'))) {
         & .\build\xr_layer_tests.exe @testArgs

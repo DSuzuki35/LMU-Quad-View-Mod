@@ -16,7 +16,7 @@ $archive = Join-Path $OutputDirectory $ArchiveName
 if (Test-Path -LiteralPath $archive) { throw "Archive already exists: $archive" }
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $stage = Join-Path $OutputDirectory ('package-' + [Guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $stage,(Join-Path $stage 'build'),(Join-Path $stage 'licenses'),(Join-Path $stage 'tools'),(Join-Path $stage 'docs') | Out-Null
+New-Item -ItemType Directory -Path $stage,(Join-Path $stage 'build'),(Join-Path $stage 'licenses'),(Join-Path $stage 'tools'),(Join-Path $stage 'docs'),(Join-Path $stage 'simhub') | Out-Null
 $files = @{
     'tools/check-autostart-integrity.ps1' = 'tools/check-autostart-integrity.ps1'
     'docs/EAC.md' = 'docs/EAC.md'
@@ -57,6 +57,10 @@ $files = @{
     'STEREO-SHADER-CONVERSION.md' = 'STEREO-SHADER-CONVERSION.md'
     'INSTANCED-STEREO-HANDOFF.md' = 'INSTANCED-STEREO-HANDOFF.md'
     'LICENSE.md' = 'LICENSE.md'
+    'simhub/QuadViewTelemetry.cs' = 'simhub/QuadViewTelemetry.cs'
+    'simhub/QuadViewSimHubPlugin.cs' = 'simhub/QuadViewSimHubPlugin.cs'
+    'simhub/build-simhub-plugin.ps1' = 'simhub/build-simhub-plugin.ps1'
+    'simhub/README.md' = 'simhub/README.md'
     'THIRD_PARTY_NOTICES.md' = 'THIRD_PARTY_NOTICES.md'
     'mod/vendor/minhook-1.3.4/LICENSE.txt' = 'licenses/MinHook-LICENSE.txt'
     'prototype/third_party/openxr/LICENSE' = 'licenses/OpenXR-LICENSE.txt'

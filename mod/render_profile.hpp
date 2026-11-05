@@ -1,4 +1,6 @@
 #pragma once
+#include <memory>
+#include <new>
 #include <windows.h>
 #include <array>
 #include <atomic>
@@ -46,7 +48,16 @@ public:
         log_=callback;keyWasDown_=false;generation_=0;lastFrame_=0;
         xrBoundaries_=false;xrOpen_=false;sceneOpen_=false;intervalValid_=false;frameSerial_=0;
         durationSeconds_=durationSeconds>=30&&durationSeconds<=300?durationSeconds:120;flush_=flush;
-        frequency_=enable&&diagnostics_enabled()?Clock::frequency():0;enabled_.store(frequency_!=0);
+        frequency_=enable&&diagnostics_enabled()?Clock::frequency():0;
+        // 0.5.1: sample buffers (~17 MB at the default capacity) used to be static
+        // storage. Allocate only while armed; DLL file size and resident memory
+        // changes depend on the compiler/loader and must be measured separately.
+        if(frequency_!=0&&!buckets_){
+            buckets_.reset(new(std::nothrow) Buckets());
+            if(!buckets_){frequency_=0;emit("render_profile unavailable: not enough memory for sample buffers");}
+        }
+        if(frequency_==0)buckets_.reset();
+        enabled_.store(frequency_!=0);
         if(enabled()){
             char line[256]{};std::snprintf(line,sizeof(line),"render_profile armed hotkey=Ctrl+Alt+F9 duration_s=%u checkpoint_s=15 save_on_session_end=1; press on track",durationSeconds_);emit(line);
         }
@@ -72,7 +83,7 @@ public:
             if(pressed||now-started_>=durationSeconds_*frequency_){finish_locked(pressed?"hotkey":"duration",true);return;}
             if(now-lastCheckpoint_>=15*frequency_){checkpoint(now);lastCheckpoint_=now;}
         }else if(pressed){
-            for(auto& bucket:buckets_){bucket.count=0;bucket.dropped=0;bucket.calls=0;bucket.pendingTicks=0;bucket.pendingCalls=0;bucket.sumTicks=0;}
+            for(auto& bucket:*buckets_){bucket.count=0;bucket.dropped=0;bucket.calls=0;bucket.pendingTicks=0;bucket.pendingCalls=0;bucket.sumTicks=0;}
             ++generation_;started_=lastCheckpoint_=nextGpu_=now;frames_=0;xrFrames_=nonSceneFrames_=0;lastFrame_=0;active_=true;
             gpu_.configure(true,0xf,nullptr,nullptr);
             char line[384]{};std::snprintf(line,sizeof(line),
@@ -143,18 +154,19 @@ public:
         const bool owning=owner_.load()==0||owner_.load()==Clock::thread();
         finish_locked("session_end",owning);
         if(owning){gpu_.reset();owner_.store(0);}
+        buckets_.reset();
         if(flush_)flush_();
     }
-    uint64_t samples(ProfileSlot slot)const{std::lock_guard<std::mutex> lock(mutex_);return buckets_[unsigned(slot)].count;}
+    uint64_t samples(ProfileSlot slot)const{std::lock_guard<std::mutex> lock(mutex_);return buckets_?(*buckets_)[unsigned(slot)].count:0;}
 private:
     void finish_locked(const char* reason,bool owning){
-        if(!active_)return;
+        if(!active_||!buckets_)return;
         active_=false;flush_frame();if(owning)gpu_.finish();
         char line[768]{};
         std::snprintf(line,sizeof(line),"render_profile summary capture=%llu reason=%s elapsed_s=%.3f frames=%llu xr_frames=%llu non_scene_frames=%llu; CPU wall includes waits; nested scopes overlap; GPU slots exclude copy/UI/provider",
             static_cast<unsigned long long>(generation_),reason,double(Clock::now()-started_)/frequency_,static_cast<unsigned long long>(frames_),static_cast<unsigned long long>(xrFrames_),static_cast<unsigned long long>(nonSceneFrames_));emit(line);
         for(unsigned slot=0;slot<SlotCount;++slot){
-            auto& b=buckets_[slot];if(!b.count)continue;
+            auto& b=(*buckets_)[slot];if(!b.count)continue;
             std::sort(b.ticks.begin(),b.ticks.begin()+b.count);
             double sum=0;for(unsigned i=0;i<b.count;++i)sum+=double(b.ticks[i]);
             auto ms=[&](uint64_t ticks){return double(ticks)*1000.0/frequency_;};
@@ -175,7 +187,8 @@ private:
     }
     static constexpr unsigned SlotCount=unsigned(ProfileSlot::count);
     struct Bucket {std::array<uint64_t,Capacity> ticks{};unsigned count=0,dropped=0,pendingCalls=0;uint64_t pendingTicks=0,calls=0;double sumTicks=0;};
-    std::array<Bucket,SlotCount> buckets_{};
+    using Buckets=std::array<Bucket,SlotCount>;
+    std::unique_ptr<Buckets> buckets_; // only while armed; every access holds mutex_
     static constexpr const char* names_[SlotCount]={
         "outer0","outer1","focus_hook0","focus_hook1","focus_scene0","focus_scene1",
         "focus_prepare0","focus_prepare1","focus_restore0","focus_restore1",
@@ -195,18 +208,21 @@ private:
     bool owns_thread()const{return enabled()&&owner_.load(std::memory_order_relaxed)==Clock::thread();}
     void emit(const char* line){if(log_)log_(line);}
     void record(ProfileSlot slot,uint64_t ticks){
-        auto& b=buckets_[unsigned(slot)];
+        if(!buckets_)return;
+        auto& b=(*buckets_)[unsigned(slot)];
         b.pendingTicks+=ticks;++b.pendingCalls;
     }
     void flush_frame(){
-        for(auto& b:buckets_)if(b.pendingCalls){
+        if(!buckets_)return;
+        for(auto& b:*buckets_)if(b.pendingCalls){
             if(b.count<Capacity)b.ticks[b.count++]=b.pendingTicks;else ++b.dropped;
             b.sumTicks+=double(b.pendingTicks);
             b.calls+=b.pendingCalls;b.pendingTicks=0;b.pendingCalls=0;
         }
     }
     void checkpoint(uint64_t now){
-        auto mean=[&](ProfileSlot slot){const auto& b=buckets_[unsigned(slot)];return b.count+b.dropped?b.sumTicks*1000.0/frequency_/(b.count+b.dropped):0;};
+        if(!buckets_)return;
+        auto mean=[&](ProfileSlot slot){const auto& b=(*buckets_)[unsigned(slot)];return b.count+b.dropped?b.sumTicks*1000.0/frequency_/(b.count+b.dropped):0;};
         auto pair=[&](ProfileSlot slot){return mean(slot)+mean(profile_eye(slot,1));};
         char line[1536]{};
         std::snprintf(line,sizeof(line),"render_profile checkpoint capture=%llu elapsed_s=%.3f frames=%llu cpu_wall_mean_ms outer_both=%.6f focus_hook_both=%.6f focus_scene_both=%.6f focus_prepare_both=%.6f focus_restore_both=%.6f outer_copy_both=%.6f outer_wait_both=%.6f outer_lock_both=%.6f native_prepare_both=%.6f native_restore_both=%.6f sort_outer_both=%.6f sort_focus_both=%.6f ui=%.6f provider_submit=%.6f frame_interval=%.6f; cumulative completed scopes; final percentiles saved at capture/session end",

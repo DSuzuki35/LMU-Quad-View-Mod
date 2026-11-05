@@ -1,5 +1,14 @@
 // White-box tests of the native hook policy. No LMU process or native game code is used.
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+size_t nativeProbeQueries=0;
+SIZE_T WINAPI countedVirtualQuery(LPCVOID address,PMEMORY_BASIC_INFORMATION info,SIZE_T size){
+    ++nativeProbeQueries;return VirtualQuery(address,info,size);
+}
+#define VirtualQuery countedVirtualQuery
 #include "../engine_bridge.cpp"
+#undef VirtualQuery
 #include <algorithm>
 #include <cstdlib>
 #include <iostream>
@@ -98,6 +107,30 @@ void uiPlaneSizeTest(){
     require(object==original,"unavailable full FOV mutated native UI state");
     testQuadFrame=false;testFullFovAvailable=true;uiOriginal=nullptr;nativeRuntimeSettings=false;
     require(uiPlaneDraws==5,"UI plane fixture did not exercise all native calls");
+}
+void nativeViewOnlyProbeTest(){
+    using namespace lmuqv;
+    std::vector<std::byte> globals(0x1b12be8-0x1a51370+sizeof(void*));
+    std::vector<std::byte> renderer(0x76f68+sizeof(void*));
+    ViewSnapshot view{};view.eye_index=0;
+    auto* selected=&view;
+    void* fakeContext=&selected;
+    auto rendererAddress=reinterpret_cast<std::uintptr_t>(renderer.data());
+    std::memcpy(globals.data(),&selected,sizeof(selected));
+    std::memcpy(globals.data()+0x1b12be8-0x1a51370,&rendererAddress,sizeof(rendererAddress));
+    std::memcpy(renderer.data()+0x76f68,&fakeContext,sizeof(fakeContext));
+    const auto saved=base;base=reinterpret_cast<std::uintptr_t>(globals.data())-0x1a51370;
+    nativeProbeQueries=0;
+    NativeEyeProbe probe;probe.probe();
+    require(probe.viewValid&&probe.view==selected,"native view probe rejected readable eye");
+    require(nativeProbeQueries==1,"view-only outer path unnecessarily queried renderer/context memory");
+    probe.probe();
+    require(nativeProbeQueries==1,"native view validation was not cached");
+    probe.probeContext();
+    require(probe.contextValid&&probe.context==fakeContext&&nativeProbeQueries==3,"context validation did not reuse the view probe");
+    probe.probeContext();
+    require(nativeProbeQueries==3,"native context validation was not cached");
+    base=saved;
 }
 void setProjection(void* ptr,const float* p) {
     auto* view=static_cast<lmuqv::ViewSnapshot*>(ptr);
@@ -268,6 +301,7 @@ int main(int argc,char** argv) {
     base=savedBase;installed=false;nativeRuntimeSettings=false;
     SetEnvironmentVariableA("LMU_QV_DIAGNOSTICS","0");
     uiPlaneSizeTest();
+    nativeViewOnlyProbeTest();
     hookTargetTest();
     outerUploadScopeTest();outerUploadSettingsTest();
     unsigned nativeWidth=0,nativeHeight=0;

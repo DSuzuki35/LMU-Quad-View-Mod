@@ -1004,11 +1004,30 @@ XrResult submitFrameUnlocked(XrSession session,const XrFrameEndInfo* info,std::u
     s.submitInFlight=false;
     return result;
 }
+// 0.5.0 (from 0.3.5): failing or empty frames used to log every frame. Keep the
+// periodic sampler, log state changes immediately (the last line still shows the
+// current state for launcher diagnostics), then the first 10 frames of a streak
+// and every 120th.
+struct EndFrameLogGate {
+    bool known=false;unsigned lastSubmitted=0;int lastShouldRender=-1;XrResult lastResult=XR_SUCCESS;uint64_t streak=0;
+    bool allow(bool periodic,unsigned submitted,bool shouldRender,XrResult result,bool interesting){
+        const bool changed=!known||(submitted!=0)!=(lastSubmitted!=0)||int(shouldRender)!=lastShouldRender||result!=lastResult;
+        known=true;lastSubmitted=submitted;lastShouldRender=shouldRender?1:0;lastResult=result;
+        streak=changed?1:streak+1;
+        if(!lmuqv::diagnostics_enabled())return false;
+        if(periodic||changed)return true;
+        return interesting&&(streak<=10||streak%120==0);
+    }
+};
+EndFrameLogGate endFrameLog;
 XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) {
     std::unique_lock<std::recursive_mutex> lock(stateMutex);
     if(frameOperationInFlight())return XR_ERROR_CALL_ORDER_INVALID;
     if(s.earlyBeginPending){logf("xrEndFrame refused: late application xrBeginFrame not received");return XR_ERROR_CALL_ORDER_INVALID;}
     if(s.focusOwnership&&heldFocusImages()){logf("stereo_pass end-frame refused: unresolved focus image owner; no downstream release/submission");return XR_ERROR_CALL_ORDER_INVALID;}
+    // Call-order checks above never read info. Spec-invalid input would otherwise be
+    // dereferenced below before the runtime could reject it.
+    if(!info||(info->layerCount&&!info->layers))return XR_ERROR_VALIDATION_FAILURE;
     if(!s.quad){
         unsigned submitted=0;
         if(s.vrs&&info&&info->layers)for(uint32_t i=0;i<info->layerCount;++i){
@@ -1018,22 +1037,29 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
                 for(unsigned eye=0;eye<2;++eye){const auto& extent=projection->views[eye].subImage.imageRect.extent;
                     s.vrsWidths[eye]=extent.width>0?unsigned(extent.width):0;s.vrsHeights[eye]=extent.height>0?unsigned(extent.height):0;}}
         }
-        auto modified=*info;std::vector<const XrCompositionLayerBaseHeader*> layers;
+        auto modified=*info;bool overlayAdded=false;
+        // No heap allocation per overlay frame (same inline storage as the quad path).
+        std::array<const XrCompositionLayerBaseHeader*,17> inlineLayers;std::vector<const XrCompositionLayerBaseHeader*> largeLayers;
         if(benchmarkEnabled){
             benchmarkGpu.stop(s.vrs&&s.sceneFocus[0]&&s.sceneFocus[1]);
             lmuqv::benchmark::Config config;
             benchmarkOverlayCapacityFailure=lmuqv::benchmark::read_config(*benchmarkTransport.data(),config)&&config.visible&&s.shouldRender&&info->layerCount>=benchmarkLayerLimit;
             if(s.vrs&&benchmarkOverlayReady&&info->layerCount<benchmarkLayerLimit){
                 const auto* overlay=benchmarkOverlay.prepare(*benchmarkTransport.data(),s.context,s.frame&&s.shouldRender);
-                if(overlay){if(info->layerCount)layers.assign(info->layers,info->layers+info->layerCount);
-                    layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(overlay));modified.layers=layers.data();modified.layerCount=uint32_t(layers.size());}
+                if(overlay){
+                    const XrCompositionLayerBaseHeader** target=inlineLayers.data();
+                    if(size_t(info->layerCount)+1>inlineLayers.size()){largeLayers.resize(size_t(info->layerCount)+1);target=largeLayers.data();}
+                    if(info->layerCount)std::copy(info->layers,info->layers+info->layerCount,target);
+                    target[info->layerCount]=reinterpret_cast<const XrCompositionLayerBaseHeader*>(overlay);
+                    modified.layers=target;modified.layerCount=info->layerCount+1;overlayAdded=true;}
             }
         }
         const int64_t before=benchmarkEnabled?lmuqv::benchmark::ticks():0;
-        XrResult r=submitFrameUnlocked(session,layers.empty()?info:&modified,lock);
+        XrResult r=submitFrameUnlocked(session,overlayAdded?&modified:info,lock);
         if(benchmarkEnabled)benchmarkPublish(submitted,0,before,lmuqv::benchmark::ticks(),r);
         if(s.vrs)lmuqv::renderProfile.xr_frame_end(s.context);
-        if(xrDiagnosticFrameLog()||XR_FAILED(r)){
+        const bool periodic=xrDiagnosticFrameLog();
+        if(endFrameLog.allow(periodic,submitted,s.shouldRender,r,XR_FAILED(r))){
             if(s.vrs)logf("xrEndFrame mode=vrs frame=%llu appLayers=%u stereoProjections=%u begun=%d shouldRender=%d time=%lld result=%d",static_cast<unsigned long long>(s.frames),info->layerCount,submitted,s.frame,s.shouldRender,static_cast<long long>(info->displayTime),r);
             else logf("xrEndFrame mode=trace frame=%llu appLayers=%u begun=%d shouldRender=%d time=%lld result=%d",static_cast<unsigned long long>(s.frames),info->layerCount,s.frame,s.shouldRender,static_cast<long long>(info->displayTime),r);
         }
@@ -1118,7 +1144,8 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
     if(s.pixelEnabled&&!s.pixelDone&&s.pixelFrame==s.frames&&s.pixelFrame){
         logf("pixel_stats_complete mask=%u successMask=%u frame=%llu quadProjections=%u releaseOkay=%d result=%d captureRequested=%d captureSuccessMask=%u",s.pixelMask,s.pixelSuccessMask,static_cast<unsigned long long>(s.pixelFrame),submitted,released,r,s.capture.requested,s.captureMask);s.pixelDone=true;
     }
-    if(xrDiagnosticFrameLog()||(!submitted&&s.shouldRender))logf("xrEndFrame frame=%llu quadProjections=%u captures=%d/%d located=%d shouldRender=%d result=%d",static_cast<unsigned long long>(s.frames),submitted,s.captures[0],s.captures[1],s.located,s.shouldRender,r);
+    const bool periodic=xrDiagnosticFrameLog();
+    if(endFrameLog.allow(periodic,submitted,s.shouldRender,r,(!submitted&&s.shouldRender)||XR_FAILED(r)))logf("xrEndFrame frame=%llu quadProjections=%u captures=%d/%d located=%d shouldRender=%d result=%d",static_cast<unsigned long long>(s.frames),submitted,s.captures[0],s.captures[1],s.located,s.shouldRender,r);
     clearFrame();return r;
 }
 XrResult XRAPI_CALL layerAttachSessionActionSets(XrSession session,const XrSessionActionSetsAttachInfo* info){
@@ -1146,6 +1173,10 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
     if(!info||!layer||!instance||layer->structType!=XR_LOADER_INTERFACE_STRUCT_API_LAYER_CREATE_INFO||
        layer->structVersion!=XR_API_LAYER_CREATE_INFO_STRUCT_VERSION||layer->structSize!=sizeof(XrApiLayerCreateInfo)||
        !layer->nextInfo)return XR_ERROR_INITIALIZATION_FAILED;
+    // 0.5.1: the extension names are dereferenced below (strcmp); reject a spec-invalid list
+    // instead of crashing inside the game's instance creation.
+    if(info->enabledExtensionCount&&!info->enabledExtensionNames)return XR_ERROR_VALIDATION_FAILURE;
+    for(uint32_t i=0;i<info->enabledExtensionCount;++i)if(!info->enabledExtensionNames[i])return XR_ERROR_VALIDATION_FAILURE;
     auto* chain=layer->nextInfo;
     if(chain->structType!=XR_LOADER_INTERFACE_STRUCT_API_LAYER_NEXT_INFO||chain->structVersion!=XR_API_LAYER_NEXT_INFO_STRUCT_VERSION||
        chain->structSize!=sizeof(XrApiLayerNextInfo)||std::strcmp(chain->layerName,layerName)||
@@ -1179,7 +1210,8 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
         *instance=XR_NULL_HANDLE;r=chain->nextCreateApiLayerInstance(&modified,&downstream,instance);gazeEnabled=false;
         logf("vrs gaze extension unavailable; fixed focus fallback");
     }
-    logf("xrCreateApiLayerInstance mode=%s app=%s extensions=%u result=%d",quad?"quad":"trace",info->applicationInfo.applicationName,modified.enabledExtensionCount,r);
+    // Bounded: the fixed-size application name is not guaranteed to be terminated by every caller.
+    logf("xrCreateApiLayerInstance mode=%s app=%.*s extensions=%u result=%d",quad?"quad":"trace",int(strnlen(info->applicationInfo.applicationName,XR_MAX_APPLICATION_NAME_SIZE)),info->applicationInfo.applicationName,modified.enabledExtensionCount,r);
     if(XR_FAILED(r))return r;
     next.get=chain->nextGetInstanceProcAddr;
     if(!next.load(*instance)){if(next.DestroyInstance)next.DestroyInstance(*instance);*instance=XR_NULL_HANDLE;return XR_ERROR_INITIALIZATION_FAILED;}
