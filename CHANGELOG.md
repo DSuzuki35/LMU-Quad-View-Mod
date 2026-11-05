@@ -28,8 +28,12 @@ integration, stability fixes and all his continued help with this project.**
   unrelated folders and links.
 - Add input-validation, telemetry and launcher regression coverage.
 
-These changes reduce avoidable overhead. A new in-game CPU frametime improvement
-has not yet been measured; the CPU-headroom guidance from 0.4.0 still applies.
+### Performance expectations
+
+In my benchmark scenario, I observed around **1–1.5 ms lower CPU frametime with
+0.5.1**. This is a result from my own setup and scene, not a guaranteed improvement
+across systems. Quad Views still needs sufficient CPU headroom; the remaining
+overhead depends on the setup and workload.
 
 ## 0.4.0 - 2026-11-05
 
