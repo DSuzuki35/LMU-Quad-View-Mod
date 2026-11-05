@@ -21,6 +21,7 @@
 #include "view_crop.hpp"
 #include "native_xr_views.hpp"
 #include "resource_diagnostics.hpp"
+#include "diagnostic_sampling.hpp"
 #include "../prototype/lmu_reconstructed.hpp"
 #include "vendor/minhook-1.3.4/include/MinHook.h"
 #include <atomic>
@@ -723,7 +724,7 @@ void nativeViewHook(void* pointer,void* objects,void* lights,bool main,bool late
     reinterpret_cast<void(*)(void*,void*)>(base+0x5c6c50)(reinterpret_cast<void*>(renderer),view);
     restoreProfile.end();
     const auto count=++nativeOuterCompleted[view->eye_index];
-    if(count<=4||count%600==0){
+    if(count<=4||diagnostic_logging::periodic_frame()){
         char line[240]{};std::snprintf(line,sizeof(line),"native_outer rendered eye=%d count=%llu actual=%ux%u focus=%ux%u restored=1; PPFX pool remains full-size",
             view->eye_index,static_cast<unsigned long long>(count),width,height,fullW,fullH);log_line(line);
     }
@@ -836,7 +837,7 @@ void renderHook(void* unknown, bool laterPass) {
     auto* source=smallOuterSource?smallOuterSource:*address<ID3D11Texture2D*>(0x1b1c6b8+eye*8);
     if(!readable(source,sizeof(void*))) return;
     auto calls=++renderCalls;
-    if(diagnostics_enabled()&&(calls<=8 || calls%600==0)) {
+    if(diagnostics_enabled()&&(calls<=8 || diagnostic_logging::periodic_frame())) {
         D3D11_TEXTURE2D_DESC desc{};source->GetDesc(&desc);
         char msg[400];std::snprintf(msg,sizeof(msg),"engine outer eye=%u call=%llu view=%p texture=%p size=%ux%u samples=%u flags=%x",
             eye,static_cast<unsigned long long>(calls),static_cast<void*>(view),static_cast<void*>(source),
@@ -906,8 +907,8 @@ void renderHook(void* unknown, bool laterPass) {
     insideHook=false;
     focusRestoreProfile.end();
     auto rendered=++focusCalls;
-    if(nativeUploadBatchOptIn&&diagnostics_enabled()&&rendered%1200==0){logUploadBatchStats("checkpoint");flush_log();}
-    if(diagnostics_enabled()&&(rendered<=8 || rendered%600==0)) {
+    if(nativeUploadBatchOptIn&&diagnostics_enabled()&&diagnostic_logging::periodic_frame()){logUploadBatchStats("checkpoint");}
+    if(diagnostics_enabled()&&(rendered<=8 || diagnostic_logging::periodic_frame())) {
         char msg[256];std::snprintf(msg,sizeof(msg),"engine focus eye=%u count=%llu proj00=%.5f outer00=%.5f overrides=%u masksSkipped=%u",
             eye,static_cast<unsigned long long>(rendered),inner[0],outerProjection[0],projectionOverrides,skippedMasks);log_line(msg);
     }
@@ -922,7 +923,7 @@ void uiHook(void* object,ID3D11DeviceContext* context,const UiArgs* originalArgs
     const bool menu=originalArgs->mode==3 && !xr_outer_rtv(0) && !xr_outer_rtv(1);
     auto targetSlots=reinterpret_cast<ID3D11RenderTargetView**>(static_cast<std::byte*>(object)+0xd8);
     static uint64_t diagnostics=0;
-    if(diagnostics_enabled()&&(++diagnostics<=4||diagnostics%600==0)){
+    if(diagnostics_enabled()&&(++diagnostics<=4||diagnostic_logging::periodic_frame())){
         for(unsigned eye=0;eye<2;++eye)diagnoseNativeEye(menu?"menu-final-before-ui":"scene-focus-before-ui",eye,
             *address<ID3D11Texture2D*>(0x1b1c6b8+eye*8),targetSlots[eye],*address<ID3D11ShaderResourceView*>(0x1b1c6d8+eye*8),context);
         char line[200]{};std::snprintf(line,sizeof(line),"native final extent=%ux%u copyOffsets left=%u,%u right=%u,%u",
@@ -959,7 +960,7 @@ void uiHook(void* object,ID3D11DeviceContext* context,const UiArgs* originalArgs
             views[0].fov.angleUp-views[0].fov.angleDown,
             fullOuterFov[0].angleUp-fullOuterFov[0].angleDown);
         planeScale=bytes+(originalArgs->mode==1?0x100:0xf8);
-        if(diagnostics_enabled()&&(diagnostics<=4||diagnostics%600==0)){
+        if(diagnostics_enabled()&&(diagnostics<=4||diagnostic_logging::periodic_frame())){
             char detail[200]{};std::snprintf(detail,sizeof(detail),
                 "crop UI size mode=%u planeFov=%.7g fullSpan=%.7g xyScaleFactor=%.7g; native depth and curvature retained",
                 originalArgs->mode,planeFov,fullOuterFov[0].angleUp-fullOuterFov[0].angleDown,planeScaleFactor);log_line(detail);
@@ -1018,7 +1019,7 @@ void uiHook(void* object,ID3D11DeviceContext* context,const UiArgs* originalArgs
         }
     }
     auto calls=++uiCalls;
-    if(diagnostics_enabled()&&(calls<=8 || calls%600==0)) {
+    if(diagnostics_enabled()&&(calls<=8 || diagnostic_logging::periodic_frame())) {
         char msg[200];std::snprintf(msg,sizeof(msg),"engine UI count=%llu mode=%u menu=%d outerRTV=%d/%d",
             static_cast<unsigned long long>(calls),originalArgs->mode,menu,xr_outer_rtv(0)!=nullptr,xr_outer_rtv(1)!=nullptr);
         log_line(msg);
