@@ -773,7 +773,7 @@ int main(int argc,char** argv) {
         assert(reinterpret_cast<PFN_xrWaitFrame>(load("xrWaitFrame"))(session,nullptr,&fs)==XR_SUCCESS);
         li.displayTime=fs.predictedDisplayTime;
         assert(locateViews(session,&li,&state,2,&count,located.views)==XR_SUCCESS);
-        assert(frameCalls=="WL");
+        assert(frameCalls=="WLB"); // Normalized before returning to engine rendering.
         XrFovf full[2]{};assert(lmuqv::xr_frame_full_outer_fov(full));
         XrView rendered[4]{};assert(lmuqv::xr_frame_views(rendered));
         for(unsigned eye=0;eye<2;++eye){
