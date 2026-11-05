@@ -1,12 +1,20 @@
 param(
     [string]$LayerOutput = (Join-Path $PSScriptRoot 'build/lmu_quadview.dll'),
-    [string]$AnchorImage
+    [string]$AnchorImage,
+    [switch]$AsyncLogOnly
 )
 $ErrorActionPreference = 'Stop'
 $LayerOutput = [IO.Path]::GetFullPath($LayerOutput)
 Push-Location $PSScriptRoot
 try {
     New-Item -ItemType Directory -Path 'build' -Force | Out-Null
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static tests/async_log_test.cpp async_log.cpp -o build/async_log_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Async log test compilation failed' }
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -shared tests/async_log_lifetime_fixture.cpp async_log.cpp -o build/async_log_lifetime_fixture.dll
+    if ($LASTEXITCODE -ne 0) { throw 'Async log lifetime fixture compilation failed' }
+    & .\build\async_log_test.exe --dll-lifetime
+    if ($LASTEXITCODE -ne 0) { throw 'Async log test failed' }
+    if($AsyncLogOnly){return}
     . (Join-Path $PSScriptRoot '../tools/version.ps1')
     $versionFiles = Write-LmuVersionFiles (Join-Path $PSScriptRoot 'build/native-version')
     & windres $versionFiles.ResourcePath -O coff -o build/version.o
@@ -23,8 +31,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'View crop tests compilation failed' }
     & .\build\view_crop_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'View crop tests failed' }
-    foreach ($test in @('benchmark_timing_ownership','benchmark_native','benchmark_overlay','benchmark_frame','benchmark_gpu')) {
-        & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" -ld3d11 -ld3dcompiler -ldxguid -luser32 -o "build/${test}_test.exe"
+    foreach ($test in @('benchmark_timing_ownership','benchmark_native','benchmark_overlay','benchmark_frame','benchmark_gpu','xr_active_state')) {
+        & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" async_log.cpp -ld3d11 -ld3dcompiler -ldxguid -luser32 -o "build/${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test compilation failed" }
         & ".\build\${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test failed" }
@@ -83,11 +91,11 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Native upload batch compilation failed' }
     & .\build\native_upload_batch_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native upload batch tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/focus_image_lease_test.cpp -ld3d11 -ld3dcompiler -ldxguid -luser32 -o build/focus_image_lease_test.exe
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/focus_image_lease_test.cpp async_log.cpp -ld3d11 -ld3dcompiler -ldxguid -luser32 -o build/focus_image_lease_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Focus image ownership compilation failed' }
     & .\build\focus_image_lease_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Focus image ownership tests failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/frame_submission_test.cpp -ld3d11 -ld3dcompiler -ldxguid -luser32 -o build/frame_submission_test.exe
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/frame_submission_test.cpp async_log.cpp -ld3d11 -ld3dcompiler -ldxguid -luser32 -o build/frame_submission_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Frame submission tests compilation failed' }
     & .\build\frame_submission_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Frame submission tests failed' }
@@ -122,7 +130,7 @@ try {
         & ".\build\${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test tests failed" }
     }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party xr_layer.cpp xr_layer_tests.cpp -ld3d11 -ld3dcompiler -ldxguid -o build/xr_layer_tests.exe
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party xr_layer.cpp xr_layer_tests.cpp async_log.cpp -ld3d11 -ld3dcompiler -ldxguid -o build/xr_layer_tests.exe
     if ($LASTEXITCODE -ne 0) { throw 'XR tests compilation failed' }
     foreach ($testArgs in @(@('--focus-offset'),@('--focus-offset','--focus-asymmetric'),@('--focus-offset','--debug-focus'),@('--runtime-settings','--focus-offset'),@('--runtime-settings','--focus-offset','--fixed-foveation'),@('--runtime-settings','--focus-offset','--no-eye-tracking'),@('--runtime-settings','--focus-offset','--debug-focus'),@('--runtime-settings','--focus-offset','--srgb','--debug-focus'),@('--invalid-focus-offset'),@('--runtime-settings','--invalid-focus-offset'))) {
         & .\build\xr_layer_tests.exe @testArgs
@@ -158,7 +166,7 @@ try {
         & .\build\xr_layer_tests.exe @testArgs
         if($LASTEXITCODE -ne 0){throw 'Rendered crop XR tests failed'}
     }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -shared -I ../prototype/third_party xr_layer.cpp engine_bridge.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o build/version.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o $LayerOutput
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -shared -I ../prototype/third_party xr_layer.cpp async_log.cpp engine_bridge.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o build/version.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o $LayerOutput
     if ($LASTEXITCODE -ne 0) { throw 'Layer compilation failed' }
     Get-FileHash -LiteralPath $LayerOutput -Algorithm SHA256 | Select-Object Hash
 } finally { Pop-Location }

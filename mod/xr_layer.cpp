@@ -16,6 +16,7 @@
 #include "vrs_foveation.hpp"
 #include "benchmark_overlay.hpp"
 #include "benchmark_gpu.hpp"
+#include "async_log.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -32,7 +33,6 @@
 namespace {
 constexpr char layerName[] = "XR_APILAYER_LMU_quadview";
 std::recursive_mutex stateMutex;
-std::mutex logMutex;
 template<class T> T structure(XrStructureType type) { T value{}; value.type=type; return value; }
 void logf(const char* format, ...) {
     if(!lmuqv::diagnostics_enabled())return;
@@ -499,13 +499,16 @@ unsigned formatFamily(DXGI_FORMAT f) {
 }
 
 XrResult XRAPI_CALL layerDestroyInstance(XrInstance instance) {
-    std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    std::unique_lock<std::recursive_mutex> lock(stateMutex);
     logf("xrDestroyInstance");
     if(s.session) {lmuqv::engine_stop();clearSession();}
     lmuqv::stereo_audit_stop(); // Also releases early hooks when no session was created.
+    lock.unlock();
     XrResult r=next.DestroyInstance(instance);
-    if(XR_SUCCEEDED(r)){s=State{};publishActiveModes();}
-    lmuqv::flush_log();
+    if(XR_SUCCEEDED(r)){
+        {std::lock_guard<std::recursive_mutex> resetLock(stateMutex);s=State{};publishActiveModes();}
+        lmuqv::stop_log(); // Drain only at explicit teardown, never under stateMutex.
+    }else lmuqv::flush_log();
     return r;
 }
 XrResult XRAPI_CALL layerEnumerateViewConfigurations(XrInstance instance,XrSystemId system,uint32_t cap,uint32_t* count,XrViewConfigurationType* out) {
@@ -1157,35 +1160,20 @@ OuterTarget xr_outer_target(unsigned eye) {
 ID3D11RenderTargetView* xr_outer_rtv(unsigned eye) {
     return xr_outer_target(eye).rtv;
 }
-HANDLE logFileHandle(){
-    static HANDLE file=[](){
-        wchar_t path[32768]{};DWORD n=GetEnvironmentVariableW(L"LMU_QV_LOG",path,32768);
-        std::filesystem::path target;
-        if(n&&n<32768&&std::filesystem::path(path).is_absolute())target=path;
-        else {
-            HMODULE self{};GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(&log_line),&self);
-            GetModuleFileNameW(self,path,32768);auto directory=std::filesystem::path(path).parent_path();
-            if(directory.filename()==L"build")directory=directory.parent_path();
-            target=directory/L"logs"/L"xr-layer.log";
-        }
-        std::error_code error;std::filesystem::create_directories(target.parent_path(),error);
-        return CreateFileW(target.c_str(),FILE_APPEND_DATA,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
-    }();
-    return file;
-}
 void log_line(const char* message) {
     if(!diagnostics_enabled())return;
-    std::lock_guard<std::mutex> lock(logMutex);
-    const auto file=logFileHandle();if(file==INVALID_HANDLE_VALUE)return;
     char line[2304]{};SYSTEMTIME now{};GetSystemTime(&now);
     int count=std::snprintf(line,sizeof(line),"%02u:%02u:%02u.%03u [%lu] %s\r\n",now.wHour,now.wMinute,now.wSecond,now.wMilliseconds,GetCurrentThreadId(),message?message:"");
-    DWORD written{};WriteFile(file,line,static_cast<DWORD>((std::min)(count,int(sizeof(line)-1))),&written,nullptr);
+    if(count<=0)return;
+    // Queue copies at most sizeof(line), marks truncation and counts it. Passing
+    // snprintf's required length never permits it to read beyond this buffer.
+    async_log_enqueue(line,static_cast<std::size_t>(count));
 }
 void flush_log(){
     if(!diagnostics_enabled())return;
-    std::lock_guard<std::mutex> lock(logMutex);
-    const auto file=logFileHandle();if(file!=INVALID_HANDLE_VALUE)FlushFileBuffers(file);
+    async_log_request_flush();
 }
+void stop_log(){async_log_stop();}
 bool xr_runtime_sizes(unsigned eye,uint32_t& outerWidth,uint32_t& outerHeight,uint32_t& focusWidth,uint32_t& focusHeight){
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(eye>1||!s.runtimeSettings||!s.runtimeSizesReady)return false;
