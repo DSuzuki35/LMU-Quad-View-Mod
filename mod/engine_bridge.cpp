@@ -16,6 +16,7 @@
 #include "native_outer_bank.hpp"
 #include "native_outer_anchors.hpp"
 #include "native_upload_reuse.hpp"
+#include "upload_reuse_toggle.hpp"
 #include "native_upload_batch.hpp"
 #include "xr_sizes.hpp"
 #include "view_crop.hpp"
@@ -54,6 +55,8 @@ NativeUploadFn nativeUploadOriginal{};std::atomic<bool> nativeUploadHooked{false
 constexpr std::uintptr_t nativeUploadRva=0x5cac50;
 constexpr std::array<std::uint8_t,20> nativeUploadAnchor{0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18,0x57,0x48,0x83,0xec,0x40};
 NativeUploadReuse nativeUploadReuse;
+UploadReuseToggle nativeUploadToggle;
+std::atomic<bool> nativeUploadToggleArmed{false};
 NativeUploadBatch nativeUploadBatch;std::atomic<bool> nativeUploadBatchOptIn{false};
 uint64_t batchFailureLogged=0;unsigned batchFailureMessages=0;
 void logUploadBatchStats(const char* stage){
@@ -64,6 +67,18 @@ void logUploadBatchStats(const char* stage){
 std::recursive_mutex nativeUploadMutex;
 thread_local void* selectedUploadCache=nullptr;
 thread_local ID3D11DeviceContext* selectedUploadContext=nullptr;
+
+void pollUploadReuseToggle(bool keyDown,bool capturing){
+    std::lock_guard<std::recursive_mutex> uploadLock(nativeUploadMutex);
+    if(!nativeUploadToggleArmed.load(std::memory_order_relaxed)||!renderProfile.control_thread())return;
+    const auto event=nativeUploadToggle.poll(keyDown,capturing);
+    if(event==UploadReuseToggle::Event::blocked)log_line("cpu_upload_reuse toggle ignored: capture active; release keys and retry after completion");
+    else if(event==UploadReuseToggle::Event::enabled||event==UploadReuseToggle::Event::disabled){
+        nativeUploadReuse.end();
+        nativeUploadOptIn.store(nativeUploadToggle.enabled());
+        log_line(nativeUploadToggle.enabled()?"cpu_upload_reuse runtime state=on; next complete scene frame; upload assumptions cleared":"cpu_upload_reuse runtime state=off; next complete scene frame; native uploads retained");
+    }
+}
 
 #pragma pack(push,1)
 struct UiArgs { std::uint32_t mode; TransformRecord transform[2]; };
@@ -743,8 +758,17 @@ void renderHook(void* unknown, bool laterPass) {
             if(readable(context,sizeof(void*))){
                 profileContext=context;profileEye=unsigned(before->eye_index);
                 if(profileEye==0){
+                    const bool wasCollecting=renderProfile.collecting();
+                    if(nativeUploadToggleArmed.load(std::memory_order_relaxed)){
+                        const bool toggleKey=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F10)&0x8000);
+                        pollUploadReuseToggle(toggleKey,wasCollecting);
+                    }
                     const bool key=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F9)&0x8000);
                     renderProfile.frame(context,key);
+                    if(!wasCollecting&&renderProfile.collecting()){
+                        char line[224]{};std::snprintf(line,sizeof(line),"render_profile configuration cpu_upload_reuse=%u cpu_outer_reuse=%u cpu_upload_batch=%u runtime_toggle=%u; fixed for this capture",
+                            unsigned(nativeUploadOptIn.load()),unsigned(nativeUploadOuterOptIn.load()),unsigned(nativeUploadBatchOptIn.load()),unsigned(nativeUploadToggleArmed.load()));log_line(line);
+                    }
                     const bool auditKey=(GetAsyncKeyState(VK_CONTROL)&0x8000)&&(GetAsyncKeyState(VK_MENU)&0x8000)&&(GetAsyncKeyState(VK_F8)&0x8000);
                     stereo_audit_frame(auditKey);
                 }
@@ -1118,6 +1142,7 @@ bool engine_start(ID3D11DeviceContext* context) {
     char auditSetting[8]{};const auto auditLength=GetEnvironmentVariableA("LMU_QV_STEREO_AUDIT",auditSetting,sizeof(auditSetting));
     wchar_t auditDirectory[32768]{};const auto auditDirectoryLength=GetEnvironmentVariableW(L"LMU_QV_STEREO_AUDIT_DIR",auditDirectory,32768);
     bool auditRequested=diagnostics_enabled()&&!stereoTiming&&auditLength==1&&auditSetting[0]=='1'&&auditDirectoryLength&&auditDirectoryLength<32768;
+    nativeUploadToggleArmed=false;nativeUploadToggle.configure(false);
     char uploadSetting[8]{};nativeUploadOptIn=!stereoTiming&&GetEnvironmentVariableA("LMU_QV_CPU_UPLOAD_REUSE",uploadSetting,sizeof(uploadSetting))==1&&uploadSetting[0]=='1';nativeUploadReuse.reset();
     char outerUploadSetting[8]{};nativeUploadOuterOptIn=!stereoTiming&&GetEnvironmentVariableA("LMU_QV_CPU_OUTER_REUSE",outerUploadSetting,sizeof(outerUploadSetting))==1&&outerUploadSetting[0]=='1';
     if(nativeUploadOuterOptIn)nativeUploadOptIn=true;
@@ -1284,6 +1309,9 @@ bool engine_start(ID3D11DeviceContext* context) {
     const auto durationSeconds=validDuration?unsigned(requestedSeconds):120u;
     if(profiling&&durationLength&&!validDuration)log_line("render_profile invalid duration; using 120 seconds (allowed 30..300)");
     renderProfile.configure(profiling,log_line,durationSeconds,flush_log);
+    nativeUploadToggle.configure(renderProfile.enabled()&&nativeUploadHooked&&nativeUploadOptIn&&!nativeUploadOuterOptIn&&!nativeUploadBatchOptIn&&!auditRequested);
+    nativeUploadToggleArmed=nativeUploadToggle.available();
+    if(nativeUploadToggleArmed)log_line("cpu_upload_reuse runtime toggle armed hotkey=Ctrl+Alt+F10 initial=on; changes at left-eye boundary; blocked during capture; hooks remain installed in both states");
     if(!std::strcmp(profileSetting,"1")&&!profiling)log_line("render_profile disabled: incompatible legacy timing/benchmark or stereo mode");
     installed.store(true);
     log_line(stereoTiming ? "engine: verified build; stereo timing render hook only; no quad repeats or projection/UI changes" :
@@ -1291,10 +1319,12 @@ bool engine_start(ID3D11DeviceContext* context) {
     return true;
 }
 void engine_stop() {
+    const bool toggleWasArmed=nativeUploadToggleArmed.exchange(false);
     stereo_audit_stop();
     if(nativePrepareHooked){MH_DisableHook(address<void>(nativePrepareRva));MH_RemoveHook(address<void>(nativePrepareRva));nativePrepareHooked=false;}
     {std::lock_guard<std::recursive_mutex> uploadLock(nativeUploadMutex);
-    const bool uploadWasEnabled=nativeUploadOptIn.exchange(false),batchWasEnabled=nativeUploadBatchOptIn.exchange(false);
+    nativeUploadToggle.configure(false);
+    const bool uploadWasEnabled=nativeUploadOptIn.exchange(false)||toggleWasArmed,batchWasEnabled=nativeUploadBatchOptIn.exchange(false);
     nativeUploadOuterOptIn=false;
     nativeUploadBatch.end(); // An active scope restores on its owner before trampoline removal.
     if(nativeUploadHooked){MH_DisableHook(address<void>(nativeUploadRva));MH_RemoveHook(address<void>(nativeUploadRva));nativeUploadHooked=false;}

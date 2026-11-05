@@ -94,7 +94,7 @@ try {
     $hooks=@('buffer','hook','trampoline','hde64')|ForEach-Object{Join-Path $build ('mh_'+$_+'.obj')}
     $basic=@('math','focus_box','native_xr_views','gpu_timing','render_profile','swapchain_sampling','pipeline_stats','benchmark_control','vrs_scope_policy','nv_vrs','ui_d3d_state','focus_overlay','outer_resample','native_outer_texture','native_outer_bindings','stereo_instancing','stereo_audit_abi','stereo_audit','stereo_shader','stereo_draw_proof','native_upload_reuse','native_upload_batch','focus_image_lease')
     $basic += @('benchmark_timing_ownership','render_view_snapshot','frame_submission','late_begin_frame','view_crop','benchmark_native','benchmark_overlay','benchmark_frame','benchmark_gpu','vrs_foveation','vrs_gaze','native_outer_bank')
-    $basic += @('async_log','native_pair_pass','nv_stereo_shader','nv_multiview_backend','xr_active_state','diagnostic_sampling','outer_runtime_lock','end_frame_lock','locate_runtime_lock','app_image_lock')
+    $basic += @('async_log','native_pair_pass','nv_stereo_shader','nv_multiview_backend','xr_active_state','diagnostic_sampling','upload_reuse_toggle','outer_runtime_lock','end_frame_lock','locate_runtime_lock','app_image_lock')
     foreach($test in $basic){
         $sources=@("tests/${test}_test.cpp")
         if($test -eq 'nv_vrs'){$sources+='nv_vrs.cpp'}
@@ -114,6 +114,7 @@ try {
     foreach($test in @('engine_hooks','native_outer_fallback','benchmark_engine')){
         Compile ($common+@("tests/${test}_test.cpp",'nv_vrs.cpp','stereo_audit.cpp','stereo_shader.cpp','stereo_draw_proof.cpp')+$hooks+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+(Join-Path $build ($test+'_test.exe')))))
         Run-Test ($test+'_test')
+        if($test -eq 'engine_hooks'){Run-Test 'engine_hooks_test' @('--runtime-upload-toggle')}
     }
     Run-Test 'engine_hooks_test' @('--process-identity')
     $identityFixture=Join-Path $build 'identity-fixture'

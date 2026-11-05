@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
+#include <thread>
 
 namespace lmuqv {
 bool testQuadFrame=false,testFullFovAvailable=true,testUiScenePresent=false;
@@ -32,7 +33,8 @@ ID3D11RenderTargetView* xr_outer_rtv(unsigned) {
     return testUiScenePresent?reinterpret_cast<ID3D11RenderTargetView*>(std::uintptr_t(1)):nullptr;
 }
 OuterTarget xr_outer_target(unsigned) {return {};}
-void log_line(const char*) {}
+std::vector<std::string> testLogLines;
+void log_line(const char* line) {testLogLines.emplace_back(line);}
 void flush_log(){}
 }
 namespace {
@@ -170,6 +172,36 @@ void outerUploadSettingsTest(){
     for(size_t i=0;i<prior.size();++i)SetEnvironmentVariableA(names[i],prior[i].empty()?nullptr:prior[i].c_str());
 }
 
+void runtimeUploadToggleTest(){
+    using namespace lmuqv;
+    std::array<std::byte,0x2660> cache{};
+    std::uintptr_t contextStorage=0;
+    auto* context=reinterpret_cast<ID3D11DeviceContext*>(&contextStorage);
+    nativeUploadOptIn=true;nativeUploadToggle.configure(true);nativeUploadToggleArmed=true;
+    renderProfile.configure(true,log_line,30);renderProfile.frame(nullptr,true);
+    std::thread other([]{pollUploadReuseToggle(true,renderProfile.collecting());});other.join();
+    require(nativeUploadOptIn,"foreign render thread toggled reuse during an active capture");
+    nativeUploadReuse.begin(cache.data(),context,false);
+    require(nativeUploadReuse.before(cache.data(),context).valid,"toggle fixture did not open a scope");
+    pollUploadReuseToggle(true,true);
+    require(nativeUploadOptIn&&nativeUploadReuse.before(cache.data(),context).valid,"active capture changed upload behavior");
+    renderProfile.finish("test");
+    pollUploadReuseToggle(true,false);
+    require(nativeUploadOptIn,"blocked press was deferred until capture completion");
+    pollUploadReuseToggle(false,false);pollUploadReuseToggle(true,false);
+    require(!nativeUploadOptIn&&!nativeUploadReuse.before(cache.data(),context).valid,"OFF retained stale upload assumptions");
+    pollUploadReuseToggle(false,false);
+    nativeUploadReuse.begin(cache.data(),context,false);
+    pollUploadReuseToggle(true,false);
+    require(nativeUploadOptIn&&!nativeUploadReuse.before(cache.data(),context).valid,"ON retained stale upload assumptions");
+    nativeUploadToggleArmed=false;pollUploadReuseToggle(false,false);pollUploadReuseToggle(true,false);
+    require(nativeUploadOptIn,"unarmed toggle changed native upload policy");
+    nativeUploadToggleArmed=true;pollUploadReuseToggle(false,false);pollUploadReuseToggle(true,false);
+    require(!nativeUploadOptIn,"summary fixture did not end with reuse OFF");
+    const auto logStart=testLogLines.size();engine_stop();
+    require(std::any_of(testLogLines.begin()+logStart,testLogLines.end(),[](const auto& line){return line.find("cpu_upload_reuse summary")!=std::string::npos;}),"ending OFF discarded reuse session counters");
+}
+
 // 0.3.3: hook targets must be plausible function starts in the real PE image.
 void hookTargetTest(){
     using namespace lmuqv;
@@ -208,6 +240,10 @@ void hookTargetTest(){
 }
 int main(int argc,char** argv) {
     using namespace lmuqv;
+    if(argc==2&&std::strcmp(argv[1],"--runtime-upload-toggle")==0){
+        SetEnvironmentVariableA("LMU_QV_DIAGNOSTICS","1");runtimeUploadToggleTest();
+        std::cout<<"Runtime upload toggle integration passed: owner-thread control, capture lockout, cache invalidation and OFF-state summary\n";return 0;
+    }
     if(argc==2&&std::strcmp(argv[1],"--process-identity")==0) {
         wchar_t path[32768]{};require(GetModuleFileNameW(nullptr,path,32768)!=0,"Process path unavailable");
         const bool namedLmu=_wcsicmp(std::filesystem::path(path).filename().c_str(),L"Le Mans Ultimate.exe")==0;

@@ -25,6 +25,10 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "$test failed" }
     }
     if($AsyncLogOnly -or $NvStereoShaderOnly -or $NvMultiviewOnly){return}
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static tests/upload_reuse_toggle_test.cpp -o build/upload_reuse_toggle_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Upload reuse toggle test compilation failed' }
+    & .\build\upload_reuse_toggle_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Upload reuse toggle test failed' }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static tests/native_pair_pass_test.cpp -o build/native_pair_pass_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native pair coordinator compilation failed' }
     & .\build\native_pair_pass_test.exe
@@ -66,6 +70,8 @@ try {
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/engine_hooks_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/engine_hooks_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Engine hook tests compilation failed' }
     & .\build\engine_hooks_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Engine hook policy tests failed' }
+    & .\build\engine_hooks_test.exe --runtime-upload-toggle
     if ($LASTEXITCODE -ne 0) { throw 'Engine hook tests failed' }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/native_outer_fallback_test.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o build/native_outer_fallback_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Native fallback tests compilation failed' }

@@ -52,6 +52,9 @@ public:
         }
     }
     bool enabled()const{return enabled_.load(std::memory_order_relaxed);}
+    // External diagnostic controls must use the same owner as capture state.
+    // collecting() alone is not a global activity check on foreign threads.
+    bool control_thread()const{return owns_thread();}
     bool collecting()const{if(!owns_thread())return false;std::lock_guard<std::mutex> lock(mutex_);return active_;}
     // At the left-eye scene boundary, with no outstanding CPU/GPU scope.
     // Key-down is injected to allow deterministic tests without global hotkeys.
