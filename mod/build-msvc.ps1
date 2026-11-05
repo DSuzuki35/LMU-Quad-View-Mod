@@ -1,4 +1,4 @@
-param([string]$LayerOutput=(Join-Path $PSScriptRoot 'build/lmu_quadview.dll'),[switch]$StereoShaderOnly,[switch]$StereoProofOnly,[switch]$UploadBatchOnly,[switch]$FocusLeaseOnly,[switch]$AutoloadOnly,[switch]$AsyncLogOnly)
+param([string]$LayerOutput=(Join-Path $PSScriptRoot 'build/lmu_quadview.dll'),[switch]$StereoShaderOnly,[switch]$StereoProofOnly,[switch]$UploadBatchOnly,[switch]$FocusLeaseOnly,[switch]$AutoloadOnly,[switch]$AsyncLogOnly,[switch]$NvStereoShaderOnly,[switch]$NvMultiviewOnly)
 $ErrorActionPreference='Stop'
 if(!(Get-Command cl.exe -ErrorAction SilentlyContinue)){throw 'Run build-msvc.cmd to initialize the x64 compiler environment.'}
 $LayerOutput=[IO.Path]::GetFullPath($LayerOutput)
@@ -26,6 +26,16 @@ try {
         Compile ($common+@('tests/async_log_test.cpp','async_log.cpp',('/Fe'+(Join-Path $build 'async_log_test.exe'))))
         Compile ($common+@('/LD','tests/async_log_lifetime_fixture.cpp','async_log.cpp',('/Fe'+(Join-Path $build 'async_log_lifetime_fixture.dll'))))
         Run-Test 'async_log_test' @('--dll-lifetime')
+        return
+    }
+    if($NvStereoShaderOnly){
+        Compile ($common+@('tests/nv_stereo_shader_test.cpp','nv_stereo_shader.cpp','d3d11.lib','d3dcompiler.lib',('/Fe'+(Join-Path $build 'nv_stereo_shader_test.exe'))))
+        Run-Test 'nv_stereo_shader_test'
+        return
+    }
+    if($NvMultiviewOnly){
+        Compile ($common+@('tests/nv_multiview_backend_test.cpp','nv_multiview_backend.cpp','d3d11.lib','d3dcompiler.lib',('/Fe'+(Join-Path $build 'nv_multiview_backend_test.exe'))))
+        Run-Test 'nv_multiview_backend_test'
         return
     }
     . (Join-Path $PSScriptRoot '../tools/version.ps1')
@@ -70,14 +80,14 @@ try {
     $hooks=@('buffer','hook','trampoline','hde64')|ForEach-Object{Join-Path $build ('mh_'+$_+'.obj')}
     $basic=@('math','focus_box','native_xr_views','gpu_timing','render_profile','swapchain_sampling','pipeline_stats','benchmark_control','vrs_scope_policy','nv_vrs','ui_d3d_state','focus_overlay','outer_resample','native_outer_texture','native_outer_bindings','stereo_instancing','stereo_audit_abi','stereo_audit','stereo_shader','stereo_draw_proof','native_upload_reuse','native_upload_batch','focus_image_lease')
     $basic += @('benchmark_timing_ownership','render_view_snapshot','frame_submission','late_begin_frame','view_crop','benchmark_native','benchmark_overlay','benchmark_frame','benchmark_gpu','vrs_foveation','vrs_gaze','native_outer_bank')
-    $basic += @('async_log','xr_active_state')
+    $basic += @('async_log','native_pair_pass','nv_stereo_shader','nv_multiview_backend','xr_active_state')
     foreach($test in $basic){
         $sources=@("tests/${test}_test.cpp")
         if($test -eq 'nv_vrs'){$sources+='nv_vrs.cpp'}
         if($test -eq 'stereo_shader'){$sources+='stereo_shader.cpp'}
         if($test -eq 'stereo_draw_proof'){$sources+=@('stereo_shader.cpp','stereo_draw_proof.cpp')}
         if($test -in @('focus_image_lease','frame_submission','render_view_snapshot','late_begin_frame','benchmark_frame','benchmark_timing_ownership','xr_active_state')){$sources+='async_log.cpp'}
-        if($test -eq 'async_log'){$sources+="${test}.cpp"}
+        if($test -in @('async_log','nv_stereo_shader','nv_multiview_backend')){$sources+="${test}.cpp"}
         if($test -eq 'stereo_audit'){$sources+=@('stereo_audit.cpp','stereo_shader.cpp','stereo_draw_proof.cpp');$sources+=$hooks}
         Compile ($common+$sources+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+(Join-Path $build ($test+'_test.exe')))))
         if($test -eq 'async_log'){

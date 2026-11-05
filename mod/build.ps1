@@ -1,20 +1,34 @@
 param(
     [string]$LayerOutput = (Join-Path $PSScriptRoot 'build/lmu_quadview.dll'),
     [string]$AnchorImage,
-    [switch]$AsyncLogOnly
+    [switch]$AsyncLogOnly,
+    [switch]$NvStereoShaderOnly,
+    [switch]$NvMultiviewOnly
 )
 $ErrorActionPreference = 'Stop'
 $LayerOutput = [IO.Path]::GetFullPath($LayerOutput)
 Push-Location $PSScriptRoot
 try {
     New-Item -ItemType Directory -Path 'build' -Force | Out-Null
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static tests/async_log_test.cpp async_log.cpp -o build/async_log_test.exe
-    if ($LASTEXITCODE -ne 0) { throw 'Async log test compilation failed' }
-    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -shared tests/async_log_lifetime_fixture.cpp async_log.cpp -o build/async_log_lifetime_fixture.dll
-    if ($LASTEXITCODE -ne 0) { throw 'Async log lifetime fixture compilation failed' }
-    & .\build\async_log_test.exe --dll-lifetime
-    if ($LASTEXITCODE -ne 0) { throw 'Async log test failed' }
-    if($AsyncLogOnly){return}
+    foreach ($test in @('async_log','nv_stereo_shader','nv_multiview_backend')) {
+        if(($AsyncLogOnly -or $NvStereoShaderOnly -or $NvMultiviewOnly) -and
+            !(($AsyncLogOnly -and $test -eq 'async_log') -or
+              ($NvStereoShaderOnly -and $test -eq 'nv_stereo_shader') -or
+              ($NvMultiviewOnly -and $test -eq 'nv_multiview_backend'))){continue}
+        & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" "${test}.cpp" -ld3d11 -ld3dcompiler -ldxguid -luser32 -o "build/${test}_test.exe"
+        if ($LASTEXITCODE -ne 0) { throw "$test compilation failed" }
+        if($test -eq 'async_log'){
+            & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -shared tests/async_log_lifetime_fixture.cpp async_log.cpp -o build/async_log_lifetime_fixture.dll
+            if ($LASTEXITCODE -ne 0) { throw 'Async log lifetime fixture compilation failed' }
+            & .\build\async_log_test.exe --dll-lifetime
+        }else{& ".\build\${test}_test.exe"}
+        if ($LASTEXITCODE -ne 0) { throw "$test failed" }
+    }
+    if($AsyncLogOnly -or $NvStereoShaderOnly -or $NvMultiviewOnly){return}
+    & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static tests/native_pair_pass_test.cpp -o build/native_pair_pass_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native pair coordinator compilation failed' }
+    & .\build\native_pair_pass_test.exe
+    if ($LASTEXITCODE -ne 0) { throw 'Native pair coordinator test failed' }
     . (Join-Path $PSScriptRoot '../tools/version.ps1')
     $versionFiles = Write-LmuVersionFiles (Join-Path $PSScriptRoot 'build/native-version')
     & windres $versionFiles.ResourcePath -O coff -o build/version.o
