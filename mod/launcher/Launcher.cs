@@ -214,25 +214,35 @@ namespace LmuQuadViewLauncher
 
     sealed class PurpleSlider : Control
     {
-        int current;
-        public int Minimum { get; set; }
-        public int Maximum { get; set; }
-        public int Value
+        decimal current;
+        public decimal Minimum { get; private set; }
+        public decimal Maximum { get; private set; }
+        public decimal AllowedMinimum { get; private set; }
+        public decimal AllowedMaximum { get; private set; }
+        public decimal Value
         {
             get { return current; }
-            set { int next = Math.Max(Minimum, Math.Min(Maximum, value)); if (current == next) return;
+            set { decimal next = Math.Max(AllowedMinimum, Math.Min(AllowedMaximum, value)); if (current == next) return;
                 current = next; Invalidate(); if (ValueChanged != null) ValueChanged(this, EventArgs.Empty); }
+        }
+        public void SetRange(decimal minimum,decimal maximum){
+            if(minimum>maximum)throw new ArgumentOutOfRangeException("minimum");
+            Minimum=minimum;Maximum=maximum;SetAllowedRange(minimum,maximum);
+        }
+        public void SetAllowedRange(decimal minimum,decimal maximum){
+            if(minimum<Minimum||maximum>Maximum||minimum>maximum)throw new ArgumentOutOfRangeException("minimum");
+            AllowedMinimum=minimum;AllowedMaximum=maximum;Value=current;Invalidate();
         }
         public event EventHandler ValueChanged;
         public PurpleSlider()
         {
-            Minimum = 1; Maximum = 400; Height = 32; TabStop = true; Cursor = Cursors.Hand;
+            SetRange(1,400); Height = 24; TabStop = true; Cursor = Cursors.Hand;
             AccessibleRole = AccessibleRole.Slider;
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
                 ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.Selectable, true);
         }
         float DpiScale { get { return DeviceDpi / 96F; } }
-        void SetFromMouse(int x) { Value = Minimum + (int)Math.Round((Maximum - Minimum) * Math.Max(0, Math.Min(1, (x - 9.0 * DpiScale) / Math.Max(1, Width - 18 * DpiScale)))); }
+        void SetFromMouse(int x) { Value = Decimal.Round(Minimum + (Maximum - Minimum) * (decimal)Math.Max(0, Math.Min(1, (x - 9.0 * DpiScale) / Math.Max(1, Width - 18 * DpiScale))),1); }
         protected override void OnMouseDown(MouseEventArgs e) { base.OnMouseDown(e); if (e.Button != MouseButtons.Left) return; Focus(); Capture = true; SetFromMouse(e.X); }
         protected override void OnMouseMove(MouseEventArgs e) { base.OnMouseMove(e); if (Capture && e.Button == MouseButtons.Left) SetFromMouse(e.X); }
         protected override void OnMouseUp(MouseEventArgs e) { Capture = false; base.OnMouseUp(e); }
@@ -240,17 +250,27 @@ namespace LmuQuadViewLauncher
         protected override void OnKeyDown(KeyEventArgs e)
         {
             base.OnKeyDown(e);
-            if (e.KeyCode == Keys.Left) Value--; else if (e.KeyCode == Keys.Right) Value++;
-            else if (e.KeyCode == Keys.Home) Value = Minimum; else if (e.KeyCode == Keys.End) Value = Maximum;
+            if (e.KeyCode == Keys.Left) Value-=.1m; else if (e.KeyCode == Keys.Right) Value+=.1m;
+            else if (e.KeyCode == Keys.Home) Value = AllowedMinimum; else if (e.KeyCode == Keys.End) Value = AllowedMaximum;
+            else return;
+            e.Handled=e.SuppressKeyPress=true;
         }
         protected override void OnEnabledChanged(EventArgs e) { base.OnEnabledChanged(e); Invalidate(); }
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
             float scale = DpiScale, inset = 9 * scale, radius = 6 * scale;
-            int y = Height / 2; float end = inset + (Width - 2 * inset) * (Value - Minimum) / (float)Math.Max(1, Maximum - Minimum);
+            int y = Height / 2;
+            float span=Width-2*inset;decimal domain=Math.Max(.00000001m,Maximum-Minimum);
+            float end=inset+span*(float)((Value-Minimum)/domain);
+            float allowedStart=inset+span*(float)((AllowedMinimum-Minimum)/domain),allowedEnd=inset+span*(float)((AllowedMaximum-Minimum)/domain);
             using (var track = new Pen(Theme.Line, 4 * scale)) g.DrawLine(track, inset, y, Width - inset, y);
-            using (var active = new Pen(Enabled ? Theme.Accent : Theme.Muted, 4 * scale)) g.DrawLine(active, inset, y, end, y);
+            using (var available = new Pen(Enabled ? Color.FromArgb(140,Theme.Accent) : Theme.Muted, 4 * scale)) g.DrawLine(available,allowedStart,y,allowedEnd,y);
+            using (var active = new Pen(Enabled ? Theme.Accent : Theme.Muted, 4 * scale)) g.DrawLine(active, allowedStart, y, end, y);
+            using(var tick=new Pen(Theme.Muted,scale)){
+                if(AllowedMinimum>Minimum)g.DrawLine(tick,allowedStart,y-5*scale,allowedStart,y+5*scale);
+                if(AllowedMaximum<Maximum)g.DrawLine(tick,allowedEnd,y-5*scale,allowedEnd,y+5*scale);
+            }
             using (var dot = new SolidBrush(Enabled ? Theme.Accent : Theme.Muted)) g.FillEllipse(dot, end - radius, y - radius, radius * 2, radius * 2);
             if (Focused) using (var ring = new Pen(Theme.Text)) g.DrawEllipse(ring, end - inset, y - inset, inset * 2, inset * 2);
         }
@@ -260,32 +280,54 @@ namespace LmuQuadViewLauncher
     {
         readonly NumericUpDown number = new SpacedNumericUpDown();
         readonly PurpleSlider slider = new PurpleSlider();
+        readonly Label range=Theme.Label("",8.5F,Theme.Muted);
+        bool synchronizing;
+        public event EventHandler ValueChanged;
+        public decimal Minimum {get{return number.Minimum;}}
+        public decimal Maximum {get{return number.Maximum;}}
+        public string RangeText {get{return range.Text;}}
         public decimal Value { get { return number.Value; } set { number.Value = Math.Max(number.Minimum, Math.Min(number.Maximum, value)); } }
         public void SetRange(decimal minimum,decimal maximum) {
-            number.Maximum=Math.Max(number.Maximum,maximum);number.Minimum=minimum;number.Maximum=maximum;
-            slider.Maximum=(int)Math.Ceiling(maximum);slider.Minimum=(int)Math.Floor(minimum);
+            SetBounds(minimum,maximum,true);
         }
+        public void SetAllowedRange(decimal minimum,decimal maximum){SetBounds(minimum,maximum,false);}
+        void SetBounds(decimal minimum,decimal maximum,bool fullRange){
+            if(minimum>maximum)throw new ArgumentOutOfRangeException("minimum");
+            decimal before=number.Value;
+            synchronizing=true;
+            try {
+                number.Minimum=Math.Min(number.Minimum,minimum);number.Maximum=Math.Max(number.Maximum,maximum);
+                number.Minimum=minimum;number.Maximum=maximum;
+                if(fullRange)slider.SetRange(minimum,maximum);else slider.SetAllowedRange(minimum,maximum);
+                slider.Value=number.Value;
+                range.Text="Allowed "+minimum.ToString("0.##")+"–"+maximum.ToString("0.##")+" %";
+                number.AccessibleDescription=slider.AccessibleDescription=range.Text;
+            }finally{synchronizing=false;}
+            if(before!=number.Value)OnValueChanged();
+        }
+        void OnValueChanged(){if(ValueChanged!=null)ValueChanged(this,EventArgs.Empty);}
         public PercentSetting(string title, int min, int max)
         {
             AutoScaleMode = AutoScaleMode.Inherit;
             Height = 78; Dock = DockStyle.Fill; BackColor = Theme.Card; Margin = new Padding(0, 3, 0, 0);
-            var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 2, Margin = new Padding(0) };
+            var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, RowCount = 3, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 22));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 32)); grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));grid.RowStyles.Add(new RowStyle(SizeType.Absolute,24));grid.RowStyles.Add(new RowStyle(SizeType.Percent,100));
             grid.Controls.Add(Theme.Label(title, 10F, Theme.Text), 0, 0);
-            number.Minimum = min; number.Maximum = max; number.Value = min; number.DecimalPlaces = 1;
+            number.Minimum = min; number.Maximum = max; number.Value = min; number.DecimalPlaces = 2;number.Increment=.1m;
             number.Font = new Font("Segoe UI", 10F); number.BackColor = Theme.Field; number.ForeColor = Theme.Text;
             number.BorderStyle = BorderStyle.FixedSingle; number.Dock = DockStyle.Fill; number.TextAlign = HorizontalAlignment.Right;
             number.AccessibleName = title + " percent"; number.Margin = new Padding(0, 3, 0, 0);
             grid.Controls.Add(number, 1, 0); grid.Controls.Add(Theme.Label(" %", 10F, Theme.Muted), 2, 0);
-            slider.Minimum = min; slider.Maximum = max; slider.Value = min; slider.AccessibleName = title;
+            slider.SetRange(min,max); slider.Value = min; slider.AccessibleName = title;
             slider.Dock = DockStyle.Fill; grid.Controls.Add(slider, 0, 1); grid.SetColumnSpan(slider, 3);
-            bool synchronizing = false;
-            number.ValueChanged += delegate { if (synchronizing) return; synchronizing = true; slider.Value = (int)Math.Round(number.Value); synchronizing = false; };
-            slider.ValueChanged += delegate { if (synchronizing) return; synchronizing = true; Value = slider.Value; synchronizing = false; };
+            range.Name="AllowedRange";range.Dock=DockStyle.Fill;range.Margin=new Padding(0);grid.Controls.Add(range,0,2);grid.SetColumnSpan(range,3);
+            number.ValueChanged += delegate {if(synchronizing)return;synchronizing=true;try{slider.Value=number.Value;}finally{synchronizing=false;}OnValueChanged();};
+            slider.ValueChanged += delegate {if(synchronizing)return;synchronizing=true;try{Value=slider.Value;slider.Value=number.Value;}finally{synchronizing=false;}OnValueChanged();};
             Controls.Add(grid);
+            SetRange(min,max);
         }
     }
 
@@ -295,7 +337,7 @@ namespace LmuQuadViewLauncher
         readonly ComboBox backend = Choice(new[] { "Native OpenXR (Pimax, etc.)", "Quad-Views-Foveated (mbucchia)", "VectorXR (experimental)", "Stereo VRS (NVIDIA, experimental)" });
         readonly ComboBox vrsRate = Choice(new[] { "1x1 (full shading)", "2x2 peripheral shading", "4x4 peripheral shading" });
         readonly ToolTip help = new ToolTip { AutoPopDelay=30000, InitialDelay=350, ReshowDelay=100, ShowAlways=true };
-        bool filling, focusDisplayedAsVrs;
+        bool filling, focusDisplayedAsVrs,updatingRanges;
         readonly ComboBox mode = Choice(new[] { "Auto / eye tracking", "Fixed foveation" });
         readonly TextBox game = Field();
         readonly TextBox manifest = Field();
@@ -511,6 +553,7 @@ namespace LmuQuadViewLauncher
             pages.Controls.Add(profilesPage); pages.Controls.Add(benchmarkPage); pages.Controls.Add(setupPage); pages.Controls.Add(renderingPage); main.Controls.Add(pages, 0, 1);
             BuildRendering(); BuildSetup(); BuildBenchmark(); BuildProfiles(); main.Controls.Add(BuildFooter(), 0, 2);ConfigureHelp();
             backend.SelectedIndexChanged += delegate { UpdateProvider(); };
+            foreach(var setting in new[]{outer,inner,focusWidth,focusHeight})setting.ValueChanged+=delegate{UpdateSettingRanges();};
             diagnosticsEnabled.Name="DiagnosticsEnabled";
             stereoDrawAudit.Name="StereoDrawAudit";
             stereoShaderCapture.Name="StereoShaderCapture";
@@ -568,7 +611,7 @@ namespace LmuQuadViewLauncher
             var grid = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 6, Margin = new Padding(0) };
             grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
             grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 260)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 280));
-            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 250)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 270)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54)); renderingPage.SetContent(grid);
+            grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 250)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 310)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 128)); grid.RowStyles.Add(new RowStyle(SizeType.Absolute, 54)); renderingPage.SetContent(grid);
             var provider = new Surface { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14) };
             var p = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7, Margin = new Padding(0) };
             p.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -633,8 +676,8 @@ namespace LmuQuadViewLauncher
         Control SettingCard(string title, PercentSetting first, PercentSetting second, string hint, Padding margin)
         {
             var card = new Surface { Dock = DockStyle.Fill, Margin = margin, Padding = new Padding(17, 12, 17, 10) };
-            var content = Stack(4); content.RowStyles.Add(new RowStyle(SizeType.Absolute, 29)); content.RowStyles.Add(new RowStyle(SizeType.Absolute, 65));
-            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 65)); content.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            var content = Stack(4); content.RowStyles.Add(new RowStyle(SizeType.Absolute, 29)); content.RowStyles.Add(new RowStyle(SizeType.Absolute, 82));
+            content.RowStyles.Add(new RowStyle(SizeType.Absolute, 82)); content.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             var caption = Theme.Label(title, 13F, Theme.Text); caption.Font = new Font("Segoe UI", 13F, FontStyle.Bold);
             content.Controls.Add(caption, 0, 0); content.Controls.Add(first, 0, 1); content.Controls.Add(second, 0, 2); content.Controls.Add(Caption(hint), 0, 3);
             card.Controls.Add(content); return card;
@@ -1063,7 +1106,7 @@ namespace LmuQuadViewLauncher
                 SetFocusDisplay(w,h,vrs);
             }
             outer.Enabled = inner.Enabled = qvfr;
-            ((TableLayoutPanel)outer.Parent).GetControlFromPosition(0,3).Text=vrs?"Stereo VRS uses full runtime/game resolution. Adjust resolution there.":"Linear scale per dimension.";
+            ((TableLayoutPanel)outer.Parent).GetControlFromPosition(0,3).Text=vrs?"Stereo VRS uses full runtime/game resolution. Adjust resolution there.":qvfr?"Purple: allowed range. Grey: unavailable. Limits keep outer inside the focus buffer.":"Linear scale per dimension.";
             focusWidth.Enabled = focusHeight.Enabled = qvfr||vrs;
             vrsRate.Enabled=vrs;cropWidth.Enabled=cropHeight.Enabled=outerBlur.Enabled=nativeOuter.Enabled=outline.Enabled=!vrs;
             Controls.Find("ResetCrop",true)[0].Enabled=!vrs;
@@ -1082,6 +1125,24 @@ namespace LmuQuadViewLauncher
                 : vector ? "Resolution, focus size and tracking are configured in VectorXR's LMU profile. QVFR and OpenXR Toolkit are bypassed for this launch. Restart LMU after changes."
                 : "Resolution and focus size are controlled by your native runtime. Switch to Quad-Views-Foveated to adjust them here. Restart LMU after changes.";
             UpdateAdvanced();
+            UpdateSettingRanges();
+        }
+        void UpdateSettingRanges(){
+            if(filling||updatingRanges)return;
+            updatingRanges=true;
+            try {
+                var settings=ReadValues(false);
+                SettingRanges.NormalizeForProvider(settings);
+                outer.SetRange(10,400);inner.SetRange(25,400);
+                outer.Value=settings.OuterPercent;inner.Value=settings.InnerPercent;
+                var limits=new SettingRanges(settings);
+                outer.SetAllowedRange(10,limits.OuterMaximum);inner.SetAllowedRange(limits.InnerMinimum,400);
+                bool calibrated=focusGeometry!=null&&!focusDisplayedAsVrs;
+                focusWidth.SetAllowedRange(calibrated?focusGeometry.DisplayWidth(limits.FocusWidthMinimum):limits.FocusWidthMinimum,
+                    calibrated?focusGeometry.DisplayWidth(90):90);
+                focusHeight.SetAllowedRange(calibrated?focusGeometry.DisplayHeight(limits.FocusHeightMinimum):limits.FocusHeightMinimum,
+                    calibrated?focusGeometry.DisplayHeight(90):90);
+            }finally{updatingRanges=false;}
         }
         void UpdateAdvanced() {
             bool quad=backend.SelectedIndex!=3;
@@ -1096,16 +1157,20 @@ namespace LmuQuadViewLauncher
             stereoShaderCapture.Enabled=stereoPairProof.Enabled=stereoDrawAudit.Enabled&&stereoDrawAudit.Checked;
         }
         void SetFocusDisplay(decimal width,decimal height,bool vrs) {
+            bool wasUpdating=updatingRanges;updatingRanges=true;
+            try {
             focusDisplayedAsVrs=vrs;
             bool calibrated=focusGeometry!=null&&!vrs;
             focusWidth.SetRange(calibrated?focusGeometry.DisplayWidth(10):10,calibrated?focusGeometry.DisplayWidth(90):90);
             focusHeight.SetRange(calibrated?focusGeometry.DisplayHeight(10):10,calibrated?focusGeometry.DisplayHeight(90):90);
             focusWidth.Value=calibrated?focusGeometry.DisplayWidth(width):width;
             focusHeight.Value=calibrated?focusGeometry.DisplayHeight(height):height;
+            }finally{updatingRanges=wasUpdating;}
         }
         void Fill(LauncherSettings s)
         {
             filling=true;
+            outer.SetRange(10,400);inner.SetRange(25,400);
             focusGeometry=s.FocusAspectRatio==0?null:new FocusGeometry(s.FocusAspectRatio);
             focusWidth.SetRange(focusGeometry==null?10:focusGeometry.DisplayWidth(10),focusGeometry==null?90:focusGeometry.DisplayWidth(90));
             focusHeight.SetRange(focusGeometry==null?10:focusGeometry.DisplayHeight(10),focusGeometry==null?90:focusGeometry.DisplayHeight(90));

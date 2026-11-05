@@ -7,7 +7,7 @@ New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($OutputPath)) -F
 New-Item -ItemType Directory -Path (Join-Path $PSScriptRoot 'build') -Force | Out-Null
 . (Join-Path $PSScriptRoot '../tools/version.ps1')
 $versionFiles = Write-LmuVersionFiles (Join-Path $PSScriptRoot 'build/launcher-version')
-$core = @((Join-Path $PSScriptRoot 'launcher/QvfrSettings.cs'),(Join-Path $PSScriptRoot 'launcher/FocusGeometry.cs'),(Join-Path $PSScriptRoot 'launcher/LaunchService.cs'),(Join-Path $PSScriptRoot 'launcher/AssemblyInfo.cs'))
+$core = @((Join-Path $PSScriptRoot 'launcher/QvfrSettings.cs'),(Join-Path $PSScriptRoot 'launcher/SettingRanges.cs'),(Join-Path $PSScriptRoot 'launcher/FocusGeometry.cs'),(Join-Path $PSScriptRoot 'launcher/LaunchService.cs'),(Join-Path $PSScriptRoot 'launcher/AssemblyInfo.cs'))
 $ui = @('Launcher.cs','NativeChrome.cs','LauncherUpdates.cs') | ForEach-Object { Join-Path $PSScriptRoot ('launcher/' + $_) }
 $manifest = Join-Path $PSScriptRoot 'launcher/app.manifest'
 $core += $versionFiles.AssemblyPath
@@ -36,3 +36,7 @@ Copy-Item -LiteralPath $appConfig -Destination ($layoutTest + '.config')
 & $layoutTest (Join-Path $PSScriptRoot 'build/gui-qa')
 if ($LASTEXITCODE -ne 0) { throw 'GUI layout tests failed' }
 Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256
+& $compiler /nologo /target:exe /platform:x64 /optimize+ /warnaserror+ /main:SliderRangeTests "/out:$(Join-Path $PSScriptRoot 'build/SliderRangeTests.exe')" @references @core @ui (Join-Path $PSScriptRoot 'launcher/SliderRangeTests.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Slider range tests compilation failed' }
+& (Join-Path $PSScriptRoot 'build/SliderRangeTests.exe')
+if ($LASTEXITCODE -ne 0) { throw 'Slider range tests failed' }

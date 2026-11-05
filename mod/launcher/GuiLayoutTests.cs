@@ -117,6 +117,15 @@ class GuiLayoutTests {
         if(pageName=="RenderingPage") {
             var provider=(ComboBox)Named(form,"ProviderSelector");
             foreach(var item in provider.Items)Check(TextRenderer.MeasureText(item.ToString(),provider.Font).Width+SystemInformation.VerticalScrollBarWidth<provider.Width,"Provider name is clipped");
+            foreach(var name in new[]{"outer","inner","focusWidth","focusHeight","focusOffsetX","focusOffsetY","cropWidth","cropHeight"}){
+                var setting=(PercentSetting)typeof(Launcher).GetField(name,BindingFlags.Instance|BindingFlags.NonPublic).GetValue(form);
+                var allowed=Named(setting,"AllowedRange");
+                typeof(DarkScrollPage).GetMethod("Reveal",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(page,new object[]{allowed});
+                Settle(form);FullyVisible(allowed);TextFits(allowed);
+            }
+            int selected=provider.SelectedIndex;provider.SelectedIndex=1;scroll.Value=0;Settle(form);
+            Screenshot(form,Path.Combine(output,stem+"-ranges.png"));
+            provider.SelectedIndex=selected;scroll.Value=0;Settle(form);
         }
         if(pageName=="BenchmarkPage") {
             foreach(var name in new[]{"BenchmarkEnabled","BenchmarkTemplate","BenchmarkVisibilityButton","BenchmarkRecordButton"})FullyVisible(Named(form,name));

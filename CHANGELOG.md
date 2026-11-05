@@ -8,6 +8,7 @@ Versions before 1.0 remain experimental and may change compatibility or settings
 
 - Add portable rendering profiles contributed by **Markus Stahl**: save, load, rename, delete, import and export `.lmuqv` files. Paths, devices, diagnostics, benchmark placement and headset calibration remain local. Imports reject DTD/entities, oversized files, unsupported format versions and invalid setting ranges.
 - Refresh the native Windows launcher with an OpenGrid XR inspired dark violet palette, rounded cards and clearer navigation. Keep the small .NET distribution.
+- Show live allowed slider intervals with dimmed unavailable sections. Constrain QVFR resolution/focus combinations consistently across dragging, keyboard and numeric entry, including calibrated headset units.
 - Offer a per-user installer alongside the portable ZIP. Preserve settings, profiles and logs across upgrades.
 - Check for stable GitHub updates in the launcher. Downloads and installation require user action; verify the installer SHA256 and timestamped publisher signature, and require LMU to be closed.
 - Reduce repeated cached outer-bank validation and stop hidden benchmark bitmap/preview work. Add opt-in lock-wait profiling to investigate CPU frametime spikes; no multi-millisecond game improvement is established yet.

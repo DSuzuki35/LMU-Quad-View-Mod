@@ -85,6 +85,8 @@ Use the **Setup-x64.exe installer** for Start menu and uninstall integration, or
 
 Use **Profiles** to save or share rendering settings as `.lmuqv` files. Imports keep your local paths, devices, diagnostics and calibration. Copy the `profiles` folder when moving a portable package. Profile support was contributed by **Markus Stahl**.
 
+Rendering sliders show their current **Allowed** interval. Purple marks the usable range and grey marks unavailable values. QVFR resolution and focus limits update together so the outer image fits the focus buffer; mouse, keyboard and numeric entry use the same bounds. Calibrated headset display units are taken into account. Native/VectorXR retain runtime-controlled settings.
+
 See [CPU work and profiling](docs/CPU-040.md), [installer behavior](docs/INSTALLER.md) and [EAC integrity diagnosis](docs/EAC.md) for details.
 
 1. Use the complete `LMU-Quad-View-Mod-0.4.0.zip` package. Published builds are on [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
