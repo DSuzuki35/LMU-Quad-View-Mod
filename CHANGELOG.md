@@ -4,7 +4,7 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
-## 0.5.1 - Unreleased
+## 0.5.1 - 2026-11-05
 
 Integrates Markus Stahl's 0.5.0 and 0.5.1 community patches on top of 0.4.0.
 **A huge thank you to Markus Stahl for the performance improvements, SimHub

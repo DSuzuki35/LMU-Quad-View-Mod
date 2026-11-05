@@ -1,4 +1,4 @@
-LMU QUAD VIEW MOD — v0.5.1 (development build)
+LMU QUAD VIEW MOD — v0.5.1
 
 CPU PERFORMANCE
 Preliminary measurements and user reports suggest around 0.5 ms lower CPU

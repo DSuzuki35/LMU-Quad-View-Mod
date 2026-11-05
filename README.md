@@ -5,7 +5,7 @@ A free Windows x64 / D3D11 mod that adds two outer and two focus views to
 Quad-Views-Foveated (QVFR) or VectorXR separately to provide quad views on a
 stereo runtime.
 
-**v0.5.1 is an experimental development build.** Headset and runtime compatibility
+**v0.5.1 is an experimental release.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
 **CPU headroom matters:** preliminary measurements and user reports suggest around
