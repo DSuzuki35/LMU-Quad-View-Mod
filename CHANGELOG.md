@@ -11,6 +11,8 @@ Versions before 1.0 remain experimental and may change compatibility or settings
 - Offer a per-user installer alongside the portable ZIP. Preserve settings, profiles and logs across upgrades.
 - Check for stable GitHub updates in the launcher. Downloads and installation require user action; verify the installer SHA256 and timestamped publisher signature, and require LMU to be closed.
 - Reduce repeated cached outer-bank validation and stop hidden benchmark bitmap/preview work. Add opt-in lock-wait profiling to investigate CPU frametime spikes; no multi-millisecond game improvement is established yet.
+- Default diagnostics, overlays, optional render experiments and startup update checks to off. Preserve explicit saved preferences. Queue diagnostic writes/flushes on a worker and throttle periodic messages.
+- Release the XR state lock around per-frame tracking/submission and image ownership calls. Prefetch outer images after Begin; preserve late-Begin captures, pipelined Wait results and retry ownership.
 - Add a read-only automatic-start integrity check for signature/hash/activation problems. Valid signatures do not guarantee Easy Anti-Cheat acceptance.
 - Retain the 0.3.3 hook, startup and Pimax frame-order fixes. New headset/runtime combinations still need testing.
 

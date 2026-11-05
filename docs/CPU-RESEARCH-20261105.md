@@ -47,5 +47,26 @@ Outer ownership tests check unlocked acquisition, blocking/nonblocking waits,
 release and destruction, prefetched ownership, timeout retry and rejection of
 borrowed render targets during an in-flight runtime operation.
 
+Tracking, VRS gaze sampling, EndFrame and application-image Acquire/Wait/Release
+also release the state lock during runtime calls. Tests check callback guards,
+independent application chains, submission metadata, failed releases and the
+next pipelined Wait. Startup/teardown and optional benchmark-overlay runtime
+operations still require their own lifecycle transactions; they have not all
+been changed. Diagnostic capture finalization can still do CPU aggregation.
+
 These are correctness and regression checks. A new matched cockpit capture is
 still needed before making a CPU-frametime improvement claim.
+
+## Verification
+
+The final MSVC native build and full test script passed, including 80 printed
+XR integration scenarios plus the focused lock/ownership, async writer lifetime,
+shader and fallback tests. The complete launcher build passed its settings,
+launch, profile, hardening and update tests and all hidden-window layout cases
+at simulated 100/150/200 percent scaling and default/minimum sizes.
+
+The runtime-pruning fixture now injects process presence, including a case that
+preserves every generated file while a game is running. Production still checks
+the real process list. The concurrently running user game was not closed or
+replaced. All test binaries remain unsigned. Full logs are local build artifacts
+`mod/build/cpu-final-msvc.log` and `mod/build/cpu-launcher.log`.

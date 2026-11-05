@@ -22,6 +22,7 @@ $files = @{
     'docs/EAC.md' = 'docs/EAC.md'
     'docs/INSTALLER.md' = 'docs/INSTALLER.md'
     'docs/CPU-040.md' = 'docs/CPU-040.md'
+    'docs/CPU-RESEARCH-20261105.md' = 'docs/CPU-RESEARCH-20261105.md'
     'mod/build/lmu_quadview.dll' = 'build/lmu_quadview.dll'
     'mod/build/lmu_autostart.dll' = 'build/lmu_autostart.dll'
     'mod/build/LMU-QuadView-Launcher.exe' = 'LMU-QuadView-Launcher.exe'

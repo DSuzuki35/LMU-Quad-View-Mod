@@ -238,7 +238,7 @@ for personal paths before sharing. A started process alone does not establish
 correct VR rendering.
 
 **Setup → Enable diagnostics and logging** controls mod logs, per-run metadata
-and diagnostic collection on the next launch. It defaults to enabled. Provider
+and diagnostic collection on the next launch. It defaults to disabled. Provider
 and runtime diagnostics are controlled separately.
 
 For a performance report, enable diagnostics and **Enable render profiling**,
