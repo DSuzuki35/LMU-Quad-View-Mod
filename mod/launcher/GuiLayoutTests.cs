@@ -161,7 +161,14 @@ class GuiLayoutTests {
         NoNativeScrollBars(form);
         if(pageName=="SetupPage") {
             foreach(var name in new[]{"CpuOuterReuse","OuterSsr","UpdateAutomatic","UpdateCheck","AutoStartIntegrity"}) {
-                var control=Named(form,name);control.Focus();Settle(form);FullyVisible(control);TextFits(control);
+                var control=Named(form,name);
+                if(control.Enabled)control.Focus();
+                else {
+                    // Disabled default experiments cannot receive keyboard
+                    // focus. Scroll to them and still check full reachability.
+                    typeof(DarkScrollPage).GetMethod("Reveal",BindingFlags.Instance|BindingFlags.NonPublic).Invoke(page,new object[]{control});
+                }
+                Settle(form);FullyVisible(control);TextFits(control);
             }
         }
         if(pageName=="RenderingPage") {
@@ -207,7 +214,7 @@ class GuiLayoutTests {
                 Check(form.AcceptButton==Named(form,"ProfileLoad"),"Profile list Enter does not load profile");
                 typeof(Launcher).GetMethod("ShowPage",flags).Invoke(form,new object[]{false});
                 Check(form.AcceptButton==Named(form,"LaunchButton"),"Rendering default launch button was not restored");
-                var experiments=new LauncherSettings {CpuOuterReuse=true,OuterSsr=true,DiagnosticsEnabled=false,StereoDrawAudit=true,StereoShaderCapture=true,StereoPairProof=true};
+                var experiments=new LauncherSettings {CpuOuterReuse=true,OuterSsr=true,NativeOuterResolution=true,DiagnosticsEnabled=false,StereoDrawAudit=true,StereoShaderCapture=true,StereoPairProof=true};
                 typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{experiments});
                 var experimentValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
                 Check(experimentValues.CpuOuterReuse&&experimentValues.OuterSsr,"GUI lost performance experiment preferences");
@@ -223,7 +230,7 @@ class GuiLayoutTests {
                 Check(experimentValues.CpuOuterReuse&&experimentValues.OuterSsr&&experimentValues.StereoDrawAudit&&experimentValues.StereoPairProof,"Mode switching destroys experiment or diagnostic preferences");
                 experiments.CpuUploadBatch=true;typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{experiments});
                 Check(Named(form,"CpuUploadBatch").Enabled&&!Named(form,"CpuOuterReuse").Enabled,"Saved conflicting CPU options must allow turning off the winning batch option");
-                var vrs=new LauncherSettings {Backend="VRS",VrsPeripheralRate=4,FocusAspectRatio=2,FocusWidthPercent=30,FocusHeightPercent=60,CropWidthPercent=75,NativeOuterResolution=true,StereoDrawAudit=true,CpuUploadReuse=true,RenderProfiling=true,DebugFocus=true};
+                var vrs=new LauncherSettings {Backend="VRS",DiagnosticsEnabled=true,VrsPeripheralRate=4,FocusAspectRatio=2,FocusWidthPercent=30,FocusHeightPercent=60,CropWidthPercent=75,NativeOuterResolution=true,StereoDrawAudit=true,CpuUploadReuse=true,RenderProfiling=true,DebugFocus=true};
                 typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{vrs});
                 var vrsValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
                 Check(vrsValues.Backend=="VRS","GUI lost VRS selection");
@@ -277,7 +284,7 @@ class GuiLayoutTests {
                 var normalized=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
                 Check(Math.Abs(normalized.FocusWidthPercent-22.801511m)<.00001m&&normalized.FocusHeightPercent==50,"Equal UI axes did not reach the provider correctly");
                 Check(normalized.FocusAspectRatio==original.FocusAspectRatio,"Calibration lost on save");
-                var vector=new LauncherSettings {Backend="VectorXR",FoveationMode="fixed",RenderProfiling=true,RenderProfileSeconds=180,VectorXrManifest=@"E:\VectorXR\layer.json",QuadViewsManifest=@"E:\QVFR\layer.json"};
+                var vector=new LauncherSettings {Backend="VectorXR",DiagnosticsEnabled=true,FoveationMode="fixed",RenderProfiling=true,RenderProfileSeconds=180,VectorXrManifest=@"E:\VectorXR\layer.json",QuadViewsManifest=@"E:\QVFR\layer.json"};
                 typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{vector});
                 var vectorValues=(LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null);
                 Check(vectorValues.RenderProfiling,"Profiling GUI setting lost");

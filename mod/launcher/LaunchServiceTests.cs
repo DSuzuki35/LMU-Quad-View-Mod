@@ -118,7 +118,7 @@ class LaunchServiceTests {
                 Check(experimentInfo.EnvironmentVariables["LMU_QV_CPU_OUTER_REUSE"]=="0"&&experimentInfo.EnvironmentVariables["LMU_QV_OUTER_SSR"]=="0","Inherited performance experiment switches leaked into defaults");
                 Check(Environment.GetEnvironmentVariable("LMU_QV_CPU_OUTER_REUSE")=="1"&&Environment.GetEnvironmentVariable("LMU_QV_OUTER_SSR")=="1","Performance controls modified host environment");
             } finally {Environment.SetEnvironmentVariable("LMU_QV_CPU_OUTER_REUSE",originalOuterReuse);Environment.SetEnvironmentVariable("LMU_QV_OUTER_SSR",originalSsr);}
-            var benchmarkSettings=new LauncherSettings {BenchmarkEnabled=true};
+            var benchmarkSettings=new LauncherSettings {BenchmarkEnabled=true,DiagnosticsEnabled=true};
             Check(LaunchService.MakeStartInfo(root,benchmarkSettings,native,Path.Combine(root,"benchmark.log")).EnvironmentVariables["LMU_QV_BENCHMARK"]=="1","Benchmark opt-in missing");
             benchmarkSettings.DiagnosticsEnabled=false;
             var quietBenchmark=LaunchService.MakeStartInfo(root,benchmarkSettings,native,Path.Combine(root,"benchmark.log"));
@@ -186,6 +186,7 @@ class LaunchServiceTests {
             Check(vectorInfo.EnvironmentVariables["LMU_QV_STEREO_SHADER_CAPTURE"]=="0","Shader export must default off");
             Check(vectorInfo.EnvironmentVariables["LMU_QV_STEREO_DRAW_PROOF"]=="0"&&vectorInfo.EnvironmentVariables["LMU_QV_CPU_UPLOAD_REUSE"]=="0","Prototypes must default off");
             Check(vectorInfo.EnvironmentVariables["LMU_QV_PROFILE_SECONDS"]=="120","Capture duration default missing");
+            vectorSettings.DiagnosticsEnabled=true;
             vectorSettings.RenderProfiling=true;
             vectorSettings.StereoDrawAudit=true;
             vectorSettings.StereoShaderCapture=true;
