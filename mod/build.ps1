@@ -68,6 +68,20 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "$test tests failed" }
     }
     foreach ($optimization in @('O0','O2')) {
+        foreach($test in @('stereo_batch_plan','stereo_constants')){
+            & g++ -std=c++17 "-$optimization" -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" -o "build/${test}_test_${optimization}.exe"
+            if($LASTEXITCODE -ne 0){throw "$test $optimization compilation failed"}
+            & ".\build\${test}_test_${optimization}.exe"
+            if($LASTEXITCODE -ne 0){throw "$test $optimization tests failed"}
+        }
+        & g++ -std=c++17 "-$optimization" -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/native_stereo_scene_plan_test.cpp -o "build/native_stereo_scene_plan_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native scene plan $optimization compilation failed" }
+        & ".\build\native_stereo_scene_plan_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native scene plan $optimization tests failed" }
+        & g++ -std=c++17 "-$optimization" -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party tests/native_stereo_view_inputs_test.cpp -o "build/native_stereo_view_inputs_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native view inputs $optimization compilation failed" }
+        & ".\build\native_stereo_view_inputs_test_${optimization}.exe"
+        if ($LASTEXITCODE -ne 0) { throw "Native view inputs $optimization tests failed" }
         & g++ -std=c++17 "-$optimization" -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static tests/native_stereo_owner_bounds_test.cpp -o "build/native_stereo_owner_bounds_test_${optimization}.exe"
         if ($LASTEXITCODE -ne 0) { throw "Native owner bounds $optimization compilation failed" }
         & ".\build\native_stereo_owner_bounds_test_${optimization}.exe"
@@ -113,6 +127,14 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Stereo shader conversion compilation failed' }
     & .\build\stereo_shader_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Stereo shader conversion tests failed' }
+    foreach($test in @('stereo_gpu_resources','stereo_targets','stereo_constant_arena','stereo_pipeline','stereo_batch')){
+        $sources=@("tests/${test}_test.cpp")
+        if($test -in @('stereo_pipeline','stereo_batch')){$sources+='stereo_shader.cpp'}
+        & g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -I ../prototype/third_party $sources -ld3d11 -ld3dcompiler -ldxguid -luser32 -o "build/${test}_test.exe"
+        if($LASTEXITCODE -ne 0){throw "$test compilation failed"}
+        & ".\build\${test}_test.exe"
+        if($LASTEXITCODE -ne 0){throw "$test tests failed"}
+    }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static tests/stereo_draw_proof_test.cpp stereo_shader.cpp stereo_draw_proof.cpp -ld3d11 -ld3dcompiler -ldxguid -luser32 -o build/stereo_draw_proof_test.exe
     if ($LASTEXITCODE -ne 0) { throw 'Stereo private proof compilation failed' }
     & .\build\stereo_draw_proof_test.exe

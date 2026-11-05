@@ -135,6 +135,7 @@ bool convert_stereo_shader(const void* raw,size_t size,StereoShaderStage stage,u
         for(const auto& p:inputs)require(p.semantic!=eyeSemantic&&p.system!=8&&p.system!=4&&p.system!=5,"existing instanced/stereo input requires a separate adapter");
         for(const auto& p:outputs)require(p.semantic!=eyeSemantic&&p.system!=4&&p.system!=5,"existing stereo/viewport output requires a separate adapter");
         const auto parsed=instructions(code);unsigned temps=0;uint32_t samplerSlots=0;bool foundTemps=false,body=false;std::map<unsigned,StereoConstantRange> bindings;
+        std::array<unsigned,14> declaredConstants{};
         for(const auto& inst:parsed){
             if(inst.opcode<88)body=true;else require(!body,"declarations after shader body");
             if(inst.opcode==dclTemps){require(inst.end-inst.start==2&&!foundTemps,"invalid temporary declaration");temps=code[inst.start+1];foundTemps=true;require(temps<4096,"temporary register limit");}
@@ -143,10 +144,11 @@ bool convert_stereo_shader(const void* raw,size_t size,StereoShaderStage stage,u
                 const auto bit=1u<<o.indices[0];require(!(samplerSlots&bit),"duplicate sampler declaration");samplerSlots|=bit;}
             if(inst.opcode==dclCB){size_t at=inst.start+1;const auto o=operand(code,at,inst.end);require(at==inst.end&&o.type==constant&&o.indices.size()==2&&o.reps[0]==0&&o.reps[1]==0,"unsupported CB declaration");
                 const auto slot=o.indices[0],count=o.indices[1];require(slot<13&&count&&count<=4096,"packed constant slot unavailable or invalid CB size");
+                require(!declaredConstants[slot],"duplicate CB declaration");declaredConstants[slot]=count;
                 if(slots&(1u<<slot)){require(!(code[inst.start]&(1u<<11)),"selected CB uses dynamic indexing");bindings.emplace(slot,StereoConstantRange{slot,count,0});}
             }
         }
-        require(!bindings.empty(),"no selected CB declaration");StereoShaderVariant variant;variant.samplerSlots=samplerSlots;
+        require(!bindings.empty(),"no selected CB declaration");StereoShaderVariant variant;variant.samplerSlots=samplerSlots;variant.constantRegisters=declaredConstants;
         for(auto& item:bindings){item.second.offset=variant.eyeStride;variant.eyeStride+=item.second.registers;variant.constants.push_back(item.second);}
         require(variant.eyeStride<=2048,"paired constants exceed D3D11 CB capacity");
         const auto eyeInput=free_register(inputs);inputs.push_back({stage==StereoShaderStage::vertex?"SV_InstanceID":eyeSemantic,0,stage==StereoShaderStage::vertex?8u:0u,1,eyeInput,0x101});

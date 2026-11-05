@@ -1,5 +1,11 @@
 # Native SPS input and scheduling contract
 
+The [owned scene preparation and GPU backend](SPS-OWNED-BACKEND.md) now implements
+independent classification/order, resource snapshots, paired constant uploads,
+ordered mono/paired execution and per-eye target bridging. WARP and local GPU
+tests pass. These components do not yet suppress LMU's original passes; the
+native producer and effect/consumer boundaries below remain required.
+
 The bounded ordinary-transform numeric prerequisite has passed on sampled native
 VectorXR calls. Step 3 now supplies an early owned focus-camera pair and copies
 unfiltered owner/source descriptions from verified selected-root entries. The

@@ -32,6 +32,9 @@ struct NativeStereoOwnerPlanInput {
     std::vector<NativeStereoOwner> owners;
     std::uint32_t root{}, globalMask{0xffffffffu};
     std::array<NativeStereoOwnerView, 2> views{}; // Left, then right.
+    // Optional ordered forest. Empty retains the single-root interface.
+    // These are actual roots; no fabricated owner/callback joins the trees.
+    std::vector<std::uint32_t> roots;
 };
 enum class NativeStereoOwnerEye { Left, Right };
 enum class NativeStereoOwnerField { CurrentValue, Flags };
@@ -47,6 +50,8 @@ struct NativeStereoOwnerTransition {
 };
 struct NativeStereoOwnerEyePlan {
     std::vector<std::uint32_t> ownerOrder;
+    // State seen by source emission, before this owner's children/final clear.
+    std::vector<NativeStereoOwnerState> emissionStates;
     std::vector<std::uint32_t> sourceOrder; // Unfiltered, owned source IDs in DFS order.
 };
 struct NativeStereoOwnerPlanResult {
@@ -75,33 +80,37 @@ inline NativeStereoOwnerPlanResult build_native_stereo_owner_plan(
     };
     const auto count = in.owners.size();
     if (count == 0 || count > nativeStereoOwnerNodeLimit) return refuse(Reason::NodeLimit);
-    if (in.root >= count) return refuse(Reason::InvalidRoot);
+    const auto rootCount=in.roots.empty()?size_t(1):in.roots.size();
+    if (rootCount>count||(in.roots.empty()&&in.root>=count)) return refuse(Reason::InvalidRoot);
     std::size_t sourceCount = 0, edgeCount = 0;
     for (const auto& owner : in.owners) {
         if (owner.sourceIds.size() > nativeStereoOwnerSourceLimit - sourceCount)
             return refuse(Reason::SourceLimit);
         sourceCount += owner.sourceIds.size();
-        // Valid trees have exactly count-1 edges. Refuse excess before scanning
+        // Valid forests have exactly count-rootCount edges. Refuse excess before scanning
         // any potentially enormous child vector or allocating scratch storage.
-        if (owner.children.size() > count - 1 - edgeCount) return refuse(Reason::InvalidTree);
+        if (owner.children.size() > count - rootCount - edgeCount) return refuse(Reason::InvalidTree);
         edgeCount += owner.children.size();
     }
     try {
         // Scratch is bounded by the validated node/edge/source totals. Parent
         // counts reject both duplicate references and shared children.
         std::vector<unsigned char> parents(count, 0);
+        const auto roots=in.roots.empty()?std::vector<std::uint32_t>{in.root}:in.roots;
+        std::vector<unsigned char> isRoot(count,0);
+        for(auto root:roots){if(root>=count||isRoot[root])return refuse(Reason::InvalidRoot);isRoot[root]=1;}
         for (const auto& owner : in.owners) {
             for (const auto child : owner.children) {
                 if (child >= count) return refuse(Reason::InvalidChildIndex);
-                if (++parents[child] != 1 || child == in.root) return refuse(Reason::InvalidTree);
+                if (++parents[child] != 1 || isRoot[child]) return refuse(Reason::InvalidTree);
             }
         }
-        if (edgeCount != count - 1) return refuse(Reason::InvalidTree);
+        if (edgeCount != count - rootCount) return refuse(Reason::InvalidTree);
         for (std::size_t i = 0; i < count; ++i)
-            if (i != in.root && parents[i] != 1) return refuse(Reason::InvalidTree);
+            if (!isRoot[i] && parents[i] != 1) return refuse(Reason::InvalidTree);
         std::vector<std::uint32_t> pending;
         pending.reserve(count);
-        pending.push_back(in.root);
+        for(auto root:roots)pending.push_back(root);
         std::size_t reached = 0;
         while (!pending.empty()) {
             const auto index = pending.back();
@@ -133,6 +142,7 @@ inline NativeStereoOwnerPlanResult build_native_stereo_owner_plan(
         for (const auto& owner : in.owners) out.finalStates.push_back(owner.state);
         for (auto& eye : out.eyes) {
             eye.ownerOrder.reserve(count);
+            eye.emissionStates.reserve(count);
             eye.sourceOrder.reserve(sourceCount);
         }
         // Each eye can assign current, execute three bounds writes and clear flags.
@@ -176,12 +186,14 @@ inline NativeStereoOwnerPlanResult build_native_stereo_owner_plan(
                 }
                 auto& plan = out.eyes[eyeIndex];
                 plan.ownerOrder.push_back(index);
+                plan.emissionStates.push_back(state);
                 const auto& ids = in.owners[index].sourceIds;
                 plan.sourceOrder.insert(plan.sourceOrder.end(), ids.begin(), ids.end());
                 return true;
             };
-            if (enter(in.root)) stack.push_back({in.root, 0});
-            while (!stack.empty()) {
+            for(auto root:roots){
+              if (enter(root)) stack.push_back({root, 0});
+              while (!stack.empty()) {
                 auto& frame = stack.back();
                 const auto& children = in.owners[frame.owner].children;
                 if (frame.nextChild < children.size()) {
@@ -191,6 +203,7 @@ inline NativeStereoOwnerPlanResult build_native_stereo_owner_plan(
                     finishOwner(frame.owner);
                     stack.pop_back();
                 }
+              }
             }
             if(boundsFailed)return refuse(Reason::UnsupportedOwnerBounds);
         }

@@ -2,6 +2,7 @@
 #include "xr_frame_inputs.hpp"
 #include "native_stereo_camera.hpp"
 #include "native_stereo_transform.hpp"
+#include "native_stereo_view_math.hpp"
 
 namespace lmuqv {
 struct NativeStereoFocusEye {
@@ -80,7 +81,8 @@ inline NativeStereoFocusInputs prepare_native_stereo_focus_inputs(
         // coefficients are independent of clipping planes; calculate once.
         focus.projection=replace_fov(out.outerProjection[eye],fovProjection);
         focus.farProjection=replace_fov(out.outerFarProjection[eye],fovProjection);
-        focus.derived=multiply(focus.current,focus.projection);
+        if(!native_stereo_view_product(focus.current,focus.projection,focus.derived))
+            return refuse("non-finite focus derived matrix");
         if(!native_camera_detail::finite(focus.current)||!native_camera_detail::finite(focus.derived))
             return refuse("non-finite focus camera arithmetic");
     }

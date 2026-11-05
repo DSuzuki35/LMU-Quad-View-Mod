@@ -65,10 +65,11 @@ try {
     $basic=@('math','focus_box','native_xr_views','gpu_timing','render_profile','swapchain_sampling','pipeline_stats','benchmark_control','vrs_scope_policy','nv_vrs','ui_d3d_state','focus_overlay','outer_resample','native_outer_texture','native_outer_bindings','stereo_instancing','stereo_audit_abi','stereo_audit','stereo_shader','stereo_draw_proof','native_upload_reuse','native_upload_batch','focus_image_lease')
     $basic += @('benchmark_timing_ownership','render_view_snapshot','frame_submission','late_begin_frame','view_crop','benchmark_native','benchmark_overlay','benchmark_frame','benchmark_gpu','vrs_foveation','vrs_gaze','native_outer_bank')
     $basic += @('stereo_audit_trigger','native_stereo_packets','native_stereo_camera','native_stereo_source','native_stereo_transform_audit','sps_cpu_profile','sps_cpu_profile_hooks')
+    $basic += @('stereo_gpu_resources','stereo_targets','stereo_constant_arena','stereo_pipeline','stereo_batch')
     foreach($test in $basic){
         $sources=@("tests/${test}_test.cpp")
         if($test -eq 'nv_vrs'){$sources+='nv_vrs.cpp'}
-        if($test -eq 'stereo_shader'){$sources+='stereo_shader.cpp'}
+        if($test -in @('stereo_shader','stereo_pipeline','stereo_batch')){$sources+='stereo_shader.cpp'}
         if($test -eq 'stereo_draw_proof'){$sources+=@('stereo_shader.cpp','stereo_draw_proof.cpp')}
         if($test -in @('stereo_audit','native_stereo_transform_audit')){$sources+=@('stereo_audit.cpp','stereo_shader.cpp','stereo_draw_proof.cpp');$sources+=$hooks}
         if($test -eq 'sps_cpu_profile_hooks'){$sources+=$hooks}
@@ -81,7 +82,7 @@ try {
     foreach($optimization in @('/Od','/O2')){
         $numericCommon=@($common | Where-Object { $_ -ne '/O2' })+@($optimization)
         $suffix=if($optimization -eq '/Od'){'O0'}else{'O2'}
-        foreach($test in @('native_stereo_classify','native_stereo_classify_capture','native_stereo_owner_bounds','native_stereo_owner_plan','native_stereo_transform','native_stereo_focus_inputs','native_stereo_owner_inputs')){
+        foreach($test in @('native_stereo_classify','native_stereo_classify_capture','native_stereo_owner_bounds','native_stereo_owner_plan','native_stereo_transform','native_stereo_focus_inputs','native_stereo_view_inputs','native_stereo_scene_plan','native_stereo_owner_inputs','stereo_batch_plan','stereo_constants')){
             $name=$test+'_test_'+$suffix
             Compile ($numericCommon+@("tests/${test}_test.cpp",('/Fe'+(Join-Path $build ($name+'.exe')))))
             Run-Test $name

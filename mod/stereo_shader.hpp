@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <array>
 
 namespace lmuqv {
 // Research compiler only: this does not install hooks, replace a game shader,
@@ -17,6 +18,7 @@ struct StereoShaderVariant {
     // Exact SM4 sampler declarations; body operands must reference a declared
     // immediate slot. Allows ignoring stale, unused sampler bindings safely.
     uint32_t samplerSlots=0;
+    std::array<unsigned,14> constantRegisters{};
     std::string geometrySource;
 };
 // The first supported family is legacy SM4 VS/PS with ordinary signatures and
