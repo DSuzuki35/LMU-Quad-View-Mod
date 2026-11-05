@@ -48,6 +48,9 @@ int main(){try{
     imageResults[2]=XR_SUCCESS;check(layerReleaseSwapchainImage(leftChain,&ri)==XR_SUCCESS&&s.appChains.at(leftChain).acquired.empty()&&!frameOperationInFlight(),"release did not retire ownership");
     otherChain=false;s.appChains.at(leftChain).images.push_back(reinterpret_cast<ID3D11Texture2D*>(1));
     check(layerAcquireSwapchainImage(leftChain,&ai,&index)==XR_SUCCESS&&layerWaitSwapchainImage(leftChain,&wi)==XR_SUCCESS,"lease fixture acquisition failed");
+    for(auto* inFlight:{&s.locateInFlight,&s.focusBeginInFlight,&s.submitInFlight,&s.outer[0].runtimeBusy,&s.outer[1].runtimeBusy}){
+        *inFlight=true;lmuqv::FocusImageLease blocked;check(!lmuqv::xr_hold_focus_image(0,blocked),"borrowed focus image during frame runtime operation");*inFlight=false;
+    }
     lmuqv::FocusImageLease lease;check(lmuqv::xr_hold_focus_image(0,lease),"lease fixture hold failed");check(layerReleaseSwapchainImage(leftChain,&ri)==XR_SUCCESS&&s.appChains.at(leftChain).releasePending,"release was not deferred");
     retiringLease=&lease;imageResults[2]=XR_ERROR_RUNTIME_FAILURE;check(!lmuqv::xr_retire_focus_image(lease)&&lmuqv::xr_focus_lease_valid(lease)&&s.appChains.at(leftChain).releasePending&&s.appChains.at(leftChain).acquired.size()==1&&!frameOperationInFlight(),"failed deferred release lost lease/retry");
     imageResults[2]=XR_SUCCESS;check(lmuqv::xr_retire_focus_image(lease)&&!lease.token&&!s.appChains.at(leftChain).releasePending&&s.appChains.at(leftChain).acquired.empty()&&!frameOperationInFlight(),"deferred release did not finish");retiringLease=nullptr;

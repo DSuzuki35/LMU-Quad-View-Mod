@@ -1338,7 +1338,7 @@ bool xr_prepare_focus_image_ownership(){
 }
 bool xr_hold_focus_image(unsigned eye,FocusImageLease& lease){
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
-    if(lease.token||eye>1||!s.focusOwnership||s.focusBeginInFlight||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime||focusLeaseSerial==UINT64_MAX)return false;
+    if(lease.token||eye>1||!s.focusOwnership||frameOperationInFlight(false)||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime||focusLeaseSerial==UINT64_MAX)return false;
     AppChain* selected=nullptr;
     for(auto& pair:s.appChains)if(pair.second.eye==eye){auto& app=pair.second;
         if(app.runtimeBusy||app.focusLease||app.releasePending||app.trackingInvalid||app.acquired.size()!=1||!app.acquired.front().waited||app.acquired.front().index>=app.images.size())continue;
