@@ -98,7 +98,7 @@ struct AppChain {
     std::vector<ID3D11Texture2D*> images;
     std::vector<ID3D11RenderTargetView*> focusRtvs;
     std::deque<AppImageOwnership> acquired;
-    bool trackingInvalid=false;
+    bool trackingInvalid=false,runtimeBusy=false;
     uint64_t focusLease=0,leaseFrame=0;DWORD leaseOwner=0;
     bool releasePending=false;
     XrSwapchainImageReleaseInfo pendingRelease{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO,nullptr};
@@ -141,6 +141,7 @@ struct State {
     bool sampledInputs=false;
     bool focusOwnership=false,focusBeginInFlight=false; // No production renderer enables this yet.
     bool submitInFlight=false; // Pins submitted frame resources while EndFrame is unlocked.
+    unsigned appImageOperations=0; // Pins session/map/borrowed textures during unlocked image calls.
     bool requestEyeTracking=true;
     bool eyeTrackingActive=false,foveationResolved=false;
     XrSystemId foveationSystem=XR_NULL_SYSTEM_ID;
@@ -158,7 +159,22 @@ struct State {
     unsigned captureMask=0;
     uint64_t frames=0;
 } s;
-bool frameOperationInFlight(){return s.locateInFlight||s.focusBeginInFlight||s.submitInFlight||s.outer[0].runtimeBusy||s.outer[1].runtimeBusy;}
+bool frameOperationInFlight(bool includeAppImages=true){return (includeAppImages&&s.appImageOperations)||s.locateInFlight||s.focusBeginInFlight||s.submitInFlight||s.outer[0].runtimeBusy||s.outer[1].runtimeBusy;}
+// Independent application chains may advance together. Destruction, frame
+// mutation and borrowed-image users still see the combined lifetime reservation.
+bool reserveAppImageOperation(XrSwapchain chain){
+    if(frameOperationInFlight(false))return false;
+    const auto found=s.appChains.find(chain);
+    if(found!=s.appChains.end()){
+        if(found->second.runtimeBusy)return false;
+        found->second.runtimeBusy=true;
+    }else if(s.appImageOperations)return false; // Forward an unknown handle once for runtime validation.
+    ++s.appImageOperations;return true;
+}
+void retireAppImageOperation(XrSwapchain chain){
+    const auto found=s.appChains.find(chain);if(found!=s.appChains.end())found->second.runtimeBusy=false;
+    --s.appImageOperations;
+}
 std::atomic<bool> quadActive{false},vrsActive{false};
 // Called under stateMutex when lifecycle state changes. These are coarse mode
 // snapshots, not ownership of the session or any of its graphics resources.
@@ -895,10 +911,12 @@ XrResult XRAPI_CALL layerEnumerateSwapchainImages(XrSwapchain chain,uint32_t cap
     return r;
 }
 XrResult XRAPI_CALL layerAcquireSwapchainImage(XrSwapchain chain,const XrSwapchainImageAcquireInfo* info,uint32_t* index) {
-    std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    std::unique_lock<std::recursive_mutex> lock(stateMutex);
     if(s.focusOwnership){const auto pending=s.appChains.find(chain);
         if(pending!=s.appChains.end()&&pending->second.focusLease){logf("stereo_pass acquire refused: rendering owner must retire focus lease first eye=%u",pending->second.eye);return XR_ERROR_CALL_ORDER_INVALID;}}
-    XrResult r=next.AcquireSwapchainImage(chain,info,index);
+    if(!reserveAppImageOperation(chain))return XR_ERROR_CALL_ORDER_INVALID;
+    const auto acquire=next.AcquireSwapchainImage;lock.unlock();const XrResult r=acquire(chain,info,index);lock.lock();
+    retireAppImageOperation(chain);
     auto found=s.appChains.find(chain);
     if(trackAppImages()&&XR_SUCCEEDED(r)&&index&&found!=s.appChains.end()&&found->second.eye<2){
         auto& app=found->second;
@@ -910,8 +928,10 @@ XrResult XRAPI_CALL layerAcquireSwapchainImage(XrSwapchain chain,const XrSwapcha
 }
 XrResult XRAPI_CALL layerWaitSwapchainImage(XrSwapchain chain,const XrSwapchainImageWaitInfo* info) {
     // Waiting for a runtime image may block while another rendering thread finishes.
-    XrResult r=next.WaitSwapchainImage(chain,info);
-    std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    std::unique_lock<std::recursive_mutex> lock(stateMutex);
+    if(!reserveAppImageOperation(chain))return XR_ERROR_CALL_ORDER_INVALID;
+    const auto wait=next.WaitSwapchainImage;lock.unlock();const XrResult r=wait(chain,info);lock.lock();
+    retireAppImageOperation(chain);
     auto found=s.appChains.find(chain);
     if(trackAppImages()&&r==XR_SUCCESS&&found!=s.appChains.end()&&found->second.eye<2){
         for(auto& image:found->second.acquired)if(!image.waited){image.waited=true;break;}
@@ -919,7 +939,9 @@ XrResult XRAPI_CALL layerWaitSwapchainImage(XrSwapchain chain,const XrSwapchainI
     if(xrDiagnosticFrameLog()||r!=XR_SUCCESS)logf("xrWaitSwapchainImage result=%d",r);
     return r;
 }
-XrResult releaseAppImageNow(XrSwapchain chain,const XrSwapchainImageReleaseInfo* info) {
+XrResult releaseAppImageNow(XrSwapchain chain,const XrSwapchainImageReleaseInfo* info,std::unique_lock<std::recursive_mutex>& lock) {
+    if(!reserveAppImageOperation(chain))return XR_ERROR_CALL_ORDER_INVALID;
+    { // End iterator/reference lifetime before entering an unlocked runtime call.
     auto found=s.appChains.find(chain);
     if((s.pixelEnabled||s.debugFocus)&&found!=s.appChains.end()&&found->second.eye<2){
         auto& app=found->second;
@@ -937,19 +959,26 @@ XrResult releaseAppImageNow(XrSwapchain chain,const XrSwapchainImageReleaseInfo*
             diagnosePixelSlot(app.eye+2,app.images[app.acquired.front().index]);
         }
     }
-    XrResult r=next.ReleaseSwapchainImage(chain,info);
+    }
+    const auto release=next.ReleaseSwapchainImage;lock.unlock();const XrResult r=release(chain,info);lock.lock();
+    retireAppImageOperation(chain);
+    auto found=s.appChains.find(chain);
     if(trackAppImages()&&XR_SUCCEEDED(r)&&found!=s.appChains.end()&&!found->second.acquired.empty())found->second.acquired.pop_front();
     if(xrDiagnosticFrameLog()||XR_FAILED(r))logf("xrReleaseSwapchainImage result=%d",r);
     return r;
 }
 XrResult XRAPI_CALL layerReleaseSwapchainImage(XrSwapchain chain,const XrSwapchainImageReleaseInfo* info) {
-    std::lock_guard<std::recursive_mutex> lock(stateMutex);auto found=s.appChains.find(chain);
+    std::unique_lock<std::recursive_mutex> lock(stateMutex);
+    if(frameOperationInFlight(false))return XR_ERROR_CALL_ORDER_INVALID;
+    {auto found=s.appChains.find(chain);
+    if(found!=s.appChains.end()&&found->second.runtimeBusy)return XR_ERROR_CALL_ORDER_INVALID;
     if(found!=s.appChains.end()&&found->second.focusLease){auto& app=found->second;
         if(!info||info->type!=XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO||info->next||app.releasePending||app.leaseFrame!=s.frames||app.acquired.size()!=1||!app.acquired.front().waited)return XR_ERROR_CALL_ORDER_INVALID;
         app.pendingRelease=*info;app.releasePending=true;
         logf("stereo_pass focus release deferred eye=%u frame=%llu",app.eye,static_cast<unsigned long long>(s.frames));return XR_SUCCESS;
     }
-    return releaseAppImageNow(chain,info);
+    }
+    return releaseAppImageNow(chain,info,lock);
 }
 bool validInner(const XrSwapchainSubImage& image,unsigned eye) {
     auto found=s.appChains.find(image.swapchain);if(found==s.appChains.end())return false;
@@ -1312,7 +1341,7 @@ bool xr_hold_focus_image(unsigned eye,FocusImageLease& lease){
     if(lease.token||eye>1||!s.focusOwnership||s.focusBeginInFlight||!s.frame||!s.shouldRender||!s.located||s.locateTime!=s.predictedTime||focusLeaseSerial==UINT64_MAX)return false;
     AppChain* selected=nullptr;
     for(auto& pair:s.appChains)if(pair.second.eye==eye){auto& app=pair.second;
-        if(app.focusLease||app.releasePending||app.trackingInvalid||app.acquired.size()!=1||!app.acquired.front().waited||app.acquired.front().index>=app.images.size())continue;
+        if(app.runtimeBusy||app.focusLease||app.releasePending||app.trackingInvalid||app.acquired.size()!=1||!app.acquired.front().waited||app.acquired.front().index>=app.images.size())continue;
         if(selected)return false;selected=&app;
     }
     if(!selected)return false;auto& app=*selected;auto* texture=app.images[app.acquired.front().index];if(!texture)return false;
@@ -1323,15 +1352,19 @@ bool xr_focus_lease_valid(const FocusImageLease& lease){
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(!lease.token||!s.frame||lease.frame!=s.frames||!s.focusOwnership)return false;
     for(const auto& pair:s.appChains){const auto& app=pair.second;
-        if(app.focusLease==lease.token)return app.eye==lease.eye&&app.leaseFrame==lease.frame&&app.leaseOwner==GetCurrentThreadId()&&app.acquired.size()==1&&app.acquired.front().index==lease.index&&lease.index<app.images.size()&&app.images[lease.index]==lease.texture;
+        if(app.focusLease==lease.token)return !app.runtimeBusy&&app.eye==lease.eye&&app.leaseFrame==lease.frame&&app.leaseOwner==GetCurrentThreadId()&&app.acquired.size()==1&&app.acquired.front().index==lease.index&&lease.index<app.images.size()&&app.images[lease.index]==lease.texture;
     }return false;
 }
 bool xr_retire_focus_image(FocusImageLease& lease){
-    std::lock_guard<std::recursive_mutex> lock(stateMutex);if(!xr_focus_lease_valid(lease))return false;
-    for(auto& pair:s.appChains){auto& app=pair.second;if(app.focusLease!=lease.token)continue;
-        if(app.releasePending&&XR_FAILED(releaseAppImageNow(pair.first,&app.pendingRelease)))return false;
-        app.focusLease=app.leaseFrame=0;app.leaseOwner=0;app.releasePending=false;lease={};return true;
-    }return false;
+    std::unique_lock<std::recursive_mutex> lock(stateMutex);if(!xr_focus_lease_valid(lease))return false;
+    XrSwapchain chain=XR_NULL_HANDLE;bool releasePending=false;XrSwapchainImageReleaseInfo pending{};
+    for(const auto& pair:s.appChains)if(pair.second.focusLease==lease.token){chain=pair.first;releasePending=pair.second.releasePending;pending=pair.second.pendingRelease;break;}
+    if(!chain)return false;
+    if(releasePending&&XR_FAILED(releaseAppImageNow(chain,&pending,lock)))return false;
+    // Re-find by handle: no map iterator, AppChain reference or member-info
+    // pointer crosses the runtime call. Failure above preserves the lease/retry.
+    auto found=s.appChains.find(chain);if(found==s.appChains.end()||found->second.focusLease!=lease.token)return false;
+    auto& app=found->second;app.focusLease=app.leaseFrame=0;app.leaseOwner=0;app.releasePending=false;lease={};return true;
 }
 bool xr_copy_outer(unsigned eye,ID3D11Texture2D* source) {
     if(eye>1)return false;
