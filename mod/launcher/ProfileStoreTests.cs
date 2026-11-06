@@ -17,7 +17,7 @@ class ProfileStoreTests
         return new LauncherSettings {
             GameDirectory = @"C:\Games\LMU", QuadViewsManifest = @"C:\QVFR\qvfr.json", VectorXrManifest = @"C:\Vec\v.json",
             Backend = "QVFR", OuterPercent = 30, InnerPercent = 120, FocusWidthPercent = 40, FocusHeightPercent = 35,
-            FocusOffsetXPercent = -3.5m, FocusOffsetYPercent = 2, CropWidthPercent = 90, CropHeightPercent = 85.5m, OuterBlur = 0.75m,
+            FocusOffsetXPercent = -3.5m, FocusOffsetYPercent = 2, CropWidthPercent = 90, CropHeightPercent = 85.5m,
             DiagnosticsEnabled = false, RenderProfiling = true, BenchmarkVisibilityDevice = Guid.NewGuid().ToString("D"),
             BenchmarkVisibilityButton = 3, BenchmarkVisibilityName = "Wheel", FocusAspectRatio = 1.25m, CpuOuterReuse = true };
     }
@@ -49,18 +49,19 @@ class ProfileStoreTests
             Require(store.List().Single().Name == "Race night", "name not normalized");
             var loaded = store.Load("race NIGHT");
             Require(loaded.OuterPercent == 30 && loaded.InnerPercent == 120 && loaded.FocusOffsetXPercent == -3.5m && loaded.CropHeightPercent == 85.5m
-                && loaded.OuterBlur == 0.75m && loaded.CpuOuterReuse && loaded.Backend == "QVFR", "values changed in round trip");
+                && loaded.CpuOuterReuse && loaded.Backend == "QVFR", "values changed in round trip");
             Throws<IOException>(() => store.Save(SettingsProfile.Capture("RACE NIGHT", local), false), "case-insensitive duplicate accepted");
             local.OuterPercent = 20; store.Save(SettingsProfile.Capture("Race night", local), true);
             Require(store.Load("Race night").OuterPercent == 20 && store.List().Count == 1, "overwrite failed or duplicated");
 
             // applying keeps everything machine-specific
             var other = new LauncherSettings { GameDirectory = @"E:\LMU", QuadViewsManifest = @"E:\q.json", DiagnosticsEnabled = true, FocusAspectRatio = 0.9m,
-                BenchmarkRecordingDevice = Guid.NewGuid().ToString("D"), BenchmarkRecordingButton = 5, BenchmarkRecordingName = "Box" };
+                BenchmarkRecordingDevice = Guid.NewGuid().ToString("D"), BenchmarkRecordingButton = 5, BenchmarkRecordingName = "Box", CpuCacheAffinity = false };
             var applied = store.Load("Race night").ApplyTo(other);
             Require(applied.GameDirectory == @"E:\LMU" && applied.QuadViewsManifest == @"E:\q.json" && applied.DiagnosticsEnabled
                 && applied.FocusAspectRatio == 0.9m && applied.BenchmarkRecordingButton == 5 && !applied.RenderProfiling, "local settings overwritten by profile");
             Require(applied.OuterPercent == 20 && applied.Backend == "QVFR" && other.OuterPercent == 25, "profile not applied or source mutated");
+            Require(!applied.CpuCacheAffinity, "profile changed machine CPU preference");
 
             // rename, case-only rename, conflicts, delete
             store.Save(SettingsProfile.Capture("VRS daily", new LauncherSettings { Backend = "VRS", VrsPeripheralRate = 4 }), false);
@@ -79,6 +80,14 @@ class ProfileStoreTests
             store.Export("Race night", exported);
             var exportedText = File.ReadAllText(exported);
             Require(!exportedText.Contains(@"C:\") && !exportedText.Contains("Wheel") && !exportedText.Contains("GameDirectory"), "export leaks local paths or devices");
+            Require(!exportedText.Contains("CpuCacheAffinity"), "profile exported machine CPU preference");
+            Require(!exportedText.Contains("OuterBlur"), "profile export retained removed smoothing");
+            foreach(var oldBlur in new[]{"1.25","3","invalid"}) {
+                string legacyPath=Write(root,"legacy-blur.lmuqv",Valid("Legacy").Replace("<OuterBlur>0</OuterBlur>","<OuterBlur>"+oldBlur+"</OuterBlur>"));
+                var legacySettings=ProfileStore.ReadImport(legacyPath).ApplyTo(other);
+                var child=LaunchService.MakeStartInfo(root,legacySettings,new LaunchService.LayerPlan(),Path.Combine(root,"unused.log"));
+                Require(child.EnvironmentVariables["LMU_QV_OUTER_BLUR"]=="0","Legacy profile smoothing can still activate blur");
+            }
             var friend = new ProfileStore(Path.Combine(root, "friend"));
             var incoming = ProfileStore.ReadImport(exported);
             friend.Save(incoming, false);

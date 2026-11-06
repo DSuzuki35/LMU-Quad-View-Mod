@@ -42,3 +42,12 @@ LMU/Pimax logs confirmed gaze input and VRS initialization in an earlier live
 run. These checks establish implementation behavior, not a measured LMU speedup
 or broad headset/image-quality compatibility. A matched awake-headset A/B
 benchmark is still required before making performance claims.
+
+
+NVIDIA VRS hardware check (0.5.2+)
+----------------------------------
+Close LMU and run tools\check-hardware-vrs.cmd. It needs no game or headset.
+Result code 0 means: VRS reduces pixel shading on this GPU, per-eye shading-rate
+maps apply correctly, a steady focus causes no re-upload, and the normal 1x1
+shading is restored afterwards. The log is written to
+tools\hardware-vrs-check.log.

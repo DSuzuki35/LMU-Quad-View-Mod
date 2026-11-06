@@ -169,7 +169,7 @@ class GuiLayoutTests {
         foreach(var name in new[]{"SaveButton","LaunchButton","CoffeeButton"})FullyVisible(Named(form,name));
         NoNativeScrollBars(form);
         if(pageName=="SetupPage") {
-            foreach(var name in new[]{"CpuOuterReuse","OuterSsr","UpdateAutomatic","UpdateCheck","AutoStartIntegrity"}) {
+            foreach(var name in new[]{"FocusOutline","CpuCacheAffinity","CpuOuterReuse","OuterSsr","UpdateAutomatic","UpdateCheck","AutoStartIntegrity"}) {
                 var control=Named(form,name);
                 if(control.Enabled)control.Focus();
                 else {
@@ -211,6 +211,16 @@ class GuiLayoutTests {
                 form.Opacity=0;form.ShowInTaskbar=false;form.StartPosition=FormStartPosition.Manual;form.Location=new Point(-16000,-16000);
                 form.Show();Settle(form);
                 var flags=BindingFlags.Instance|BindingFlags.NonPublic;
+                foreach(var control in Descendants(form))
+                    Check(!control.Text.Contains("Outer smoothing")&&(control.AccessibleName==null||!control.AccessibleName.Contains("Outer smoothing")),"Removed smoothing UI remains accessible");
+                var settingsOutline=(CheckBox)typeof(Launcher).GetField("outline",flags).GetValue(form);
+                Check(Descendants(Named(form,"SetupPage")).Contains(settingsOutline),"Focus settingsOutline must be in Settings");
+                Check(!Descendants(Named(form,"RenderingPage")).Contains(settingsOutline),"Focus settingsOutline remains in Rendering");
+                Check(Named(form,"SetupNav").Text.Trim()=="Settings","Settings navigation text missing");
+                ((Button)Named(form,"SetupNav")).PerformClick();Settle(form);
+                Check(((Label)typeof(Launcher).GetField("header",flags).GetValue(form)).Text=="Settings","Settings page title missing");
+                settingsOutline.Checked=true;
+                Check(((LauncherSettings)typeof(Launcher).GetMethod("Values",flags).Invoke(form,null)).DebugFocus,"Settings settingsOutline toggle no longer saves preference");
                 var unsavedLocal=new LauncherSettings {Backend="QVFR",GameDirectory=@"F:\Unsaved LMU",QuadViewsManifest=@"F:\Unsaved QVFR.json",FocusAspectRatio=1.25m,OuterPercent=400};
                 typeof(Launcher).GetMethod("Fill",flags).Invoke(form,new object[]{unsavedLocal});
                 var profileLocal=(LauncherSettings)typeof(Launcher).GetMethod("CurrentForProfiles",flags).Invoke(form,null);

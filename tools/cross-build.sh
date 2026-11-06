@@ -52,6 +52,8 @@ version_rc "LMU Quad View automatic startup" "lmu_autostart.dll" VFT_DLL > "$gen
 
 FLAGS=(-std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Wno-misleading-indentation -Werror -static)
 cd "$mod"
+version_rc "LMU Quad View VRS hardware check" "VrsHardwareCheck.exe" VFT_APP > "$gen/vrs-check.rc"
+"$WINDRES" "$gen/vrs-check.rc" -O coff -o "$build/vrs-check.o"
 echo "== MinHook"
 for part in buffer hook trampoline; do "$CC" -O2 -c "vendor/minhook-1.3.4/src/$part.c" -o "$build/mh_$part.o"; done
 "$CC" -O2 -c vendor/minhook-1.3.4/src/hde/hde64.c -o "$build/mh_hde64.o"
@@ -73,7 +75,7 @@ if [[ "${SKIP_TESTS:-0}" != 1 ]]; then
   basic=(math focus_box native_xr_views gpu_timing render_profile swapchain_sampling pipeline_stats benchmark_control vrs_scope_policy nv_vrs ui_d3d_state focus_overlay outer_resample native_outer_texture native_outer_bindings stereo_instancing stereo_audit_abi stereo_audit stereo_shader stereo_draw_proof native_upload_reuse native_upload_batch focus_image_lease
          benchmark_timing_ownership render_view_snapshot frame_submission late_begin_frame view_crop benchmark_native benchmark_overlay benchmark_frame benchmark_gpu vrs_foveation vrs_gaze native_outer_bank
          input_validation async_log native_pair_pass nv_stereo_shader nv_multiview_backend xr_active_state diagnostic_sampling upload_reuse_toggle outer_runtime_lock end_frame_lock locate_runtime_lock app_image_lock
-         autoload_policy autoload_activation autoload_verification)
+         autoload_policy autoload_activation autoload_verification cpu_cache_affinity)
   withlog=" input_validation focus_image_lease frame_submission render_view_snapshot late_begin_frame benchmark_frame benchmark_timing_ownership xr_active_state outer_runtime_lock end_frame_lock locate_runtime_lock app_image_lock "
   for t in "${basic[@]}"; do
     srcs=("tests/${t}_test.cpp")
@@ -91,6 +93,8 @@ if [[ "${SKIP_TESTS:-0}" != 1 ]]; then
     "$CXX" "${TF[@]}" "tests/${t}_test.cpp" nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp "${HOOKS[@]}" "${LIBS[@]}" -o "$build/tests/${t}_test.exe"
   done
   "$CXX" "${TF[@]}" xr_layer.cpp xr_layer_tests.cpp async_log.cpp "${LIBS[@]}" -o "$build/tests/xr_layer_tests.exe"
+  # Shipped as tools/VrsHardwareCheck.exe: real-driver NVIDIA VRS verification.
+  "$CXX" "${FLAGS[@]}" tests/nv_vrs_hardware_test.cpp nv_vrs.cpp "$build/vrs-check.o" -I ../prototype/third_party "${LIBS[@]}" -ldxgi -o "$build/tests/nv_vrs_hardware_test.exe"
 fi
 
 echo "== LMU-QuadView-Launcher.exe"

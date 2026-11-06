@@ -18,6 +18,8 @@ $files = @('mod/build/lmu_quadview.dll','mod/build/lmu_autostart.dll','mod/build
 $proof = Join-Path $repo 'mod/build/msvc/stereo_instancing_test.exe'
 if (!(Test-Path -LiteralPath $proof)) { $proof = Join-Path $repo 'mod/build/stereo_instancing_test.exe' }
 $files += $proof
+. (Join-Path $PSScriptRoot 'version.ps1')
+$files += Join-Path $repo (Find-LmuVrsDiagnostic $repo)
 foreach ($file in $files) { if (!(Test-Path -LiteralPath $file)) { throw "Build first: $file" } }
 # SimplySign Desktop owns authentication and the cloud key. No PIN, token or
 # private key is read, exported or stored by this script.

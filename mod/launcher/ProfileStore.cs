@@ -28,7 +28,6 @@ namespace LmuQuadViewLauncher {
         public bool CpuUploadBatch { get; set; }
         public bool CpuOuterReuse { get; set; }
         public bool OuterSsr { get; set; }
-        public decimal OuterBlur { get; set; }
         public decimal OuterPercent { get; set; }
         public decimal InnerPercent { get; set; }
         public decimal CropWidthPercent { get; set; }
@@ -45,7 +44,7 @@ namespace LmuQuadViewLauncher {
                 Backend = s.Backend, FoveationMode = s.FoveationMode, VrsPeripheralRate = s.VrsPeripheralRate,
                 DebugFocus = s.DebugFocus, NativeOuterResolution = s.NativeOuterResolution,
                 CpuUploadReuse = s.CpuUploadReuse, CpuUploadBatch = s.CpuUploadBatch, CpuOuterReuse = s.CpuOuterReuse, OuterSsr = s.OuterSsr,
-                OuterBlur = s.OuterBlur, OuterPercent = s.OuterPercent, InnerPercent = s.InnerPercent,
+                OuterPercent = s.OuterPercent, InnerPercent = s.InnerPercent,
                 CropWidthPercent = s.CropWidthPercent, CropHeightPercent = s.CropHeightPercent,
                 FocusWidthPercent = s.FocusWidthPercent, FocusHeightPercent = s.FocusHeightPercent,
                 FocusOffsetXPercent = s.FocusOffsetXPercent, FocusOffsetYPercent = s.FocusOffsetYPercent };
@@ -57,7 +56,7 @@ namespace LmuQuadViewLauncher {
             s.Backend = Backend; s.FoveationMode = FoveationMode; s.VrsPeripheralRate = VrsPeripheralRate;
             s.DebugFocus = DebugFocus; s.NativeOuterResolution = NativeOuterResolution;
             s.CpuUploadReuse = CpuUploadReuse; s.CpuUploadBatch = CpuUploadBatch; s.CpuOuterReuse = CpuOuterReuse; s.OuterSsr = OuterSsr;
-            s.OuterBlur = OuterBlur; s.OuterPercent = OuterPercent; s.InnerPercent = InnerPercent;
+            s.OuterPercent = OuterPercent; s.InnerPercent = InnerPercent;
             s.CropWidthPercent = CropWidthPercent; s.CropHeightPercent = CropHeightPercent;
             s.FocusWidthPercent = FocusWidthPercent; s.FocusHeightPercent = FocusHeightPercent;
             s.FocusOffsetXPercent = FocusOffsetXPercent; s.FocusOffsetYPercent = FocusOffsetYPercent;
@@ -242,7 +241,7 @@ namespace LmuQuadViewLauncher {
                 DebugFocus = Bool(settings, "DebugFocus"), NativeOuterResolution = Bool(settings, "NativeOuterResolution"),
                 CpuUploadReuse = Bool(settings, "CpuUploadReuse"), CpuUploadBatch = Bool(settings, "CpuUploadBatch"),
                 CpuOuterReuse = Bool(settings, "CpuOuterReuse"), OuterSsr = Bool(settings, "OuterSsr"),
-                OuterBlur = Dec(settings, "OuterBlur"), OuterPercent = Dec(settings, "OuterPercent"), InnerPercent = Dec(settings, "InnerPercent"),
+                OuterPercent = Dec(settings, "OuterPercent"), InnerPercent = Dec(settings, "InnerPercent"),
                 CropWidthPercent = Dec(settings, "CropWidthPercent"), CropHeightPercent = Dec(settings, "CropHeightPercent"),
                 FocusWidthPercent = Dec(settings, "FocusWidthPercent"), FocusHeightPercent = Dec(settings, "FocusHeightPercent"),
                 FocusOffsetXPercent = Dec(settings, "FocusOffsetXPercent"), FocusOffsetYPercent = Dec(settings, "FocusOffsetYPercent") };
@@ -266,7 +265,7 @@ namespace LmuQuadViewLauncher {
                     new XElement("DebugFocus", b(p.DebugFocus)), new XElement("NativeOuterResolution", b(p.NativeOuterResolution)),
                     new XElement("CpuUploadReuse", b(p.CpuUploadReuse)), new XElement("CpuUploadBatch", b(p.CpuUploadBatch)),
                     new XElement("CpuOuterReuse", b(p.CpuOuterReuse)), new XElement("OuterSsr", b(p.OuterSsr)),
-                    new XElement("OuterBlur", n(p.OuterBlur)), new XElement("OuterPercent", n(p.OuterPercent)), new XElement("InnerPercent", n(p.InnerPercent)),
+                    new XElement("OuterPercent", n(p.OuterPercent)), new XElement("InnerPercent", n(p.InnerPercent)),
                     new XElement("CropWidthPercent", n(p.CropWidthPercent)), new XElement("CropHeightPercent", n(p.CropHeightPercent)),
                     new XElement("FocusWidthPercent", n(p.FocusWidthPercent)), new XElement("FocusHeightPercent", n(p.FocusHeightPercent)),
                     new XElement("FocusOffsetXPercent", n(p.FocusOffsetXPercent)), new XElement("FocusOffsetYPercent", n(p.FocusOffsetYPercent))));

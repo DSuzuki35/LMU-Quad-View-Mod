@@ -1,4 +1,4 @@
-LMU QUAD VIEW MOD — v0.5.1
+LMU QUAD VIEW MOD — v0.5.4
 
 CPU PERFORMANCE
 Preliminary measurements and user reports suggest around 0.5 ms lower CPU
@@ -14,14 +14,14 @@ Publisher: Open Source Developer Daniel Sosulski. Windows reputation warnings
 may still appear.
 
 STEAM PLAY
-Save settings, close LMU, then use Setup > Install / update automatic startup.
+Save settings, close LMU, then use Settings > Install / update automatic startup.
 Approve the Windows administrator prompt. Clear the old --steam %command%
 wrapper if you used it, preserving unrelated game arguments. Choose Steam's
 OpenXR launch mode. No custom launch option or background starter is needed.
 The signed implicit layer applies saved settings only in supported LMU sessions.
 The benchmark launcher attaches minimized when enabled and closes with LMU.
 Keep this package in place; reinstall after moving/updating it. Do not run LMU
-as administrator. Use Setup > Remove automatic startup to undo registration.
+as administrator. Use Settings > Remove automatic startup to undo registration.
 See docs/STEAM-LAUNCH.md for details and the optional legacy wrapper.
 
 OPTIONAL SUPPORT
@@ -46,7 +46,7 @@ Choose Stereo VRS for two native eye views with reduced peripheral shading.
 Auto eye tracking falls back to a fixed region when unavailable. See
 PORTABLE-VRS.txt. All 0.1.2 features remain; unfinished native SPS is excluded.
 Hover over launcher options for explanations and performance tradeoffs.
-Setup also includes Experimental CPU outer reuse and smaller outer SSR toggles,
+Settings also includes Experimental CPU outer reuse and smaller outer SSR toggles,
 off by default and Quad Views-only. See PERFORMANCE-EXPERIMENT.md.
 
 Free experimental Windows x64 / D3D11 quad-view integration for Le Mans Ultimate.
@@ -76,14 +76,14 @@ LMU-QuadView-Launcher.exe and keep its .exe.config file beside it.
 Requires .NET Framework 4.8. No PowerShell installation or script unblocking is
 needed to run the distributed launcher. Release binaries are digitally signed.
 
-In Setup select the LMU folder. Ensure the headset's OpenXR runtime is active.
+In Settings select the LMU folder. Ensure the headset's OpenXR runtime is active.
 In Rendering select Native OpenXR, Quad-Views-Foveated (QVFR), VectorXR, or
 Stereo VRS (NVIDIA, experimental).
 Select Auto or Fixed, save, then launch LMU offline. Restart after settings changes.
 
 PROVIDERS
 Native requires a quad-view runtime and uses its resolution/FOV settings.
-QVFR must be installed separately; Setup links to upstream instructions and
+QVFR must be installed separately; Settings links to upstream instructions and
 accepts an optional manifest path. See PORTABLE-QVFR.txt.
 VectorXR must be installed separately with its LMU Quadviews profile enabled.
 Select VectorXR and configure resolution/focus/tracking in its app; the launcher's
@@ -106,8 +106,8 @@ the requested offset. Focus size and render resolution stay unchanged. Large
 offsets may place part of the region outside the visible view; offsets are not
 clamped to the outer edges when crop is off. Reset offsets restores zero/provider placement.
 Save and restart LMU to apply. Old settings default to zero.
-Outer smoothing defaults off; it leaves focus sharp but adds unmeasured GPU cost.
-The smaller outer-target optimization can be disabled in Setup for diagnosis.
+Outer smoothing has been removed; legacy values are ignored by the launcher.
+The smaller outer-target optimization can be disabled in Settings for diagnosis.
 Rendered FOV / crop is the mod's own crop: independent width/height, 25..100%.
 Crop is still HIGHLY EXPERIMENTAL. Please test and report results or problems:
 https://github.com/DSuzuki35/LMU-Quad-View-Mod/issues
@@ -138,7 +138,7 @@ SUPPORT AND PROFILING
 Report version, game build, headset/GPU/driver, runtime/provider, settings and
 reproduction steps in GitHub Issues. Include logs/quad-*.log, not only *-run.json.
 Review personal paths before sharing logs or settings.
-Setup -> Enable diagnostics and logging controls mod logs, metadata and profiling
+Settings -> Enable diagnostics and logging controls mod logs, metadata and profiling
 on the next launch; provider/runtime logging is separate. For captures enable
 render profiling, select 30–300 seconds and press Ctrl+Alt+F9 while driving.
 Close normally to save partial results. See RENDER-PROFILING.txt for limitations.

@@ -30,7 +30,7 @@ files/settings, or a read error; **2** no enabled automatic-start installation
 found. Exit 0 does not establish EAC acceptance.
 
 If validation fails, restore the complete official release package and use
-**Setup > Install / update automatic startup** after closing LMU. Unsigned
+**Settings > Install / update automatic startup** after closing LMU. Unsigned
 development builds are intended for supported offline testing. If validation
 passes and EAC still rejects the DLL, send the error and integrity report to the
 game's support team for compatibility review. Use supported offline launch modes

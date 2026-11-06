@@ -5,7 +5,7 @@ A free Windows x64 / D3D11 mod that adds two outer and two focus views to
 Quad-Views-Foveated (QVFR) or VectorXR separately to provide quad views on a
 stereo runtime.
 
-**v0.5.1 is an experimental release.** Headset and runtime compatibility
+**v0.5.4 is an experimental release.** Headset and runtime compatibility
 still needs broader testing. Always free; donations are completely optional.
 
 **CPU headroom matters:** preliminary measurements and user reports suggest around
@@ -15,7 +15,7 @@ The small savings do not remove that penalty. Use the mod when you have enough
 CPU headroom; on a CPU-limited system it can make performance worse even if GPU
 time improves.
 
-Version 0.5.1 retains the **Benchmark** page with Minimal and
+Version 0.5.4 retains the **Benchmark** page with Minimal and
 Detailed in-headset overlays, separate joystick bindings for visibility and
 manual recording, local HTML/CSV/JSON reports, and latest-launch diagnostics.
 Enable Benchmark before launching and leave the launcher open. See
@@ -66,7 +66,7 @@ image quality and performance depend on the workload. No LMU speedup is claimed.
 See [setup, compatibility and measurement limits](PORTABLE-VRS.txt).
 
 The merged performance experiments add optional **CPU outer reuse** and
-**smaller outer SSR** controls in Setup, off by default. They reduce redundant
+**smaller outer SSR** controls in Settings, off by default. They reduce redundant
 constant uploads or outer reflection resolution in Quad Views. Hover help
 explains dependencies and quality tradeoffs; see
 [performance experiment details](PERFORMANCE-EXPERIMENT.md).
@@ -86,6 +86,20 @@ If AI-assisted code isn't your thing, you're welcome to skip this project.
 If you'd like to help improve it, thoughtful bug reports, testing and code
 contributions are welcome. See [the contribution guide](CONTRIBUTING.md).
 
+## CPU cache preference (AMD X3D)
+
+**Settings > Prefer the 3D V-Cache CCD (AMD X3D)** is enabled by default and applies
+on the next game launch, including Steam automatic startup. On supported AMD
+CPUs with two clearly asymmetric L3 domains, it requests the larger-cache CCD
+using Windows process-default CPU sets. It skips single-domain, symmetric,
+non-AMD, ambiguous and unsupported multi-group topologies, failed queries and
+existing process affinity/default CPU-set assignments. Explicit thread policies
+retain Windows precedence. This is a machine preference and is not exported in
+shared profiles. Enable diagnostics to see `cpu cache affinity:` decisions.
+
+No LMU performance gain has been measured for this option yet. Compare it on and
+off in the same scene; fewer available cores can also hurt other game work.
+
 ## SimHub (experimental)
 
 The `simhub` folder contains a SimHub plugin that shows live frame timing,
@@ -96,7 +110,7 @@ Diagnostics and Benchmark enabled and is built on your PC; see
 
 ## Install and launch
 
-Use the **Setup-x64.exe installer** for Start menu and uninstall integration, or extract the complete portable ZIP. Both contain the same native launcher and rendering layer; no Electron runtime is required. Updates are offered in Setup and installation follows your approval. Close LMU before updating, then reinstall automatic startup from the updated package.
+Use the **Setup-x64.exe installer** for Start menu and uninstall integration, or extract the complete portable ZIP. Both contain the same native launcher and rendering layer; no Electron runtime is required. Updates are offered in Settings and installation follows your approval. Close LMU before updating, then reinstall automatic startup from the updated package.
 
 Use **Profiles** to save or share rendering settings as `.lmuqv` files. Imports keep your local paths, devices, diagnostics and calibration. Copy the `profiles` folder when moving a portable package. Profile support was contributed by **Markus Stahl**.
 
@@ -104,10 +118,10 @@ Rendering sliders show their current **Allowed** interval. Purple marks the usab
 
 See [CPU work and profiling](docs/CPU-040.md), [installer behavior](docs/INSTALLER.md) and [EAC integrity diagnosis](docs/EAC.md) for details.
 
-1. Use the complete `LMU-Quad-View-Mod-0.5.1.zip` package. Published builds are on [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
+1. Use the complete `LMU-Quad-View-Mod-0.5.4.zip` package. Published builds are on [GitHub Releases](https://github.com/DSuzuki35/LMU-Quad-View-Mod/releases).
 2. Extract the **complete ZIP** to a writable folder outside the LMU installation.
 3. Open **LMU-QuadView-Launcher.exe**. Keep its `.exe.config` file beside it.
-4. In **Setup**, select the LMU game folder. Ensure your headset's OpenXR runtime
+4. In **Settings**, select the LMU game folder. Ensure your headset's OpenXR runtime
    is active, and choose your provider in **Rendering**.
 5. Choose Auto or Fixed, save settings, and launch LMU offline. Restart LMU after
    changing rendering settings.
@@ -119,7 +133,7 @@ Windows reputation warnings may still appear. OpenXR Toolkit is not required.
 
 ### Start with Steam Play
 
-Save settings, close LMU, then use **Setup > Install / update automatic startup**.
+Save settings, close LMU, then use **Settings > Install / update automatic startup**.
 Approve Windows' administrator prompt once. Remove any old `--steam %command%`
 wrapper from Steam's custom Launch Options, preserving unrelated game arguments.
 Use Steam's **OpenXR** launch mode. No custom Steam option or background starter
@@ -134,12 +148,12 @@ automatic startup after moving or updating it. Changes to rendering settings
 still require a game restart. **Remove automatic startup** reverses registration.
 See [Steam startup details](docs/STEAM-LAUNCH.md) for the optional legacy wrapper.
 
-| Provider | Setup and settings |
+| Provider | Configuration |
 | --- | --- |
 | Stereo VRS | Native stereo runtime and a compatible NVIDIA GPU/driver. Focus size, offsets and peripheral shading rate are set in the launcher. No quad provider required. |
 | Native OpenXR | Requires a runtime exposing quad views. Resolution and FOV come from runtime settings. |
-| Quad-Views-Foveated | Install mbucchia's QVFR separately; Setup links to upstream instructions and can select its manifest. Configure resolution and focus size in the launcher. See [QVFR instructions](PORTABLE-QVFR.txt). |
-| VectorXR | Install separately, enable its LMU Quadviews profile, and select VectorXR. Setup can locate its manifest or accept a JSON path. Configure resolution, focus and tracking in VectorXR; launcher QVFR sizing controls are inactive. See [VectorXR instructions](PORTABLE-VECTORXR.txt). |
+| Quad-Views-Foveated | Install mbucchia's QVFR separately; Settings links to upstream instructions and can select its manifest. Configure resolution and focus size in the launcher. See [QVFR instructions](PORTABLE-QVFR.txt). |
+| VectorXR | Install separately, enable its LMU Quadviews profile, and select VectorXR. Settings can locate its manifest or accept a JSON path. Configure resolution, focus and tracking in VectorXR; launcher QVFR sizing controls are inactive. See [VectorXR instructions](PORTABLE-VECTORXR.txt). |
 
 The launcher starts LMU with process-local provider settings and layer ordering.
 The optional automatic-start installation registers its own implicit layer first,
@@ -180,10 +194,10 @@ local run; it is a snapshot, not live headset detection. Re-read after changing
 headset, runtime or FOV. QVFR can widen or clip the region near gaze limits.
 Stored percentages and native rendering are unchanged.
 
-Outer smoothing defaults to off and leaves the focus image sharp. Start with
-0.5–1 pixel if desired. It adds GPU work; headset cost has not been measured.
+Outer smoothing has been removed from the launcher. Legacy smoothing settings
+are ignored, and launcher starts explicitly disable that filter.
 It does not replace temporal anti-aliasing. The smaller outer-target optimization
-can be disabled in Setup for diagnosis. Launcher crop removes edge coverage
+can be disabled in Settings for diagnosis. Launcher crop removes edge coverage
 without changing the angular image scale. Cropped peripheral renders are padded
 with black before composition; full-size output swapchains remain allocated and
 the padding adds one GPU blit per eye. In-game crop support remains deferred.
@@ -254,7 +268,7 @@ reproduction steps and expected versus actual result. Attach the actual
 for personal paths before sharing. A started process alone does not establish
 correct VR rendering.
 
-**Setup → Enable diagnostics and logging** controls mod logs, per-run metadata
+**Settings → Enable diagnostics and logging** controls mod logs, per-run metadata
 and diagnostic collection on the next launch. It defaults to disabled. Provider
 and runtime diagnostics are controlled separately.
 
@@ -274,7 +288,7 @@ cannot replace headset QA. Release versions come from the root `VERSION` file.
 
 ## Contributors
 
-**Markus Stahl** has contributed hook safety, launcher integrity, cleanup, QVFR encoding preservation, portable profiles, SimHub integration, performance improvements and stability fixes. Huge thanks to Markus for the detailed patches, continued testing and all his help improving this project.
+**Markus Stahl** has contributed hook safety, launcher integrity, cleanup, QVFR encoding preservation, portable profiles, SimHub integration, performance improvements, per-eye VRS caching, CPU cache preference and stability fixes. Huge thanks to Markus for the detailed patches, continued testing and all his help improving this project.
 
 ## Optional support
 

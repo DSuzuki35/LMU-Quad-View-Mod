@@ -5,13 +5,13 @@ the selected OpenXR runtime. Our mod renders four views. QVFR supplies their
 FOVs/tracking and combines the four images for a stereo runtime.
 
 Install QVFR separately using https://github.com/mbucchia/Quad-Views-Foveated/wiki
-or the link on the launcher's Setup page. Follow the headset-specific tracking
+or the link on the launcher's Settings page. Follow the headset-specific tracking
 instructions. For Dream Air with sboys3, select SteamVR as the OpenXR runtime.
 Upstream lists that combination as eye-tracking compatible; this mod's full
 LMU/headset integration still requires live verification. No all-headset claim.
 
 Select QVFR in our launcher. It autodetects a standard 64-bit installation; use
-Setup's JSON selector if needed. Choose Auto (tracking when the provider reports
+Settings's JSON selector if needed. Choose Auto (tracking when the provider reports
 it available; fixed otherwise) or Fixed (explicit stationary view requests).
 The physical presence of an eye tracker is not enough if the runtime hides it.
 
@@ -69,7 +69,7 @@ upscalers may be incompatible. Use the 64-bit QVFR manifest.
 First live test: menu -> track -> cockpit -> return to menu in Auto; then relaunch
 Fixed and verify eye motion does not move the focus box. Test green outline and
 outer smoothing separately. Repeat with small outer-target optimization disabled
-in Setup if a scene freezes. Keep the actual quad .log and the QVFR log from
+in Settings if a scene freezes. Keep the actual quad .log and the QVFR log from
 %LocalAppData%/Quad-Views-Foveated; review personal information before sharing.
 
 Validated locally: automated native/fake-runtime/WARP graphics tests, C# launcher

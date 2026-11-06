@@ -39,9 +39,10 @@ namespace LmuQuadViewLauncher
         public bool CpuUploadBatch { get; set; }
         public bool CpuOuterReuse { get; set; }
         public bool OuterSsr { get; set; }
+        // Machine preference, not a rendering setting: on by default, inert on CPUs without two asymmetric L3 domains.
+        public bool CpuCacheAffinity { get; set; }
         public int RenderProfileSeconds { get; set; }
         public bool NativeOuterResolution { get; set; }
-        public decimal OuterBlur { get; set; }
         public decimal OuterPercent { get; set; }
         public decimal InnerPercent { get; set; }
         public decimal CropWidthPercent { get; set; }
@@ -60,6 +61,7 @@ namespace LmuQuadViewLauncher
             NativeOuterResolution = false; OuterPercent = 25; InnerPercent = 100;
             RenderProfileSeconds=120;
             DiagnosticsEnabled=false;
+            CpuCacheAffinity=true;
             BenchmarkY=-0.25m;BenchmarkDistance=1.2m;BenchmarkWidth=0.65m;
             BenchmarkVisibilityDevice=BenchmarkRecordingDevice="";
             BenchmarkVisibilityName=BenchmarkRecordingName="";
@@ -98,7 +100,6 @@ namespace LmuQuadViewLauncher
             if (s.Backend != "Native" && s.Backend != "QVFR" && s.Backend != "VectorXR" && s.Backend != "VRS") throw new ArgumentException("Choose Native, QVFR, VectorXR or Stereo VRS.");
             if(s.VrsPeripheralRate!=1&&s.VrsPeripheralRate!=2&&s.VrsPeripheralRate!=4)throw new ArgumentException("VRS peripheral shading blocks must be 1x1, 2x2 or 4x4.");
             if (s.FoveationMode != "auto" && s.FoveationMode != "fixed") throw new ArgumentException("Choose Auto or Fixed foveation.");
-            if (s.OuterBlur < 0 || s.OuterBlur > 3) throw new ArgumentException("Outer smoothing must be between 0 and 3 pixels.");
             if (s.OuterPercent < 10 || s.OuterPercent > 400 || s.InnerPercent < 25 || s.InnerPercent > 400 ||
                 s.FocusWidthPercent < 10 || s.FocusWidthPercent > 90 || s.FocusHeightPercent < 10 || s.FocusHeightPercent > 90)
                 throw new ArgumentException("Resolution or focus size is outside the supported range.");
@@ -146,9 +147,9 @@ namespace LmuQuadViewLauncher
             s.CpuUploadBatch=Boolean.Parse(Value(x,"CpuUploadBatch","false"));
             s.CpuOuterReuse=Boolean.Parse(Value(x,"CpuOuterReuse","false"));
             s.OuterSsr=Boolean.Parse(Value(x,"OuterSsr","false"));
+            s.CpuCacheAffinity=Boolean.Parse(Value(x,"CpuCacheAffinity","true"));
             s.RenderProfileSeconds=Int32.Parse(Value(x,"RenderProfileSeconds","120"),CultureInfo.InvariantCulture);
             s.NativeOuterResolution = Boolean.Parse(Value(x, "NativeOuterResolution", "false"));
-            s.OuterBlur = Decimal.Parse(Value(x, "OuterBlur", "0"), CultureInfo.InvariantCulture);
             s.OuterPercent = Decimal.Parse(Value(x, "OuterPercent", "25"), CultureInfo.InvariantCulture);
             s.InnerPercent = Decimal.Parse(Value(x, "InnerPercent", "100"), CultureInfo.InvariantCulture);
             s.CropWidthPercent = Decimal.Parse(Value(x, "CropWidthPercent", "100"), NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture);
@@ -188,9 +189,9 @@ namespace LmuQuadViewLauncher
                 new XElement("CpuUploadBatch",s.CpuUploadBatch),
                 new XElement("CpuOuterReuse",s.CpuOuterReuse),
                 new XElement("OuterSsr",s.OuterSsr),
+                new XElement("CpuCacheAffinity",s.CpuCacheAffinity),
                 new XElement("RenderProfileSeconds",s.RenderProfileSeconds),
                 new XElement("NativeOuterResolution", s.NativeOuterResolution), new XElement("UseRuntimeSettings", true),
-                new XElement("OuterBlur", s.OuterBlur),
                 new XElement("OuterPercent", s.OuterPercent), new XElement("InnerPercent", s.InnerPercent),
                 new XElement("CropWidthPercent", s.CropWidthPercent), new XElement("CropHeightPercent", s.CropHeightPercent),
                 new XElement("FocusWidthPercent", s.FocusWidthPercent), new XElement("FocusHeightPercent", s.FocusHeightPercent),

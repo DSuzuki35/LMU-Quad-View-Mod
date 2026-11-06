@@ -32,7 +32,7 @@ their existing path.
 Testing the prototype
 ---------------------
 
-In Setup enable Experimental CPU upload reuse. For a measured trial also enable
+In Settings enable Experimental CPU upload reuse. For a measured trial also enable
 diagnostics and render profiling, and leave stereo draw audit / paired rendering
 tests off. Press Ctrl+Alt+F9 on track; closing LMU normally saves the profile.
 The native log ends with cpu_upload_reuse summary examined=... skipped=...

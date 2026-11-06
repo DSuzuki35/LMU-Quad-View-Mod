@@ -6,7 +6,7 @@ button-box inputs.
 
 ## Requirements
 
-- In the launcher: **Setup > Enable diagnostics and logging** and **Benchmark >
+- In the launcher: **Settings > Enable diagnostics and logging** and **Benchmark >
   Enable benchmark on next launch**. The data channel only exists with both on.
   The in-headset overlay can stay hidden.
 - For the two actions, keep the launcher open (as for the launcher's own

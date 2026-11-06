@@ -18,6 +18,7 @@
 #include "benchmark_gpu.hpp"
 #include "async_log.hpp"
 #include "diagnostic_sampling.hpp"
+#include "cpu_cache_affinity.hpp"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -1215,6 +1216,12 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
     if(XR_FAILED(r))return r;
     next.get=chain->nextGetInstanceProcAddr;
     if(!next.load(*instance)){if(next.DestroyInstance)next.DestroyInstance(*instance);*instance=XR_NULL_HANDLE;return XR_ERROR_INITIALIZATION_FAILED;}
+    // Once per process, only on explicit launcher request: prefer the 3D V-Cache CCD.
+    static std::atomic<bool> cacheAffinityDone{false};
+    if((quad||vrs)&&!cacheAffinityDone.exchange(true)){
+        char affinity[16]{};const DWORD affinityLength=GetEnvironmentVariableA("LMU_QV_CPU_AFFINITY",affinity,sizeof(affinity));
+        if(affinityLength&&affinityLength<sizeof(affinity)&&!std::strcmp(affinity,"x3d"))logf("%s",cpu_cache::applyPreferVCache().c_str());
+    }
     s.instance=*instance;s.quad=quad;s.vrs=vrs;s.requestEyeTracking=requestEyeTracking;
     publishActiveModes();
     if(gazeEnabled)vrsGaze.load(*instance,next.get);

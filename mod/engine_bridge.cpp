@@ -363,7 +363,7 @@ bool prepareWorldVrs(ID3D11DeviceContext* context,ViewSnapshot* view) {
     if(unchanged) {
         device->Release();
         if(stereoVrsMode){VrsFocus focus;if(!xr_vrs_render_focus(unsigned(view->eye_index),view->projection.data(),focus))return false;
-            return worldVrs.update_focus(context,focus);}
+            return worldVrs.update_focus(context,focus,unsigned(view->eye_index));}
         return true;
     }
     resetWorldVrs();
@@ -379,21 +379,21 @@ bool prepareWorldVrs(ID3D11DeviceContext* context,ViewSnapshot* view) {
     std::snprintf(line,sizeof(line),"configured size=%ux%u rate=%u ownership=ExclusiveKnownDisabled; only verified scene sort scopes; other coverage unqualified",
         desc.Width,desc.Height,rate);vrsLog(nullptr,line);
     if(stereoVrsMode){VrsFocus focus;if(!xr_vrs_render_focus(unsigned(view->eye_index),view->projection.data(),focus))return false;
-        return worldVrs.update_focus(context,focus);}
+        return worldVrs.update_focus(context,focus,unsigned(view->eye_index));}
     return true;
 }
 void logVrsCounters() {
     if(!diagnostics_enabled())return;
     char line[550]{};
     std::snprintf(line,sizeof(line),
-        "counters opt_in=%u configured_rate=%u ready=%u faulted=%u appliedScopeCounter0=%llu appliedScopeCounter1=%llu attempted0=%llu attempted1=%llu failures=%llu interrupted=%llu; successful begin+end only; rate1 is a 1x1 baseline",
+        "counters opt_in=%u configured_rate=%u ready=%u faulted=%u appliedScopeCounter0=%llu appliedScopeCounter1=%llu attempted0=%llu attempted1=%llu failures=%llu interrupted=%llu mapUploads=%llu; successful begin+end only; rate1 is a 1x1 baseline",
         unsigned(worldVrsOptIn),worldVrsRate,unsigned(worldVrs.ready()),unsigned(worldVrsFailed||worldVrs.faulted()),
         static_cast<unsigned long long>(worldVrsCounters.applied[0]),
         static_cast<unsigned long long>(worldVrsCounters.applied[1]),
         static_cast<unsigned long long>(worldVrsCounters.attempted[0]),
         static_cast<unsigned long long>(worldVrsCounters.attempted[1]),
         static_cast<unsigned long long>(worldVrsCounters.failures),
-        static_cast<unsigned long long>(worldVrsCounters.interrupted));
+        static_cast<unsigned long long>(worldVrsCounters.interrupted),worldVrs.uploads());
     vrsLog(nullptr,line);
 }
 void benchmarkLog(void* user,const char* message) {

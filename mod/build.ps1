@@ -130,7 +130,7 @@ try {
     if ($AnchorImage) { & .\build\vrs_scope_policy_test.exe $AnchorImage }
     else { & .\build\vrs_scope_policy_test.exe --policy-only }
     if ($LASTEXITCODE -ne 0) { throw 'VRS scope policy tests failed' }
-    foreach ($test in @('vrs_foveation','vrs_gaze')) {
+    foreach ($test in @('vrs_foveation','vrs_gaze','cpu_cache_affinity')) {
         & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Werror -static -I ../prototype/third_party "tests/${test}_test.cpp" -o "build/${test}_test.exe"
         if ($LASTEXITCODE -ne 0) { throw "$test compilation failed" }
         & ".\build\${test}_test.exe"
@@ -188,5 +188,12 @@ try {
     }
     & g++ -std=c++17 -O2 -Wall -Wextra -Wpedantic -Wno-missing-field-initializers -Werror -static -shared -I ../prototype/third_party xr_layer.cpp async_log.cpp engine_bridge.cpp nv_vrs.cpp stereo_audit.cpp stereo_shader.cpp stereo_draw_proof.cpp build/mh_buffer.o build/mh_hook.o build/mh_trampoline.o build/mh_hde64.o build/version.o -ld3d11 -ld3dcompiler -ldxguid -ladvapi32 -luser32 -o $LayerOutput
     if ($LASTEXITCODE -ne 0) { throw 'Layer compilation failed' }
+    # Manual NVIDIA diagnostic: compile only, no physical GPU workload in this suite.
+    $vrsResourceSource=Join-Path $PSScriptRoot 'build/native-version/vrs-check.rc'
+    (Get-Content -LiteralPath $versionFiles.ResourcePath -Raw).Replace('FILETYPE VFT_DLL','FILETYPE VFT_APP').Replace('LMU Quad View OpenXR layer','LMU Quad View VRS hardware check').Replace('lmu_quadview.dll','VrsHardwareCheck.exe') | Set-Content -LiteralPath $vrsResourceSource -Encoding ASCII
+    & windres $vrsResourceSource -O coff -o build/vrs-check.o
+    if($LASTEXITCODE -ne 0){throw 'VRS diagnostic version resource compilation failed'}
+    & g++ -std=c++17 -O2 -static -I ../prototype/third_party tests/nv_vrs_hardware_test.cpp nv_vrs.cpp build/vrs-check.o -ld3d11 -ld3dcompiler -ldxguid -ldxgi -luser32 -o build/nv_vrs_hardware_test.exe
+    if($LASTEXITCODE -ne 0){throw 'VRS diagnostic compilation failed'}
     Get-FileHash -LiteralPath $LayerOutput -Algorithm SHA256 | Select-Object Hash
 } finally { Pop-Location }

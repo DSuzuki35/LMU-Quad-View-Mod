@@ -68,6 +68,10 @@ $files = @{
 $proofPath='mod/build/msvc/stereo_instancing_test.exe'
 if(!(Test-Path -LiteralPath (Join-Path $PSScriptRoot $proofPath))){$proofPath='mod/build/stereo_instancing_test.exe'}
 $files[$proofPath]='tools/PortableStereoCheck.exe'
+# Select only a diagnostic with matching version metadata across compiler outputs.
+$vrsCheck=Find-LmuVrsDiagnostic $PSScriptRoot
+$files[$vrsCheck]='tools/VrsHardwareCheck.exe'
+$files['tools/check-hardware-vrs.cmd']='tools/check-hardware-vrs.cmd'
 if($RequireSigned) {
     $publisher = $null
     foreach($source in $files.Keys | Where-Object { $_ -match '\.(dll|exe)$' }) {

@@ -37,11 +37,16 @@ class AutoStartTests {
         var s=new LauncherSettings {Backend="QVFR"};
         var info=new System.Diagnostics.ProcessStartInfo {UseShellExecute=false};
         info.EnvironmentVariables["LMU_QV_MODE"]="quad";
+        info.EnvironmentVariables["LMU_QV_CPU_AFFINITY"]="x3d";
         info.EnvironmentVariables["LMU_QV_DISABLE_AUTOLOAD"]="1";
         info.EnvironmentVariables["LMU_QV_LOG"]=@"C:\my package\logs\test.log";
         info.EnvironmentVariables["SECRET_TEST_IGNORE"]="not for output";
         var text=(string)method.Invoke(null,new object[]{s,info,"XR_APILAYER_MBUCCHIA_quad_views_foveated",@"C:\provider\layer.dll"});
         Check(text.Contains("Backend=QVFR")&&text.Contains("LMU_QV_MODE=quad"),"Settings not exported");
+        Check(text.Contains("LMU_QV_CPU_AFFINITY=x3d"),"CPU preference omitted from Steam autostart");
+        info.EnvironmentVariables["LMU_QV_CPU_AFFINITY"]="off";
+        var withoutAffinity=(string)method.Invoke(null,new object[]{s,info,"name","library"});
+        Check(withoutAffinity.Contains("LMU_QV_CPU_AFFINITY=off"),"CPU opt-out omitted from Steam autostart");
         Check(!text.Contains("SECRET_TEST_IGNORE"),"Unrelated environment leaked");
         Check(!text.Contains("LMU_QV_DISABLE_AUTOLOAD"),"Automatic startup disables itself during loader retries");
         info.EnvironmentVariables["LMU_QV_LOG"]="x\r\nInjected=1";

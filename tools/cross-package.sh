@@ -32,6 +32,8 @@ tools/analyze_stereo_audit.py tools/analyze_stereo_audit.py
 tools/start-frame-capture.ps1 tools/start-frame-capture.ps1
 tools/start-frame-capture.cmd tools/start-frame-capture.cmd
 tools/check-hardware-stereo.cmd tools/check-hardware-stereo.cmd
+tools/check-hardware-vrs.cmd tools/check-hardware-vrs.cmd
+mod/build/tests/nv_vrs_hardware_test.exe tools/VrsHardwareCheck.exe
 TODO.md TODO.md
 mod/XR_APILAYER_LMU_quadview.json XR_APILAYER_LMU_quadview.json
 README.md README.md

@@ -183,11 +183,13 @@ namespace LmuQuadViewLauncher {
             environment["LMU_QV_CPU_UPLOAD_BATCH"]=!vrs&&settings.CpuUploadBatch?"1":"0";
             environment["LMU_QV_CPU_OUTER_REUSE"]=outerReuse?"1":"0";
             environment["LMU_QV_OUTER_SSR"]=!vrs&&settings.NativeOuterResolution&&settings.OuterSsr?"1":"0";
+            environment["LMU_QV_CPU_AFFINITY"]=settings.CpuCacheAffinity?"x3d":"off";
             environment["LMU_QV_DEBUG_FOCUS"]=settings.DebugFocus?"1":"0";
             environment["LMU_QV_PROFILE"]=settings.DiagnosticsEnabled&&settings.RenderProfiling?"1":"0";
             environment["LMU_QV_PROFILE_SECONDS"]=settings.RenderProfileSeconds.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_VECTORXR_DIRECT_INPUTS"]=settings.Backend=="VectorXR"?"1":"0";
-            environment["LMU_QV_OUTER_BLUR"]=vrs?"0":settings.OuterBlur.ToString(CultureInfo.InvariantCulture);
+            // The removed launcher smoothing control must also override inherited values.
+            environment["LMU_QV_OUTER_BLUR"]="0";
             environment["LMU_QV_CROP_WIDTH_PERCENT"]=vrs?"100":settings.CropWidthPercent.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_CROP_HEIGHT_PERCENT"]=vrs?"100":settings.CropHeightPercent.ToString(CultureInfo.InvariantCulture);
             environment["LMU_QV_FOCUS_OFFSET_X_PERCENT"]=settings.FocusOffsetXPercent.ToString(CultureInfo.InvariantCulture);
@@ -218,7 +220,7 @@ namespace LmuQuadViewLauncher {
             var custom=settings.Backend=="VectorXR"?settings.VectorXrManifest:settings.QuadViewsManifest;
             string path=vrs?null:settings.Backend!="Native"&&!String.IsNullOrWhiteSpace(custom)?custom:FindProviderManifest(providerBackend);
             var provider=String.IsNullOrWhiteSpace(path)?null:ReadProviderManifest(path,settings.Backend!="Native",providerBackend);
-            if(settings.Backend!="Native"&&!vrs&&provider==null)throw new FileNotFoundException(settings.Backend+" is not installed. Install it from Setup or select its JSON manifest.");
+            if(settings.Backend!="Native"&&!vrs&&provider==null)throw new FileNotFoundException(settings.Backend+" is not installed. Install it from Settings or select its JSON manifest.");
             return provider;
         }
         public static ProcessStartInfo Prepare(string root,LauncherSettings settings,string gameArguments=null,int automaticPid=0) {
@@ -294,7 +296,7 @@ namespace LmuQuadViewLauncher {
                 DiagnosticsEnabled=settings.DiagnosticsEnabled,BenchmarkEnabled=settings.DiagnosticsEnabled&&settings.BenchmarkEnabled,BenchmarkRequested=settings.BenchmarkEnabled,BenchmarkTemplate=settings.BenchmarkTemplate,
                 DebugFocus=settings.DebugFocus,RenderProfiling=settings.RenderProfiling,StereoDrawAudit=info.EnvironmentVariables["LMU_QV_STEREO_AUDIT"]=="1",StereoShaderCapture=info.EnvironmentVariables["LMU_QV_STEREO_SHADER_CAPTURE"]=="1",StereoPairProof=info.EnvironmentVariables["LMU_QV_STEREO_DRAW_PROOF"]=="1",CpuUploadReuse=info.EnvironmentVariables["LMU_QV_CPU_UPLOAD_REUSE"]=="1",CpuUploadBatch=info.EnvironmentVariables["LMU_QV_CPU_UPLOAD_BATCH"]=="1",RenderProfileSeconds=settings.RenderProfileSeconds,NativeOuterResolution=info.EnvironmentVariables["LMU_QV_NATIVE_OUTER"]=="1",UseRuntimeSettings=settings.Backend!="VRS",
                 CpuOuterReuse=info.EnvironmentVariables["LMU_QV_CPU_OUTER_REUSE"]=="1",OuterSsr=info.EnvironmentVariables["LMU_QV_OUTER_SSR"]=="1",CpuOuterReuseRequested=settings.CpuOuterReuse,OuterSsrRequested=settings.OuterSsr,
-                VectorXrDirectInputs=settings.Backend=="VectorXR",OuterBlur=settings.OuterBlur,
+                VectorXrDirectInputs=settings.Backend=="VectorXR",OuterBlur=0m,
                 CropWidthPercent=settings.CropWidthPercent,CropHeightPercent=settings.CropHeightPercent,
                 FocusOffsetXPercent=settings.FocusOffsetXPercent,FocusOffsetYPercent=settings.FocusOffsetYPercent,
                 OuterPercent=settings.OuterPercent,InnerPercent=settings.InnerPercent,FocusWidthPercent=settings.FocusWidthPercent,FocusHeightPercent=settings.FocusHeightPercent,

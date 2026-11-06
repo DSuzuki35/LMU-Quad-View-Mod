@@ -2,7 +2,7 @@
 
 ## Automatic OpenXR startup (0.3.1)
 
-Save settings in the extracted package, close LMU, then select **Setup >
+Save settings in the extracted package, close LMU, then select **Settings >
 Install / update automatic startup**. Approve the administrator prompt. Remove
 the old launcher wrapper from Steam's custom Launch Options, retaining unrelated
 arguments. Start LMU using Steam's **OpenXR** launch mode. No custom launch option,
@@ -21,7 +21,7 @@ the bootstrap first in the 64-bit HKLM OpenXR implicit-layer list. Other entries
 retain their data, enabled/disabled state and relative order. Installation checks
 the result and restores the original values on failure. The prior values are also
 backed up under `HKLM\SOFTWARE\LMUQuadView\LayerOrderBackup`. Only the installing
-user is activated, via `%LOCALAPPDATA%\LMUQuadView\autoload.ini`. Setup updates
+user is activated, via `%LOCALAPPDATA%\LMUQuadView\autoload.ini`. Settings updates
 this Unicode file atomically and removes it when automatic startup is disabled.
 `HKCU\Software\LMUQuadView\AutoStart\PackageRoot` remains a compatibility fallback;
 some protected game launches cannot see it even though the launcher can.
@@ -63,7 +63,7 @@ If no normal mod log appears, inspect
 activation source, intentional skip reasons and helper/instance failures before
 the normal logger is configured.
 
-**Setup > Remove automatic startup** removes only our registered manifest and the
+**Settings > Remove automatic startup** removes only our registered manifest and the
 current user's activation. Protected DLL files are retained so already-running
 OpenXR processes can unload them safely. Direct launcher startup remains available.
 Steam settings and game files are never rewritten by the installer.

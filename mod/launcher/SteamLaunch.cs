@@ -23,10 +23,10 @@ namespace LmuQuadViewLauncher {
         }
         public static string GameArguments(string[] args,LauncherSettings settings) {
             if(args==null||args.Length<2||args[0]!="--steam")
-                throw new ArgumentException("Use the Steam launch option from Setup: launcher --steam %command%.");
+                throw new ArgumentException("Use the Steam launch option from Settings: launcher --steam %command%.");
             var expected=Path.GetFullPath(Path.Combine(settings.GameDirectory,"Le Mans Ultimate.exe"));
             if(!Path.IsPathRooted(args[1])||!String.Equals(Path.GetFullPath(args[1]),expected,StringComparison.OrdinalIgnoreCase))
-                throw new ArgumentException("Steam did not pass the configured Le Mans Ultimate.exe. Check the game folder in Setup and keep %command% in Steam's launch options.");
+                throw new ArgumentException("Steam did not pass the configured Le Mans Ultimate.exe. Check the game folder in Settings and keep %command% in Steam's launch options.");
             var quoted=new List<string>();bool xr=false;
             for(int i=2;i<args.Length;i++) {
                 if(String.Equals(args[i],"+XR",StringComparison.OrdinalIgnoreCase))xr=true;

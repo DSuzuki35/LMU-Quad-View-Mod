@@ -290,10 +290,10 @@ namespace LmuQuadViewLauncher {
         internal static void ValidateRegistration(string root) {
             using(var machine=RegistryKey.OpenBaseKey(RegistryHive.LocalMachine,RegistryView.Registry64))
             using(var key=machine.OpenSubKey(RegistryPath)) {
-                if(key==null)throw new InvalidOperationException("Install automatic startup from Setup first.");
+                if(key==null)throw new InvalidOperationException("Install automatic startup from Settings first.");
                 // The loader reads HKLM before HKCU, in registry enumeration order.
                 var first=key.GetValueNames().FirstOrDefault(n=>key.GetValue(n) is int&&(int)key.GetValue(n)==0);
-                if(first==null||!Owned(first))throw new InvalidOperationException("Reinstall automatic startup from Setup to restore the required layer order.");
+                if(first==null||!Owned(first))throw new InvalidOperationException("Reinstall automatic startup from Settings to restore the required layer order.");
                 foreach(var name in new[]{"lmu_autostart.dll","lmu_quadview.dll"})
                     if(Hash(Path.Combine(Path.GetDirectoryName(first),name))!=Hash(Path.Combine(root,"build",name)))
                         throw new InvalidOperationException("The installed layer belongs to a different package. Reinstall automatic startup from this launcher.");

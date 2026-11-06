@@ -28,7 +28,16 @@ class LaunchServiceTests {
             Check(!layer.ContainsKey("disable_environment")&&!layer.ContainsKey("enable_environment"),"Explicit activation switches retained");
             Check((string)layer["library_path"]==dll,"Explicit DLL path changed");
             Check(File.ReadAllText(manifest)==original,"Installed manifest modified");
-            var settings=new LauncherSettings {GameDirectory=Path.Combine(root,"game's folder"),Backend="QVFR",FoveationMode="fixed",DebugFocus=true,NativeOuterResolution=false,OuterBlur=1.25m};
+            var settings=new LauncherSettings {GameDirectory=Path.Combine(root,"game's folder"),Backend="QVFR",FoveationMode="fixed",DebugFocus=true,NativeOuterResolution=false};
+            var originalBlur=Environment.GetEnvironmentVariable("LMU_QV_OUTER_BLUR");
+            try {
+                Environment.SetEnvironmentVariable("LMU_QV_OUTER_BLUR","3");
+                foreach(var backend in new[]{"Native","QVFR","VectorXR","VRS"}) {
+                    var child=LaunchService.MakeStartInfo(root,new LauncherSettings {Backend=backend},plan,Path.Combine(root,"blur.log"));
+                    Check(child.EnvironmentVariables["LMU_QV_OUTER_BLUR"]=="0","Inherited smoothing enabled for "+backend);
+                }
+                Check(Environment.GetEnvironmentVariable("LMU_QV_OUTER_BLUR")=="3","Blur override changed host environment");
+            } finally {Environment.SetEnvironmentVariable("LMU_QV_OUTER_BLUR",originalBlur);}
             var originalGrid=Environment.GetEnvironmentVariable("DISABLE_OPENGRIDXR");
             try {
                 Environment.SetEnvironmentVariable("DISABLE_OPENGRIDXR",null);
@@ -75,12 +84,12 @@ class LaunchServiceTests {
             Check(info.EnvironmentVariables[plan.DisableVariable]=="1","Implicit QVFR not disabled in child");
             Check(Environment.GetEnvironmentVariable(plan.DisableVariable)==null,"Host process environment modified");
             Check(info.EnvironmentVariables["LMU_QV_FOVEATION_MODE"]=="fixed"&&info.EnvironmentVariables["LMU_QV_DEBUG_FOCUS"]=="1","Mode/outline lost");
-            Check(info.EnvironmentVariables["LMU_QV_OUTER_BLUR"]=="1.25","Blur control not passed as invariant decimal");
+            Check(info.EnvironmentVariables["LMU_QV_OUTER_BLUR"]=="0","Removed smoothing must remain disabled");
             Check(info.EnvironmentVariables["LMU_QV_NATIVE_OUTER"]=="0"&&info.EnvironmentVariables["LMU_QV_VRS_EXCLUSIVE"]=="0","Inherited experimental controls leak");
             Check(info.EnvironmentVariables["LMU_QV_VECTORXR_DIRECT_INPUTS"]=="0","QVFR must retain its original input flags");
             Check(info.EnvironmentVariables["LMU_QV_USE_RUNTIME_SETTINGS"]=="1"&&info.EnvironmentVariables["LMU_QV_FOCUS_PIXELS_PERCENT"]=="100","Provider dimensions scaled twice");
             var native=LaunchService.MakeLayerPlan(root,"Native",provider,null);
-            var vrsSettings=new LauncherSettings {Backend="VRS",GameDirectory=settings.GameDirectory,FocusWidthPercent=35.5m,FocusHeightPercent=60,FocusOffsetXPercent=-12.5m,NativeOuterResolution=true,CropWidthPercent=25,OuterBlur=2,DiagnosticsEnabled=true,BenchmarkEnabled=true,RenderProfiling=true,StereoDrawAudit=true,StereoShaderCapture=true,StereoPairProof=true,CpuUploadReuse=true,CpuUploadBatch=true};
+            var vrsSettings=new LauncherSettings {Backend="VRS",GameDirectory=settings.GameDirectory,FocusWidthPercent=35.5m,FocusHeightPercent=60,FocusOffsetXPercent=-12.5m,NativeOuterResolution=true,CropWidthPercent=25,DiagnosticsEnabled=true,BenchmarkEnabled=true,RenderProfiling=true,StereoDrawAudit=true,StereoShaderCapture=true,StereoPairProof=true,CpuUploadReuse=true,CpuUploadBatch=true};
             var vrsInfo=LaunchService.MakeStartInfo(root,vrsSettings,native,Path.Combine(root,"vrs.log"));
             Check(vrsInfo.EnvironmentVariables["LMU_QV_MODE"]=="vrs","VRS must launch native stereo VRS mode");
             Check(vrsInfo.EnvironmentVariables["LMU_QV_VRS_EXCLUSIVE"]=="1"&&vrsInfo.EnvironmentVariables["LMU_QV_NATIVE_OUTER"]=="0"&&vrsInfo.EnvironmentVariables["LMU_QV_USE_RUNTIME_SETTINGS"]=="0","Quad rendering settings leaked into VRS");
@@ -186,6 +195,9 @@ class LaunchServiceTests {
             Check(vectorInfo.EnvironmentVariables["LMU_QV_STEREO_SHADER_CAPTURE"]=="0","Shader export must default off");
             Check(vectorInfo.EnvironmentVariables["LMU_QV_STEREO_DRAW_PROOF"]=="0"&&vectorInfo.EnvironmentVariables["LMU_QV_CPU_UPLOAD_REUSE"]=="0","Prototypes must default off");
             Check(vectorInfo.EnvironmentVariables["LMU_QV_PROFILE_SECONDS"]=="120","Capture duration default missing");
+            Check(vectorInfo.EnvironmentVariables["LMU_QV_CPU_AFFINITY"]=="x3d","V-Cache preference not requested by default");
+            var noAffinity=new LauncherSettings{GameDirectory=settings.GameDirectory,Backend="Native",CpuCacheAffinity=false};
+            Check(LaunchService.MakeStartInfo(root,noAffinity,native,Path.Combine(root,"noaff.log")).EnvironmentVariables["LMU_QV_CPU_AFFINITY"]=="off","V-Cache opt-out not passed to child");
             vectorSettings.DiagnosticsEnabled=true;
             vectorSettings.RenderProfiling=true;
             vectorSettings.StereoDrawAudit=true;

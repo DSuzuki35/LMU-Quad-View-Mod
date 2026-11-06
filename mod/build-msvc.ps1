@@ -94,7 +94,7 @@ try {
     $hooks=@('buffer','hook','trampoline','hde64')|ForEach-Object{Join-Path $build ('mh_'+$_+'.obj')}
     $basic=@('math','focus_box','native_xr_views','gpu_timing','render_profile','swapchain_sampling','pipeline_stats','benchmark_control','vrs_scope_policy','nv_vrs','ui_d3d_state','focus_overlay','outer_resample','native_outer_texture','native_outer_bindings','stereo_instancing','stereo_audit_abi','stereo_audit','stereo_shader','stereo_draw_proof','native_upload_reuse','native_upload_batch','focus_image_lease')
     $basic += @('benchmark_timing_ownership','render_view_snapshot','frame_submission','late_begin_frame','view_crop','benchmark_native','benchmark_overlay','benchmark_frame','benchmark_gpu','vrs_foveation','vrs_gaze','native_outer_bank')
-    $basic += @('input_validation','async_log','native_pair_pass','nv_stereo_shader','nv_multiview_backend','xr_active_state','diagnostic_sampling','upload_reuse_toggle','outer_runtime_lock','end_frame_lock','locate_runtime_lock','app_image_lock')
+    $basic += @('input_validation','async_log','native_pair_pass','nv_stereo_shader','nv_multiview_backend','xr_active_state','diagnostic_sampling','upload_reuse_toggle','outer_runtime_lock','end_frame_lock','locate_runtime_lock','app_image_lock','cpu_cache_affinity')
     foreach($test in $basic){
         $sources=@("tests/${test}_test.cpp")
         if($test -eq 'nv_vrs'){$sources+='nv_vrs.cpp'}
@@ -139,6 +139,12 @@ try {
     Run-Test 'stereo_audit_test' @('--diagnostics-off')
     Run-Test 'stereo_audit_test' @('--shader-export')
     Run-Test 'stereo_audit_test' @('--pair-proof')
+    $vrsResourceSource=Join-Path $build 'native-version/vrs-check.rc'
+    (Get-Content -LiteralPath $versionFiles.ResourcePath -Raw).Replace('FILETYPE VFT_DLL','FILETYPE VFT_APP').Replace('LMU Quad View OpenXR layer','LMU Quad View VRS hardware check').Replace('lmu_quadview.dll','VrsHardwareCheck.exe') | Set-Content -LiteralPath $vrsResourceSource -Encoding ASCII
+    $vrsResource=Join-Path $build 'vrs-check.res'
+    & rc.exe /nologo "/fo$vrsResource" $vrsResourceSource
+    if($LASTEXITCODE -ne 0){throw 'VRS diagnostic version resource compilation failed'}
+    Compile ($common+@('tests/nv_vrs_hardware_test.cpp','nv_vrs.cpp',$vrsResource,'d3d11.lib','d3dcompiler.lib','dxgi.lib',('/Fe'+(Join-Path $build 'nv_vrs_hardware_test.exe'))))
     Compile ($common+@('/LD','xr_layer.cpp','async_log.cpp','engine_bridge.cpp','nv_vrs.cpp','stereo_audit.cpp','stereo_shader.cpp','stereo_draw_proof.cpp')+$hooks+@($versionResource,'d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+$LayerOutput)))
     $hasher=[Security.Cryptography.SHA256]::Create()
     $binaryStream=[IO.File]::OpenRead($LayerOutput)

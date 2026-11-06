@@ -4,6 +4,36 @@ Release numbers use `MAJOR.MINOR.PATCH`. The root `VERSION` file supplies the
 launcher title, Windows EXE/DLL metadata and default portable ZIP name.
 Versions before 1.0 remain experimental and may change compatibility or settings.
 
+## 0.5.4 - 2026-11-06
+
+Integrates Markus Stahl's 0.5.2–0.5.4 community patches. **Thank you, Markus Stahl,
+for the continued VRS optimizations, test fixes and CPU scheduling contribution.**
+
+- Rename Setup to **Settings**, move the green focus-outline toggle there, and
+  remove Outer smoothing from the launcher and shared profiles. Legacy smoothing
+  values are ignored; launcher starts explicitly disable the old filter.
+- Keep a separate Stereo VRS shading-rate map for each eye. Rebuild only when
+  that eye's focus changes; upload only when its 16×16 tiles change. Reuse map
+  storage and fill rows outside the focus region in one operation.
+- Add `mapUploads` to VRS diagnostics and regression coverage comparing the
+  optimized tiles to the previous implementation, including cache and retry cases.
+- Add **Settings > Prefer the 3D V-Cache CCD (AMD X3D)**, enabled by default.
+  On supported dual-CCD AMD systems with an unambiguous asymmetric L3 topology,
+  request the larger-cache domain through Windows process-default CPU sets.
+  Skip other/ambiguous topologies, failed queries, existing process affinity or
+  default CPU sets. Explicit thread policies retain Windows precedence.
+  The preference remains local to the machine and applies on next game launch,
+  including Steam automatic startup. Diagnostics log the decision.
+- Stabilize autoload verification fixtures with unique temporary paths, bounded
+  image-lock/cleanup retries and ownership-aware cleanup. Trace-log tests now
+  wait for asynchronous writes and account for intentional queue drops.
+- Include a manually launched NVIDIA VRS diagnostic with version metadata and
+  release-signing support. Normal builds compile it without running it.
+
+These changes have not yet been benchmarked in LMU. Synthetic tile equality is
+not a headset image-quality test, and the X3D preference is not a guaranteed
+frametime improvement. The reported 1–1.5 ms gain below belongs to 0.5.1.
+
 ## 0.5.1 - 2026-11-05
 
 Integrates Markus Stahl's 0.5.0 and 0.5.1 community patches on top of 0.4.0.

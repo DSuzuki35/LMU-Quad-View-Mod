@@ -70,7 +70,7 @@ namespace LmuQuadViewLauncher {
                     updateAction.Text="Install update";updateAction.Enabled=true;
                 },true);return;
             }
-            if(MessageBox.Show(this,"Save current settings and close this launcher to install the verified update into this package folder? Setup adds Start menu and uninstall entries. LMU must be closed. Reinstall automatic startup from Setup afterwards.","Install update",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
+            if(MessageBox.Show(this,"Save current settings and close this launcher to install the verified update into this package folder? Setup adds Start menu and uninstall entries. LMU must be closed. Reinstall automatic startup from Settings afterwards.","Install update",MessageBoxButtons.YesNo,MessageBoxIcon.Question)!=DialogResult.Yes)return;
             try {
                 var settings=Values();QvfrSettings.Save(SettingsPath,settings);
                 updateStatus.Text="Rechecking the installer before starting setup...";

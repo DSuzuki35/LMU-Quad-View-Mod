@@ -5,6 +5,7 @@
 #include "xr_capture.hpp"
 #include "xr_sizes.hpp"
 #include "render_profile.hpp"
+#include "async_log.hpp"
 #include <thread>
 #include <cmath>
 #include <cassert>
@@ -90,6 +91,32 @@ std::string currentLog() {
     lmuqv::stop_log();
     std::ifstream input(testBuildRoot()/"xr-layer-test-trace.log");
     return {std::istreambuf_iterator<char>(input),std::istreambuf_iterator<char>()};
+}
+bool traceLogsAccountedFor(const std::string& text,const lmuqv::AsyncLogStats& before,const lmuqv::AsyncLogStats& after) {
+    unsigned missing=0;
+    for(const char* marker:{"xrBeginFrame mode=trace frame=1","xrLocateViews mode=trace frame=1","xrEndFrame mode=trace frame=1"})
+        if(text.find(marker)==std::string::npos)++missing;
+    // Only intentional bounded-queue losses during this frame can explain a
+    // missing marker. Earlier drops, pending writes and sink failures cannot.
+    return after.accepted==after.written&&after.writeFailures==0&&after.flushFailures==0&&
+        after.truncated==before.truncated&&after.droppedStopped==before.droppedStopped&&
+        after.droppedUnavailable==before.droppedUnavailable&&
+        after.droppedContention>=before.droppedContention&&after.droppedOverflow>=before.droppedOverflow&&
+        missing<=after.droppedContention-before.droppedContention+after.droppedOverflow-before.droppedOverflow;
+}
+void traceLogAccountingTests() {
+    const std::string complete="xrBeginFrame mode=trace frame=1\nxrLocateViews mode=trace frame=1\nxrEndFrame mode=trace frame=1\n";
+    const std::string missingLocate="xrBeginFrame mode=trace frame=1\nxrEndFrame mode=trace frame=1\n";
+    lmuqv::AsyncLogStats before{},after{};before.droppedContention=after.droppedContention=7;
+    assert(traceLogsAccountedFor(complete,before,after));
+    assert(!traceLogsAccountedFor(missingLocate,before,after)); // Old drops do not excuse a missing call.
+    ++after.droppedContention;
+    assert(traceLogsAccountedFor(missingLocate,before,after));
+    assert(!traceLogsAccountedFor("",before,after)); // One drop cannot explain three missing calls.
+    ++after.accepted;
+    assert(!traceLogsAccountedFor(complete,before,after)); // Drain is mandatory even with every marker present.
+    ++after.written;++after.writeFailures;
+    assert(!traceLogsAccountedFor(complete,before,after));
 }
 XrResult waitSwapchainResult=XR_SUCCESS;
 XrTime runtimeTime=123;
@@ -488,6 +515,7 @@ XrResult XRAPI_CALL create(const XrInstanceCreateInfo* info, const XrApiLayerCre
 int main(int argc,char** argv) {
     bool diagnosticsOff=false;for(int arg=1;arg<argc;++arg)diagnosticsOff|=!std::strcmp(argv[arg],"--diagnostics-off");
     if(diagnosticsOff)SetEnvironmentVariableA("LMU_QV_DIAGNOSTICS","0");
+    traceLogAccountingTests();
     outputSizeTests();
     captureBmpTests();
     const auto logPath=testBuildRoot()/L"xr-layer-test-trace.log";
@@ -1169,6 +1197,7 @@ int main(int argc,char** argv) {
     assert(enumerate(instance,1,XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,2,&count,bounded.views)==XR_SUCCESS&&count==2);
     assert(bounded.views[0].recommendedImageRectWidth==1200&&bounded.views[0].recommendedImageRectHeight==1300);
     frameCalls.clear();
+    const auto traceLogBefore=lmuqv::async_log_stats();
     XrFrameState traceFrame{};traceFrame.type=XR_TYPE_FRAME_STATE;
     assert(reinterpret_cast<PFN_xrWaitFrame>(load("xrWaitFrame"))(session,nullptr,&traceFrame)==XR_SUCCESS);
     assert(reinterpret_cast<PFN_xrBeginFrame>(load("xrBeginFrame"))(session,nullptr)==XR_SUCCESS);
@@ -1176,12 +1205,9 @@ int main(int argc,char** argv) {
     XrFrameEndInfo traceEnd{};traceEnd.type=XR_TYPE_FRAME_END_INFO;traceEnd.displayTime=123;
     assert(reinterpret_cast<PFN_xrEndFrame>(load("xrEndFrame"))(session,&traceEnd)==XR_SUCCESS);
     assert(frameCalls=="WBLE");
-    std::ifstream traceLog(logPath);
-    std::string logText{std::istreambuf_iterator<char>(traceLog),std::istreambuf_iterator<char>()};
+    const auto logText=currentLog();
     if(!diagnosticsOff){
-        assert(logText.find("xrBeginFrame mode=trace frame=1")!=std::string::npos);
-        assert(logText.find("xrLocateViews mode=trace frame=1")!=std::string::npos);
-        assert(logText.find("xrEndFrame mode=trace frame=1")!=std::string::npos);
+        assert(traceLogsAccountedFor(logText,traceLogBefore,lmuqv::async_log_stats()));
     }else assert(logText.empty()&&GetFileAttributesW(logPath.c_str())==INVALID_FILE_ATTRIBUTES);
     assert(reinterpret_cast<PFN_xrDestroyInstance>(load("xrDestroyInstance"))(instance)==XR_SUCCESS);
     // VRS requests ordinary stereo, leaves runtime views untouched and falls
