@@ -1,8 +1,9 @@
 # SPS rendering
 
 For current source status and the remaining production integration, read the
-[maintainer handoff](SPS-HANDOFF.md). This entry point enables a one-pair prototype;
-it does not enable a complete production SPS pass.
+[maintainer handoff](SPS-HANDOFF.md) and [owned production path](SPS-PRODUCTION-PATH.md).
+The launcher entry point below enables the older one-pair prototype; it does not
+activate the new owned renderer or a complete production SPS pass.
 
 Run `Start-SPS-Rendering.cmd` from the portable folder. It uses the saved game,
 provider and foveation settings in `launcher-settings.xml` and enables the native

@@ -1,4 +1,4 @@
-param([string]$LayerOutput=(Join-Path $PSScriptRoot 'build/lmu_quadview.dll'),[switch]$StereoShaderOnly,[switch]$StereoProofOnly,[switch]$UploadBatchOnly,[switch]$FocusLeaseOnly,[switch]$AutoloadOnly)
+param([string]$LayerOutput=(Join-Path $PSScriptRoot 'build/lmu_quadview.dll'),[switch]$StereoShaderOnly,[switch]$StereoProofOnly,[switch]$UploadBatchOnly,[switch]$FocusLeaseOnly,[switch]$AutoloadOnly,[switch]$SpsOnly)
 $ErrorActionPreference='Stop'
 if(!(Get-Command cl.exe -ErrorAction SilentlyContinue)){throw 'Run build-msvc.cmd to initialize the x64 compiler environment.'}
 $LayerOutput=[IO.Path]::GetFullPath($LayerOutput)
@@ -22,6 +22,28 @@ function Run-Test([string]$Name,[string[]]$Arguments=@()){
 }
 Push-Location $PSScriptRoot
 try {
+    if($SpsOnly){
+        foreach($optimization in @('/Od','/O2')){
+            $options=@($common | Where-Object {$_ -ne '/O2'})+@($optimization)
+            Compile ($options+@('tests/sps_frame_cameras_test.cpp',('/Fe'+(Join-Path $build 'sps_frame_cameras_test.exe'))))
+            Run-Test 'sps_frame_cameras_test'
+            Compile ($options+@('tests/sps_game_mesh_inputs_test.cpp',('/Fe'+(Join-Path $build 'sps_game_mesh_inputs_test.exe'))))
+            Run-Test 'sps_game_mesh_inputs_test'
+            Compile ($options+@('tests/sps_game_parameters_test.cpp',('/Fe'+(Join-Path $build 'sps_game_parameters_test.exe'))))
+            Run-Test 'sps_game_parameters_test'
+            Compile ($options+@('tests/sps_game_lighting_test.cpp',('/Fe'+(Join-Path $build 'sps_game_lighting_test.exe'))))
+            Run-Test 'sps_game_lighting_test'
+        }
+        Compile ($common+@('tests/sps_frame_targets_test.cpp','stereo_shader.cpp','d3d11.lib','d3dcompiler.lib',('/Fe'+(Join-Path $build 'sps_frame_targets_test.exe'))))
+        Run-Test 'sps_frame_targets_test'
+        Compile ($common+@('tests/sps_renderer_test.cpp','stereo_shader.cpp','d3d11.lib','d3dcompiler.lib',('/Fe'+(Join-Path $build 'sps_renderer_test.exe'))))
+        Run-Test 'sps_renderer_test'
+        Compile ($common+@('tests/sps_xr_output_test.cpp','stereo_shader.cpp','d3d11.lib','d3dcompiler.lib',('/Fe'+(Join-Path $build 'sps_xr_output_test.exe'))))
+        Run-Test 'sps_xr_output_test'
+        Compile ($common+@('tests/sps_xr_layer_test.cpp','stereo_shader.cpp','d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+(Join-Path $build 'sps_xr_layer_test.exe'))))
+        Run-Test 'sps_xr_layer_test'
+        return
+    }
     . (Join-Path $PSScriptRoot '../tools/version.ps1')
     $versionFiles = Write-LmuVersionFiles (Join-Path $build 'native-version')
     $versionResource = Join-Path $build 'version.res'

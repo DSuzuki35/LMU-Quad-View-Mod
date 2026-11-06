@@ -5,9 +5,8 @@
 namespace lmuqv {
 // Operation order from the captured 0x557870 derived-view path. This is value
 // math, not a call into an engine TransformRecord or its opaque tail fields.
-inline bool native_stereo_view_product(const Matrix& a,const Matrix& b,Matrix& result) noexcept {
-    result={};NativeStereoFpGuard preserve;
-    if((_mm_getcsr()&0xffc0u)!=0x1f80u||std::fegetround()!=FE_TONEAREST)return false;
+inline bool stereo_view_product_values(const Matrix& a,const Matrix& b,Matrix& result) noexcept {
+    result={};
     for(float f:a)if(!std::isfinite(f))return false;
     for(float f:b)if(!std::isfinite(f))return false;
     Matrix output;
@@ -20,6 +19,11 @@ inline bool native_stereo_view_product(const Matrix& a,const Matrix& b,Matrix& r
         output[row*4+col]=value;
     }
     result=output;return true;
+}
+inline bool native_stereo_view_product(const Matrix& a,const Matrix& b,Matrix& result) noexcept {
+    result={};NativeStereoFpGuard preserve;
+    if((_mm_getcsr()&0xffc0u)!=0x1f80u||std::fegetround()!=FE_TONEAREST)return false;
+    return stereo_view_product_values(a,b,result);
 }
 struct NativeStereoViewGeometry {
     bool complete=false;

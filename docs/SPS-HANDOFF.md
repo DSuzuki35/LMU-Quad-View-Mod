@@ -7,16 +7,80 @@ render both eyes through a complete SPS pass, and suppress the corresponding
 duplicated native eye work. Reuse the components already implemented here.
 Do not treat another one-draw demonstration as delivery of that objective.
 
-**The current native adapter is a prototype limited to one candidate draw pair
-per frame. Full-pass integration is unfinished. No successful paired draw or
-SPS performance gain has yet been demonstrated in LMU.** The normal launcher
-keeps SPS rendering disabled; `Start-SPS-Rendering.cmd` explicitly enables it.
+**Production integration remains unfinished. Native rendering is still active
+in LMU, and no SPS CPU frametime gain has been verified in the game.**
 
-The immediate priority is complete pass integration, rather than more user test
-cycles for isolated prototype gates. Existing native preparation and uncovered
-passes must remain intact until their complete replacements exist.
+The latest continuation implements a separate, owned four-view renderer and an
+exclusive XR submission route. Continue that path, described below and in
+[SPS-PRODUCTION-PATH.md](SPS-PRODUCTION-PATH.md). Do not resume native-right
+prediction/comparison troubleshooting or treat another one-pair run as delivery.
 
-## What already exists
+The existing `Start-SPS-Rendering.cmd` still selects the older one-pair native
+adapter. It does not activate the new owned renderer. The ordinary launcher
+keeps that prototype disabled.
+
+## Latest owned SPS implementation
+
+The following source is implemented and passes the dedicated SPS-only suite:
+
+| Component | Source |
+| --- | --- |
+| Authoritative quad camera snapshot and history | `mod/sps_frame_cameras.hpp` |
+| Owned, cleared paired color/depth targets without native seeds | `mod/sps_frame_targets.hpp` |
+| Persistent assets/instances, one union traversal, four independent visibility/order lists | `mod/sps_scene.hpp`, `mod/sps_draw_list.hpp` |
+| Complete two-pair preflight/execution and four-view output ownership | `mod/sps_renderer.hpp` |
+| Direct game mesh/geometry/shader-handle and bone-palette inputs | `mod/sps_game_mesh_inputs.hpp` |
+| Owned game constant-buffer ABI and transform patches | `mod/sps_game_parameters.hpp` |
+| Shared owned ambient/diffuse/directional/specular calculations and raw input readers | `mod/sps_game_lighting.hpp` |
+| Creation-metadata shader conversion, versioned resource snapshots and owned asset import | `mod/sps_game_asset.hpp`, `mod/stereo_native_registry.hpp` |
+| Four owned XR swapchains, complete-quad publication and acquisition/release recovery | `mod/sps_xr_output.hpp` |
+| Exclusive production output bridge and EndFrame route | `mod/bridge.hpp`, `mod/xr_layer.cpp` |
+| Changed-state/range submission, persistent recording contexts and cached binding validation | `mod/stereo_command_state.hpp`, `mod/stereo_batch.hpp`, `mod/stereo_draw.hpp` |
+
+The owned path has no native render/preparation/fallback callback. It shares
+material and animation data across views, packs only the view-dependent CBs,
+supports indexed lists/strips and ordered paired or single-eye actions, and
+reuses unchanged owned resource versions. Its exclusive XR route ignores all
+application/native projection layers; an incomplete SPS quartet submits no
+scene. Teardown and EndFrame can be serialized from another application thread.
+
+**These are owned fixtures and real D3D/XR-adapter tests, not an LMU runtime
+success.** The engine does not yet call `xr_prepare_sps_output` or feed a complete
+game scene to `SpsRenderer`.
+
+Still required for the user's production goal:
+
+1. Complete the live unfiltered game scene/material producer: texture and sampler
+   resolution, render-state/pass inputs, mutable geometry uploads, skeletal
+   finalization and other source effects. The direct mesh reader explicitly
+   refuses unsupported pending uploads/callbacks/unfinalized poses.
+2. Supply shared world/tracking placement and the complete owned game frame graph,
+   including required shadows, postprocessing, depth consumers and UI. Current
+   owned scene execution covers one color/depth target per pair; XR output takes
+   resolved single-sample color.
+3. Connect that producer and renderer at the game render entry, publish its four
+   outputs, and suppress the original eye rendering/preparation/consumers. Do not
+   make production errors fall through to the native renderer.
+4. Verify complete on-track output and actual CPU frametime reduction. Operation
+   counters and synthetic GPU tests do not establish an in-game speedup.
+
+Run only the SPS suite for this continuation:
+
+```powershell
+$env:LMU_QV_STEREO_HARDWARE_TEST = '1'
+.\mod\build-msvc.cmd -SpsOnly
+```
+
+It returns before the older native-pipeline tests. Camera, mesh, parameter and
+lighting models run at Od/O2. GPU checks cover WARP/hardware, VPRT/GS and
+RGBA8/HDR, complete four-view pixels/depth, membership/transparency, imported
+textures, changed bone poses, immutable resource versions, recording-context
+reuse, bounded state calls, and the actual exclusive XR bridge. Native engine
+entry points assert if entered in the XR bridge fixture, and native projection
+view pointers are deliberately invalid. Full production DLL/game validation
+has not been performed for the new route; no new playable package is claimed.
+
+## Earlier support models and native prototype
 
 | Component | Source and status |
 | --- | --- |
@@ -33,7 +97,7 @@ passes must remain intact until their complete replacements exist.
 material, bone or native-cache preparation. Do not enable native pass suppression
 by changing those booleans without implementing their outstanding contracts.
 
-## Confirmed live findings and fixes
+## Historical live findings and fixes
 
 1. The first integration run prepared 13,783 projection pairs but produced zero
    native world-pose pairs. The image was native fallback output.
@@ -75,7 +139,11 @@ FP bookkeeping and about 86 FPS afterwards. These were not controlled A/B runs,
 and neither demonstrated SPS acceleration. No private game captures, shaders,
 logs or personal settings are required to build the committed tests.
 
-## Continue from here
+## Historical native-prototype integration notes
+
+The notes below describe the older adapter. The active production direction is
+the owned path above; these notes do not authorize keeping a native fallback or
+restarting serial native-right comparison experiments.
 
 1. Make the existing owned camera pair authoritative for both eyes of a rendered
    frame. The current read/predict/compare path still allows the native right

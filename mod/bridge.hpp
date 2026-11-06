@@ -22,6 +22,13 @@ bool xr_frame_views(XrView (&views)[4]);
 // Locks the same rendered locate snapshot as xr_frame_views and owns its flat
 // values plus session/frame/time/space/thread identity. Clears output on failure.
 bool xr_frame_inputs(QuadFrameInputs&);
+class SpsRenderer;
+struct SpsRendererDescription;
+// Exclusive, owned quartet. The caller must supply a complete SPS renderer;
+// enabling this route removes application/native projection submission.
+bool xr_prepare_sps_output(SpsRendererDescription&);
+bool xr_publish_sps_frame(SpsRenderer&);
+bool xr_sps_output_active();
 bool xr_frame_full_outer_fov(XrFovf (&fov)[2]);
 // Paired-pass integration infrastructure, not an enable switch for stereo.
 // Prepare before application swapchains are created. A held, waited image stays

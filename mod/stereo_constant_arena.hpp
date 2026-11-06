@@ -47,24 +47,25 @@ public:
         for(auto& page:pages_)page.used=0;deduplicated_.clear();active_=bytes_=maps_=0;budget_=budget;failed_=false;
         ++generation_;phase_=Phase::Building;reason_="constant arena open";return true;
     }
-    StereoConstantAllocation add(const std::vector<uint8_t>& payload) noexcept {
+    StereoConstantAllocation add(const uint8_t* payload,size_t size) noexcept {
         StereoConstantAllocation allocation;
         if(phase_!=Phase::Building||identity_.thread!=GetCurrentThreadId()||failed_){reason_="constant arena not writable";return allocation;}
-        if(payload.empty()||payload.size()>pageBytes||payload.size()%16){reason_="invalid owned constant payload";failed_=true;return allocation;}
+        if(!payload||!size||size>pageBytes||size%16){reason_="invalid owned constant payload";failed_=true;return allocation;}
         try {
-            const std::string key(reinterpret_cast<const char*>(payload.data()),payload.size());
+            const std::string key(reinterpret_cast<const char*>(payload),size);
             const auto found=deduplicated_.find(key);if(found!=deduplicated_.end())return found->second;
-            const size_t padded=offsets_?(payload.size()+255)/256*256:payload.size();
+            const size_t padded=offsets_?(size+255)/256*256:size;
             if(padded>budget_-bytes_){reason_="constant arena byte budget";failed_=true;return allocation;}
             size_t index=0;
             if(offsets_&&active_&&pages_[active_-1].used+padded<=pageBytes)index=active_-1;
             else {index=active_++;if(index==pages_.size())pages_.emplace_back();pages_[index].bytes.resize(offsets_?pageBytes:padded);}
             auto& page=pages_[index];allocation={generation_,index,UINT(page.used/16),UINT(padded/16)};
-            std::memcpy(page.bytes.data()+page.used,payload.data(),payload.size());
-            if(padded>payload.size())std::memset(page.bytes.data()+page.used+payload.size(),0,padded-payload.size());
+            std::memcpy(page.bytes.data()+page.used,payload,size);
+            if(padded>size)std::memset(page.bytes.data()+page.used+size,0,padded-size);
             page.used+=padded;bytes_+=padded;deduplicated_.emplace(key,allocation);return allocation;
         }catch(...){reason_="constant arena allocation failure";failed_=true;return {};}
     }
+    StereoConstantAllocation add(const std::vector<uint8_t>& payload) noexcept{return add(payload.data(),payload.size());}
     bool seal() noexcept {
         if(phase_!=Phase::Building||failed_||identity_.thread!=GetCurrentThreadId())return false;
         for(size_t i=0;i<active_;++i){auto& page=pages_[i];const UINT capacity=UINT(offsets_?pageBytes:page.used);

@@ -37,6 +37,9 @@ inline bool texture_bytes(const D3D11_TEXTURE2D_DESC& d,uint64_t& bytes){
 }
 struct FrozenResource {
     StereoComRef<ID3D11Resource> resource,source;
+    StereoComRef<ID3D11Device> device;
+    D3D11_RESOURCE_DIMENSION dimension=D3D11_RESOURCE_DIMENSION_UNKNOWN;
+    D3D11_BUFFER_DESC buffer{};
     uint64_t bytes=0;
 };
 }
@@ -49,6 +52,8 @@ public:
     explicit operator bool()const{return bool(frozen_);}
     ID3D11Resource* resource()const{return frozen_?frozen_->resource.get():nullptr;}
     ID3D11Resource* source_resource()const{return frozen_?frozen_->source.get():nullptr;}
+    ID3D11Device* resource_device()const{return frozen_?frozen_->device.get():nullptr;}
+    const D3D11_BUFFER_DESC* buffer_description()const{return frozen_&&frozen_->dimension==D3D11_RESOURCE_DIMENSION_BUFFER?&frozen_->buffer:nullptr;}
     const StereoFrameIdentity& identity()const{return identity_;}
     bool same_contents(const StereoResourceLease& other)const{return frozen_&&frozen_==other.frozen_;}
 };
@@ -61,6 +66,7 @@ public:
     explicit operator bool()const{return bool(resource_)&&bool(view_);}
     ID3D11ShaderResourceView* view()const{return view_.get();}
     ID3D11Resource* source_resource()const{return resource_.source_resource();}
+    ID3D11Device* resource_device()const{return resource_.resource_device();}
     const StereoFrameIdentity& identity()const{return resource_.identity();}
     bool same_binding(const StereoShaderResourceLease& other)const{
         return resource_.same_contents(other.resource_)&&!std::memcmp(&desc_,&other.desc_,sizeof(desc_));
@@ -111,6 +117,7 @@ public:
                 lease.frozen_=std::move(frozen);lease.identity_=identity_;reason_="retained immutable contents";return lease;}}
             if(created_>=4096||(usage!=D3D11_USAGE_IMMUTABLE&&bytes>budget_-copied_)){reason_="GPU snapshot budget";return lease;}
             auto frozen=std::make_shared<stereo_gpu_detail::FrozenResource>();frozen->bytes=bytes;frozen->source=StereoComRef<ID3D11Resource>(source);
+            frozen->device=device_;frozen->dimension=dimension;
             if(usage==D3D11_USAGE_IMMUTABLE){frozen->resource=StereoComRef<ID3D11Resource>(source);immutable_[source]=frozen;}
             else {
                 HRESULT hr=E_FAIL;
@@ -121,9 +128,28 @@ public:
                 if(FAILED(hr)){reason_="GPU snapshot allocation failed";return lease;}
                 context_->CopyResource(frozen->resource.get(),source);copied_+=bytes;
             }
-            ++created_;lease.frozen_=std::move(frozen);lease.identity_=identity_;reason_="owned GPU content snapshot";return lease;
+            frozen->buffer=buffer;++created_;lease.frozen_=std::move(frozen);lease.identity_=identity_;reason_="owned GPU content snapshot";return lease;
         }catch(...){reason_="GPU snapshot bookkeeping allocation failed";return lease;}
     }
+    // Reuse an already-owned immutable content snapshot, not its mutable
+    // source. Asset changes create a fresh snapshot; unchanged assets need no
+    // resource copy, allocation or driver descriptor query in another frame.
+    StereoResourceLease pin(const StereoResourceLease& snapshot) noexcept {
+        StereoResourceLease result;
+        if(!context_||identity_.thread!=GetCurrentThreadId()||!snapshot||snapshot.resource_device()!=device_.get()){
+            reason_="invalid SPS asset snapshot scope";return result;}
+        result.frozen_=snapshot.frozen_;result.identity_=identity_;return result;
+    }
+    StereoShaderResourceLease pin(const StereoShaderResourceLease& snapshot) noexcept {
+        StereoShaderResourceLease result;if(!snapshot)return result;
+        auto resource=pin(snapshot.resource_);if(!resource)return result;
+        result.resource_=std::move(resource);result.view_=snapshot.view_;result.desc_=snapshot.desc_;return result;
+    }
+    bool stamp(StereoResourceLease& snapshot) noexcept {
+        if(!context_||identity_.thread!=GetCurrentThreadId()||!snapshot||snapshot.resource_device()!=device_.get())return false;
+        snapshot.identity_=identity_;return true;
+    }
+    bool stamp(StereoShaderResourceLease& snapshot) noexcept{return bool(snapshot)&&stamp(snapshot.resource_);}
     bool create_view(const StereoResourceLease& lease,const D3D11_SHADER_RESOURCE_VIEW_DESC& desc,StereoComRef<ID3D11ShaderResourceView>& out) noexcept {
         out.reset();if(!lease||lease.identity()!=identity_||identity_.thread!=GetCurrentThreadId()||!device_){reason_="stale resource view lease";return false;}
         if(FAILED(device_->CreateShaderResourceView(lease.resource(),&desc,out.put()))){reason_="frozen resource view creation failed";return false;}return true;
@@ -133,6 +159,7 @@ public:
         out.resource_=lease;out.view_->GetDesc(&out.desc_);return out;
     }
     uint64_t copied_bytes()const{return copied_;}
+    ID3D11Device* device()const{return device_.get();}
     bool matches(ID3D11DeviceContext* context,const StereoFrameIdentity& key)const{
         return context_.get()==context&&identity_==key&&key.valid()&&key.thread==GetCurrentThreadId();
     }

@@ -23,12 +23,34 @@ class StereoNativeRegistry {
     std::unordered_map<ID3D11DeviceChild*,Shader> shaders_;
     std::unordered_map<ID3D11InputLayout*,Layout> layouts_;
     std::unordered_map<StereoNativePipelineKey,std::shared_ptr<const StereoPipeline>,StereoNativePipelineKeyHash> ready_;
+    std::unordered_map<std::string,std::shared_ptr<const StereoPipeline>> assetReady_;
     std::deque<StereoNativePipelineKey> pending_;
     StereoPipelineCache cache_;
     uint64_t bytes_=0;
     uint32_t thread_=0;
     bool configured_=false;
 public:
+    // Asset preparation has no native draw to fall back to and no later eye
+    // verification/warm-up gate. Resolve creation metadata synchronously here,
+    // outside submission; the resulting pipeline is immutable and cached.
+    std::shared_ptr<const StereoPipeline> resolve_asset(ID3D11Device* device,const StereoNativePipelineKey& key,
+        uint32_t vertexViewSlots,uint32_t pixelViewSlots,bool forceGeometry=false) noexcept {
+        if(!device||(thread_&&thread_!=GetCurrentThreadId()))return {};
+        try{
+            std::string identity;identity.append(reinterpret_cast<const char*>(&key.vertex),sizeof(key.vertex));
+            identity.append(reinterpret_cast<const char*>(&key.pixel),sizeof(key.pixel));identity.append(reinterpret_cast<const char*>(&key.layout),sizeof(key.layout));
+            identity.append(reinterpret_cast<const char*>(&vertexViewSlots),sizeof(vertexViewSlots));identity.append(reinterpret_cast<const char*>(&pixelViewSlots),sizeof(pixelViewSlots));
+            identity.push_back(forceGeometry?'g':'v');
+            std::shared_ptr<const Program> vertex,pixel;std::vector<StereoInputElement> elements;
+            {std::lock_guard<std::mutex> lock(mutex_);const auto ready=assetReady_.find(identity);if(ready!=assetReady_.end())return ready->second;
+                const auto vs=shaders_.find(key.vertex),ps=shaders_.find(key.pixel);const auto layout=layouts_.find(key.layout);
+                if(vs==shaders_.end()||ps==shaders_.end()||layout==layouts_.end()||!vs->second.program->vertex||ps->second.program->vertex)return {};
+                vertex=vs->second.program;pixel=ps->second.program;elements=layout->second.elements;}
+            thread_=GetCurrentThreadId();if(!configured_){if(!cache_.configure(device,forceGeometry))return {};configured_=true;}
+            auto pipeline=cache_.get(vertex->code,pixel->code,vertexViewSlots&vertex->constants,pixelViewSlots&pixel->constants,elements);
+            std::lock_guard<std::mutex> lock(mutex_);assetReady_.emplace(std::move(identity),pipeline);return pipeline;
+        }catch(...){return {};}
+    }
     void shader(ID3D11DeviceChild* object,const void* code,size_t bytes,bool vertex) noexcept {
         if(!object||!code||!bytes||bytes>512*1024)return;
         try {
@@ -86,6 +108,6 @@ public:
         }catch(...){return false;}
     }
     size_t ready_count(){std::lock_guard<std::mutex> lock(mutex_);size_t count=0;for(const auto& p:ready_)count+=bool(p.second);return count;}
-    void reset(){std::lock_guard<std::mutex> lock(mutex_);pending_.clear();ready_.clear();layouts_.clear();shaders_.clear();programs_.clear();cache_=StereoPipelineCache{};bytes_=0;configured_=false;thread_=0;}
+    void reset(){std::lock_guard<std::mutex> lock(mutex_);pending_.clear();ready_.clear();assetReady_.clear();layouts_.clear();shaders_.clear();programs_.clear();cache_=StereoPipelineCache{};bytes_=0;configured_=false;thread_=0;}
 };
 }

@@ -13,6 +13,8 @@
 #include "submission_pose.hpp"
 #include "stereo_audit.hpp"
 #include "native_sps.hpp"
+#include "sps_renderer.hpp"
+#include "sps_xr_output.hpp"
 #include "vrs_gaze.hpp"
 #include "vrs_foveation.hpp"
 #include "benchmark_overlay.hpp"
@@ -78,6 +80,9 @@ struct Dispatch {
 } next;
 lmuqv::OuterResample outerResample; // Owns COM state; deliberately outside the copy-resettable XR State.
 lmuqv::OuterResample cropResample; // Separate cache: does not consume native source SRV slots.
+lmuqv::SpsXrOutput spsOutput;
+bool spsOutputOwned=false;
+lmuqv::StereoFrameIdentity spsOutputFrame;
 struct Outer {
     XrSwapchain chain{};
     std::vector<XrSwapchainImageD3D11KHR> images;
@@ -335,6 +340,8 @@ void destroyOuter() {
     s.colorInfo={};
 }
 void clearSession() {
+    if(!spsOutput.stop_session())logf("SPS XR output teardown: %s",spsOutput.reason());
+    spsOutputOwned=false;spsOutputFrame={};
     vrsGaze.resetSession();
     benchmarkReset();
     for(auto& entry:s.appChains)clearFocusRtvs(entry.second);
@@ -594,6 +601,8 @@ XrResult XRAPI_CALL layerCreateSession(XrInstance instance,const XrSessionCreate
 XrResult XRAPI_CALL layerDestroySession(XrSession session) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     logf("xrDestroySession");lmuqv::engine_stop();benchmarkReset();vrsGaze.resetSession();
+    if(!spsOutput.stop_session())logf("SPS XR output teardown: %s",spsOutput.reason());
+    spsOutputOwned=false;spsOutputFrame={};
     outerResample.reset();
     for(auto& entry:s.appChains)clearFocusRtvs(entry.second);
     destroyOuter();
@@ -611,7 +620,9 @@ XrResult XRAPI_CALL layerEndSession(XrSession session) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(s.focusOwnership&&heldFocusImages()){logf("stereo_pass end-session refused: focus lease must be resolved or session destroyed");return XR_ERROR_CALL_ORDER_INVALID;}
     XrResult r=next.EndSession(session);benchmarkRuntimeResult(r);
-    if(XR_SUCCEEDED(r)){benchmarkGpu.stop(false);s.running=false;clearFrame();if(benchmarkEnabled){benchmarkGpu.stop(false);benchmarkPreviousSceneQpc=0;benchmarkTransport.data()->header.running=0;benchmarkTransport.data()->header.status=1;benchmarkTransport.data()->header.reason=0;}}logf("xrEndSession result=%d",r);return r;
+    if(XR_SUCCEEDED(r)){benchmarkGpu.stop(false);s.running=false;
+        if(spsOutputOwned){spsOutput.stop_session();spsOutputOwned=false;spsOutputFrame={};}
+        clearFrame();if(benchmarkEnabled){benchmarkGpu.stop(false);benchmarkPreviousSceneQpc=0;benchmarkTransport.data()->header.running=0;benchmarkTransport.data()->header.status=1;benchmarkTransport.data()->header.reason=0;}}logf("xrEndSession result=%d",r);return r;
 }
 XrResult XRAPI_CALL layerWaitFrame(XrSession session,const XrFrameWaitInfo* info,XrFrameState* state) {
     // A pipelined WaitFrame must not hold the lock needed by the previous EndFrame.
@@ -885,6 +896,24 @@ XrResult XRAPI_CALL layerEndFrame(XrSession session,const XrFrameEndInfo* info) 
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     if(s.earlyBeginPending){logf("xrEndFrame refused: late application xrBeginFrame not received");return XR_ERROR_CALL_ORDER_INVALID;}
     if(s.focusOwnership&&heldFocusImages()){logf("stereo_pass end-frame refused: unresolved focus image owner; no downstream release/submission");return XR_ERROR_CALL_ORDER_INVALID;}
+    if(spsOutputOwned){
+        if(!info||session!=s.session)return XR_ERROR_VALIDATION_FAILURE;
+        // This route never inspects or converts the application's native-eye
+        // projections. A missing/incomplete SPS quartet submits no scene.
+        const auto* projection=s.frame&&s.shouldRender&&s.located&&spsOutputFrame.session==s.inputSessionSerial&&
+            spsOutputFrame.frame==s.frames&&spsOutputFrame.displayTime==info->displayTime?spsOutput.layer(spsOutputFrame):nullptr;
+        std::vector<const XrCompositionLayerBaseHeader*> layers;layers.reserve(size_t(info->layerCount)+1);
+        if(projection)layers.push_back(reinterpret_cast<const XrCompositionLayerBaseHeader*>(projection));
+        for(uint32_t i=0;i<info->layerCount;++i){const auto* layer=info->layers?info->layers[i]:nullptr;
+            if(layer&&layer->type!=XR_TYPE_COMPOSITION_LAYER_PROJECTION)layers.push_back(layer);}
+        auto modified=*info;modified.layerCount=uint32_t(layers.size());modified.layers=layers.empty()?nullptr:layers.data();
+        const auto result=next.EndFrame(session,&modified);
+        if(spsOutput.layer(spsOutputFrame))spsOutput.retired(spsOutputFrame);
+        spsOutput.discard_pending();
+        if(s.frames<10||s.frames%120==0||!projection)logf("SPS XR frame=%llu complete_quad=%d result=%d; exclusive SPS output",
+            static_cast<unsigned long long>(s.frames),projection!=nullptr,result);
+        spsOutputFrame={};lmuqv::renderProfile.xr_frame_end(s.context);clearFrame();return result;
+    }
     if(!s.quad){
         unsigned submitted=0;
         if(s.vrs&&info&&info->layers)for(uint32_t i=0;i<info->layerCount;++i){
@@ -1221,6 +1250,39 @@ bool xr_frame_inputs(QuadFrameInputs& out) {
     std::copy(std::begin(s.views),std::end(s.views),frame.views.begin());
     for(auto& view:frame.views)view.next=nullptr;
     out=frame;return true;
+}
+bool xr_sps_output_active(){std::lock_guard<std::recursive_mutex> lock(stateMutex);return spsOutputOwned;}
+bool xr_prepare_sps_output(SpsRendererDescription& out){
+    std::lock_guard<std::recursive_mutex> lock(stateMutex);
+    if(!s.quad||!s.session||!s.context||!s.colorInfo.width||!s.colorInfo.height||s.focusOwnership)return false;
+    SpsRendererDescription description;
+    description.color=static_cast<DXGI_FORMAT>(s.colorInfo.format);description.samples=1;
+    for(unsigned eye=0;eye<2;++eye){
+        const uint32_t width=s.runtimeSizesReady?s.runtimeOuterWidth[eye]:s.outer[eye].width;
+        const uint32_t height=s.runtimeSizesReady?s.runtimeOuterHeight[eye]:s.outer[eye].height;
+        if(!width||!height)return false;
+        description.views[eye]={width,height};description.views[eye+2]={s.colorInfo.width,s.colorInfo.height};
+    }
+    if(!spsOutputOwned){SpsXrOutputDescription target;target.format=description.color;
+        for(unsigned view=0;view<4;++view)target.views[view]={description.views[view].width,description.views[view].height};
+        const SpsXrDispatch dispatch{next.CreateSwapchain,next.DestroySwapchain,next.EnumerateSwapchainImages,
+            next.AcquireSwapchainImage,next.WaitSwapchainImage,next.ReleaseSwapchainImage};
+        if(!spsOutput.configure(dispatch,s.session,s.inputSessionSerial,s.context,target)){
+            logf("SPS XR output unavailable: %s result=%d",spsOutput.reason(),spsOutput.result());spsOutput.stop();return false;}
+        spsOutputOwned=true;logf("SPS XR output: four owned swapchains; application/native projection submission disabled");
+    }
+    out=description;return true;
+}
+bool xr_publish_sps_frame(SpsRenderer& renderer){
+    std::lock_guard<std::recursive_mutex> lock(stateMutex);QuadFrameInputs frame;
+    if(!spsOutputOwned||!xr_frame_inputs(frame))return false;
+    std::array<SpsFrameImage,4> images;
+    for(unsigned view=0;view<4;++view)if(!renderer.image(view,frame.identity,images[view]))return false;
+    if(!spsOutput.publish(frame,images))return false;
+    for(unsigned view=0;view<4;++view)if(!renderer.consumed(view,frame.identity)){
+        spsOutput.retired(frame.identity);renderer.abort();return false;}
+    if(!renderer.finish(frame.identity)){spsOutput.retired(frame.identity);renderer.abort();return false;}
+    spsOutputFrame=frame.identity;return true;
 }
 bool xr_frame_full_outer_fov(XrFovf (&fov)[2]) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);

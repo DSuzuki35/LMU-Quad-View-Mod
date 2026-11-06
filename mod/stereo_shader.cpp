@@ -125,7 +125,7 @@ std::string geometry_source(const std::vector<Parameter>& params){
 } // namespace
 bool convert_stereo_shader(const void* raw,size_t size,StereoShaderStage stage,uint32_t slots,bool direct,StereoShaderVariant& result,std::string& error){
     result={};error.clear();try{
-        require(slots&&!(slots&~0x1fffu),"eye-dependent CB selection must use slots 0-12");auto chunks=read_container(raw,size);
+        require(!(slots&~0x1fffu),"eye-dependent CB selection must use slots 0-12");auto chunks=read_container(raw,size);
         std::vector<Parameter> inputs,outputs;Words code;
         for(const auto& chunk:chunks){if(chunk.type==ISGN)inputs=read_signature(chunk.data);else if(chunk.type==OSGN)outputs=read_signature(chunk.data);
             else if(chunk.type==SHDR){require(chunk.data.size()%4==0,"unaligned shader tokens");code.resize(chunk.data.size()/4);std::memcpy(code.data(),chunk.data.data(),chunk.data.size());}
@@ -148,7 +148,11 @@ bool convert_stereo_shader(const void* raw,size_t size,StereoShaderStage stage,u
                 if(slots&(1u<<slot)){require(!(code[inst.start]&(1u<<11)),"selected CB uses dynamic indexing");bindings.emplace(slot,StereoConstantRange{slot,count,0});}
             }
         }
-        require(!bindings.empty(),"no selected CB declaration");StereoShaderVariant variant;variant.samplerSlots=samplerSlots;variant.constantRegisters=declaredConstants;
+        require(!slots||!bindings.empty(),"no selected CB declaration");StereoShaderVariant variant;variant.samplerSlots=samplerSlots;variant.constantRegisters=declaredConstants;
+        // A shared pixel stage does not need an eye input or a packed bank.
+        // Its original bytecode is already the complete SPS pixel program.
+        if(!slots&&stage==StereoShaderStage::pixel){const auto* source=static_cast<const uint8_t*>(raw);
+            variant.bytecode.assign(source,source+size);result=std::move(variant);return true;}
         for(auto& item:bindings){item.second.offset=variant.eyeStride;variant.eyeStride+=item.second.registers;variant.constants.push_back(item.second);}
         require(variant.eyeStride<=2048,"paired constants exceed D3D11 CB capacity");
         const auto eyeInput=free_register(inputs);inputs.push_back({stage==StereoShaderStage::vertex?"SV_InstanceID":eyeSemantic,0,stage==StereoShaderStage::vertex?8u:0u,1,eyeInput,0x101});
@@ -159,11 +163,11 @@ bool convert_stereo_shader(const void* raw,size_t size,StereoShaderStage stage,u
         auto declarations=[&]{
             if(!foundTemps)instruction(converted,dclTemps,{{1}});
             // A complete bank is dynamically indexed by the uniform eye value.
-            instruction(converted,dclCB|(1u<<11),{{constant<<12|2u<<20,variant.packedSlot,variant.eyeStride*2}});
+            if(variant.eyeStride)instruction(converted,dclCB|(1u<<11),{{constant<<12|2u<<20,variant.packedSlot,variant.eyeStride*2}});
             if(stage==StereoShaderStage::vertex){instruction(converted,96,{reg(input,eyeInput,0,true),{8}});instruction(converted,101,{reg(output,eyeOutput,0,true)});if(direct)instruction(converted,103,{reg(output,arrayOutput,0,true),{4}});}
             else instruction(converted,98|(1u<<11),{reg(input,eyeInput,0,true)});
             instruction(converted,1,{reg(temporary,temps,0,true),reg(input,eyeInput,0,false),literal(1)});
-            instruction(converted,38,{{13u<<12},reg(temporary,temps,1,true),reg(temporary,temps,0,false),literal(variant.eyeStride)});
+            if(variant.eyeStride)instruction(converted,38,{{13u<<12},reg(temporary,temps,1,true),reg(temporary,temps,0,false),literal(variant.eyeStride)});
         };
         for(const auto& inst:parsed){
             if(inst.opcode>=88){const auto start=converted.size();converted.insert(converted.end(),code.begin()+inst.start,code.begin()+inst.end);if(inst.opcode==dclTemps)converted[start+1]=temps+1;continue;}

@@ -1,7 +1,8 @@
 # LMU Quad View Mod
 
-**SPS integration diagnostic:** this branch combines the v0.3.3 fixes with newer
-SPS research. It retains native rendering and has no measured SPS speedup.
+**SPS implementation in progress:** this branch adds an owned four-view renderer,
+asset inputs and exclusive XR output. Live game integration is unfinished;
+native rendering remains active and there is no measured SPS speedup.
 Start with the [current SPS maintainer handoff](docs/SPS-HANDOFF.md) for completed
 components, live findings, validation and remaining full-pass integration.
 
