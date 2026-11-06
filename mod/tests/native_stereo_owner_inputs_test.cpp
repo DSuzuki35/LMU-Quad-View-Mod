@@ -62,7 +62,7 @@ bool readable(const void* address,size_t bytes){
     return p!=blocked&&p>=begin&&p-begin<=sizeof(Fixture)&&bytes<=sizeof(Fixture)-(p-begin);
 }
 NativeStereoOwnerInputs capture(Fixture& f,NativeStereoOwnerInputLimits limits={}){
-    fixture=&f;return capture_native_stereo_owner_inputs(f.owner[0].data(),3,readable,limits);
+    fixture=&f;return capture_native_stereo_owner_inputs(f.owner[0].data(),3,readable,limits,false);
 }
 void empty(const NativeStereoOwnerInputs& out,const char* reason){
     assert(!out.complete&&!out.admissionReady&&!out.renderingEligible&&out.owners.empty()&&out.world.empty()&&out.nativeRequirements.empty()&&out.ownerTokens.empty()&&out.sources.empty()&&out.meshes.empty());
@@ -171,6 +171,33 @@ int main(){
     assert(frame.root_count()==1&&frame.admission_ready_roots()==0&&frame.world_refresh_owners()==3&&frame.bounds_admission_owners()==1);
     assert(frame.inputs(key)&&!frame.inputs(key)->front().admissionReady);
     frame.reset();assert(frame.world_refresh_owners()==0&&frame.bounds_admission_owners()==0&&frame.admission_ready_roots()==0);
+    // The connected reader supplies dirty native local transforms and current
+    // attachment snapshots to the refresh-capable owner planner.
+    f.~Fixture();new(&f)Fixture();fixture=&f;
+    for(unsigned i=0;i<3;++i){
+        const NativeStereoMatrix local{1,0,0,0,0,1,0,0,0,0,1,0,float(10*(i+1)),0,0,1};
+        Fixture::put(f.owner[i].data(),0x230,local);
+        Fixture::put(f.owner[i].data(),0x28c,NativeStereoClassifyFloat3{1,1,1});
+    }
+    Fixture::put(f.owner[0].data(),0,uint32_t(0x400000));
+    Fixture::put(f.owner[2].data(),0x80,uint64_t(reinterpret_cast<uintptr_t>(f.owner[0].data())));
+    const auto dirtyBefore=f;
+    out=capture_native_stereo_owner_inputs(f.owner[0].data(),3,readable);
+    assert(out.complete&&out.worldInputs.size()==3&&out.worldInputs[2].attachmentIndex==0);
+    plan=plan_native_stereo_owner_inputs(out,{{{1,true},{3,true}}});
+    assert(plan.complete&&plan.worldRefreshes==3&&plan.finalWorld[0].world[12]==10&&plan.finalWorld[2].world[12]==40);
+    assert(!std::memcmp(&f,&dirtyBefore,sizeof(f))&&out.world[0][12]==0);
+    blocked=reinterpret_cast<uintptr_t>(f.owner[1].data())+0x230;
+    empty(capture_native_stereo_owner_inputs(f.owner[0].data(),3,readable),"unreadable");blocked=0;
+    Fixture::put(f.owner[1].data(),0,uint32_t(0x1000000));
+    out=capture_native_stereo_owner_inputs(f.owner[0].data(),3,readable);
+    assert(out.complete&&!plan_native_stereo_owner_inputs(out,{{{1,true},{3,true}}}).complete);
+    Fixture::put(f.owner[1].data(),0,uint32_t(0));
+    failure_probe::enabled=true;failure_probe::count=0;failure_probe::failAt=size_t(-1);
+    out=capture_native_stereo_owner_inputs(f.owner[0].data(),3,readable);failure_probe::enabled=false;
+    assert(out.complete);const auto worldAllocations=failure_probe::count;
+    for(size_t at=1;at<=worldAllocations;++at){failure_probe::enabled=true;failure_probe::count=0;failure_probe::failAt=at;
+        out=capture_native_stereo_owner_inputs(f.owner[0].data(),3,readable);failure_probe::enabled=false;empty(out,"allocation failure");}
     // Maximum-depth native trees must not consume the C++ call stack.
     std::vector<std::array<unsigned char,0x430>> deep(nativeStereoOwnerNodeLimit);
     std::vector<uint64_t> links(nativeStereoOwnerNodeLimit-1);
@@ -182,5 +209,5 @@ int main(){
     assert(maximum.complete&&maximum.owners.size()==nativeStereoOwnerNodeLimit&&maximum.sources.empty());
     limits={};--limits.owners;
     empty(capture_native_stereo_owner_inputs(deep[0].data(),3,deepReadable,limits),"vector limit");
-    std::cout<<"Owned native source producer: unfiltered/right-only trees, explicit native refresh/bounds dependencies, stale world protection, mesh descriptions, no native mutation, strict bounds, allocation failures, frame sealing and admission planner passed\n";
+    std::cout<<"Owned native source producer: unfiltered/right-only trees, native dirty-world input production, attachments, bounds, no native mutation, strict bounds, allocation failures and frame sealing passed\n";
 }

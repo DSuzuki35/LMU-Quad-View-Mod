@@ -276,6 +276,21 @@ void hookTargetTest(){
 
 }
 int main(int argc,char** argv) {
+    {
+        using namespace lmuqv;
+        // A bad right-eye comparison must not poison later native camera
+        // pairs. Only the next verified left boundary can clear that refusal.
+        CONTEXT cameraCaller{};cameraCaller.R13=1;cameraCaller.R14=77;cameraCaller.R15=88;
+        for(unsigned failure=0;failure<5;++failure){
+            spsNativePoseRejected=spsNativeViewRejected=true;auto wrong=cameraCaller;
+            if(failure==0)wrong.R12=1;else if(failure==1)wrong.R13=0;
+            else if(failure==2)wrong.R14=78;else if(failure==3)wrong.R15=89;
+            require(!beginNativeCameraPair(wrong,failure==4?0:77,88),"unverified camera boundary cleared a pair refusal");
+            require(spsNativePoseRejected&&spsNativeViewRejected,"invalid camera input discarded refusal state");
+        }
+        require(beginNativeCameraPair(cameraCaller,77,88),"fresh left camera pair could not recover");
+        require(!spsNativePoseRejected&&!spsNativeViewRejected,"old right-eye refusal leaked into fresh camera pair");
+    }
     using namespace lmuqv;
     {const auto saved=_mm_getcsr();const bool preparation=spsPreparationOptIn;spsPreparationOptIn=false;
         nativeCameraStateOriginal=cameraStateForward;nativeCameraPoseOriginal=cameraPoseForward;

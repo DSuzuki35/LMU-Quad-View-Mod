@@ -58,6 +58,9 @@ public:
     StereoTargetBridge()=default;
     StereoTargetBridge(const StereoTargetBridge&)=delete;
     StereoTargetBridge& operator=(const StereoTargetBridge&)=delete;
+    template<class Packets>bool accepts_packets(const Packets&,const StereoFrameIdentity& key)const{
+        return phase_==Phase::Ready&&identity_==key&&key.thread==GetCurrentThreadId();
+    }
     // Seeds are independent owned snapshots taken at each eye's required native
     // initial-state point. Two aliases of one reused native bank are not seeds.
     bool prepare(ID3D11DeviceContext* context,const StereoFrameIdentity& key,

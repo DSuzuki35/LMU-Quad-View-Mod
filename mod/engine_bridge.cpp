@@ -13,6 +13,8 @@
 #include "native_stereo_owner_inputs.hpp"
 #include "native_stereo_pose_adapter.hpp"
 #include "native_stereo_view_producer.hpp"
+#include "native_sps.hpp"
+#include "native_sps_runtime.hpp"
 #include "pipeline_stats.hpp"
 #include "benchmark_control.hpp"
 #include "code_anchors.hpp"
@@ -176,6 +178,13 @@ std::atomic<uint64_t> uiCalls{0};
 struct History { ViewSnapshot* owner{}; TransformRecord transform{}; bool valid=false; };
 History innerHistory[2];
 bool spsPreparationOptIn=false,spsPreparedLogged=false,spsPreparationRefusedLogged=false;
+bool spsRenderingOptIn=false;
+thread_local StereoFrameIdentity spsRenderFrameIdentity;
+struct SpsRenderFrameScope {
+    StereoFrameIdentity previous;
+    explicit SpsRenderFrameScope(const StereoFrameIdentity& key):previous(spsRenderFrameIdentity){spsRenderFrameIdentity=key;}
+    ~SpsRenderFrameScope(){spsRenderFrameIdentity=previous;}
+};
 NativeStereoFocusFrame spsFocusFrame;
 using NativeCameraStateFn=void(*)(void*,void*);
 using NativeCameraPoseFn=void(*)(void*,float,float,float,float,float,float);
@@ -198,15 +207,19 @@ constexpr std::array<uint8_t,17> nativeCameraPoseAnchor{
 thread_local NativeStereoWorldPoseFrame spsWorldPoseFrame;
 thread_local NativeStereoWorldPosePair spsExpectedWorldPose;
 thread_local uintptr_t spsExpectedPoseView=0;
+thread_local StereoFrameIdentity spsExpectedPoseIdentity;
 thread_local bool spsAwaitingRightPose=false;
 std::atomic<uint64_t> spsNativePoseEpoch{1};
 thread_local uint64_t spsWorldPoseEpoch=0;
+thread_local const char* spsNativePoseSourceReason="native camera-state boundary not observed";
+thread_local uintptr_t spsNativeStateCaller=0,spsNativePoseCaller=0;
 bool spsNativePoseRejected=false;
 bool spsNativeViewSettingsVerified=false,spsNativeViewRejected=false,spsNativeViewsLogged=false,spsNativeViewsRefusalLogged=false;
 NativeStereoViewInputFrame spsViewInputFrame;
 uint64_t spsNativeViewProduced=0,spsNativeViewRefused=0,spsNativeViewMatches[2]{};
 uint64_t spsNativePoseProduced=0,spsNativePoseFallback=0;
 uint64_t spsNativeRightPoseChecks=0,spsNativeRightPoseMismatches=0;
+std::array<uint64_t,4> spsRightMismatchKinds{}; // mode, position, basis, translation
 bool spsNativePoseLogged=false;
 using NativeOwnerFn=void(*)(void*,void*,void*,float);
 NativeOwnerFn nativeOwnerOriginal{};
@@ -307,11 +320,19 @@ bool readable(const void* pointer, std::size_t bytes) {
 #else
 #define LMU_NATIVE_NOINLINE __attribute__((noinline))
 #endif
+bool beginNativeCameraPair(const CONTEXT& caller,uintptr_t view,uintptr_t manager){
+    if(!view||!manager||caller.R12!=0||caller.R13!=1||caller.R14!=view||caller.R15!=manager)return false;
+    // A mismatch invalidates its current pair. A fresh native left update
+    // must pass every numeric comparison again before any draw is replaced.
+    spsNativePoseRejected=false;spsNativeViewRejected=false;return true;
+}
 LMU_NATIVE_NOINLINE void nativeCameraStateHook(void* renderer,void* destination){
     const auto caller=reinterpret_cast<uintptr_t>(LMU_CALLER_ADDRESS);
     const auto slot=reinterpret_cast<uintptr_t>(LMU_CALLER_RETURN_SLOT);
     nativeCameraStateOriginal(renderer,destination);
-    if(!spsPreparationOptIn||caller!=base+0xc8c17a)return;
+    if(!spsPreparationOptIn)return;
+    spsNativeStateCaller=caller;
+    if(caller!=base+0xc8c17a)return;
     NativeStereoFpGuard preserve;
     const auto epoch=spsNativePoseEpoch.load();
     if(spsWorldPoseEpoch!=epoch){
@@ -320,35 +341,44 @@ LMU_NATIVE_NOINLINE void nativeCameraStateHook(void* renderer,void* destination)
     spsWorldPoseFrame.reset();
     // The hook runs after XR's native camera update. Do not locate/lock a new
     // XR frame here; the render hook later attaches the rendered identity.
+    spsNativePoseSourceReason="native camera globals unavailable";
     if(!readable(address<void>(0x1a51370),8)||!readable(address<void>(0x1a51380),8)||
-       !readable(address<void>(0x1a51400),4)||*address<int32_t>(0x1a51400)!=0)return;
+       !readable(address<void>(0x1a51400),4))return;
+    spsNativePoseSourceReason="unsupported native camera mode";
+    if(*address<int32_t>(0x1a51400)!=0)return;
     const auto view=*address<uintptr_t>(0x1a51370),manager=*address<uintptr_t>(0x1a51380);
+    spsNativePoseSourceReason="native cockpit manager/view unavailable";
     if(!readable(reinterpret_cast<void*>(manager),8)||
        *reinterpret_cast<uintptr_t*>(manager)!=base+0x17c5f28||
        !readable(reinterpret_cast<void*>(view),0x4b8))return;
     uint64_t parent=0;std::memcpy(&parent,reinterpret_cast<const std::byte*>(view)+0x4b0,8);
-    if(parent)return;
+    spsNativePoseSourceReason="attached native camera";if(parent)return;
     // The ordinary setter adds these six view offsets. Other modes retain the
     // native path until their complete rotation/translation model is available.
     std::array<float,6> offsets{};std::memcpy(offsets.data(),reinterpret_cast<const std::byte*>(view)+0xc4,24);
-    for(float value:offsets)if(value!=0)return;
+    spsNativePoseSourceReason="nonzero native camera offsets";for(float value:offsets)if(value!=0)return;
     CONTEXT context;NativeStereoWorldPoseInput input;
+    spsNativePoseSourceReason="native camera caller unwind failed";
     if(!capture_native_caller_context(caller,slot,context,readable))return;
     if(context.R12==1&&context.R13==1&&context.R14==view&&context.R15==manager){
         spsAwaitingRightPose=spsExpectedWorldPose.complete&&spsExpectedPoseView==view;return;
     }
     spsAwaitingRightPose=false;spsExpectedWorldPose={};spsExpectedPoseView=0;
+    beginNativeCameraPair(context,view,manager);
+    spsNativePoseSourceReason="native camera caller/input layout differs";
     if(capture_native_stereo_pose_input(context,destination,view,manager,readable,input)){
         std::copy_n(offsets.begin(),3,input.viewTranslation.begin());
         if(spsNativeViewSettingsVerified&&!spsNativeViewRejected)
             capture_native_stereo_cockpit_settings(context,view,manager,readable,input.settings);
-        spsWorldPoseFrame.begin(view,input);
+        spsWorldPoseFrame.begin(view,input);spsNativePoseSourceReason=spsWorldPoseFrame.reason();
     }
 }
 LMU_NATIVE_NOINLINE void nativeCameraPoseHook(void* pointer,float x,float y,float z,float pitch,float yaw,float roll){
     const auto caller=reinterpret_cast<uintptr_t>(LMU_CALLER_ADDRESS);
     nativeCameraPoseOriginal(pointer,x,y,z,pitch,yaw,roll);
-    if(!spsPreparationOptIn||caller!=base+0xc8c493)return;
+    if(!spsPreparationOptIn)return;
+    spsNativePoseCaller=caller;
+    if(caller!=base+0xc8c493)return;
     NativeStereoFpGuard preserve;
     const auto* view=static_cast<const std::byte*>(pointer);
     if(!readable(view,0x22c)){spsWorldPoseFrame.reset();return;}
@@ -357,14 +387,33 @@ LMU_NATIVE_NOINLINE void nativeCameraPoseHook(void* pointer,float x,float y,floa
     std::memcpy(&mode,view+0x21c,4);std::memcpy(&flags,view+0x1d8,4);
     if(spsAwaitingRightPose&&spsExpectedPoseView==reinterpret_cast<uintptr_t>(pointer)){
         ++spsNativeRightPoseChecks;
-        if(mode!=1||!native_world_pose_detail::same(current,spsExpectedWorldPose.current[1])||
-           !native_world_pose_detail::same(position,spsExpectedWorldPose.constantPosition[1])){
+        const auto& expected=spsExpectedWorldPose.current[1];const auto& expectedPosition=spsExpectedWorldPose.constantPosition[1];
+        const std::array<bool,4> different{mode!=1,!native_world_pose_detail::same(position,expectedPosition),
+            std::memcmp(current.data(),expected.data(),12*sizeof(float))!=0,
+            std::memcmp(current.data()+12,expected.data()+12,4*sizeof(float))!=0};
+        if(different[0]||different[1]||different[2]||different[3]){
             spsNativePoseRejected=true;
-            if(++spsNativeRightPoseMismatches==1)log_line("sps_prepare: direct right-world-pose mismatch; direct producer disabled for this session; native camera and draws retained");
+            ++spsNativeRightPoseMismatches;for(unsigned i=0;i<4;++i)spsRightMismatchKinds[i]+=different[i];
+            // Count every failure; keep expensive formatting to eight examples.
+            if(spsNativeRightPoseMismatches<=8){
+                uint32_t expectedBits[3]{},actualBits[3]{};std::memcpy(expectedBits,expectedPosition.data(),12);std::memcpy(actualBits,position.data(),12);
+                unsigned first=0;uint32_t expectedWord=0,actualWord=0;
+                for(;first<16;++first){std::memcpy(&expectedWord,&expected[first],4);std::memcpy(&actualWord,&current[first],4);if(expectedWord!=actualWord)break;}
+                // Use the stored pair identity. A diagnostic must not call an
+                // XR accessor that can locate or lock a new rendered frame.
+                char line[896]{};
+                std::snprintf(line,sizeof(line),"sps_prepare right_mismatch sample=%llu expected_frame=%llu expected_time=%lld mode=%d position=%d basis=%d translation=%d expected_position=%.9g/%.9g/%.9g actual_position=%.9g/%.9g/%.9g expected_bits=%08x/%08x/%08x actual_bits=%08x/%08x/%08x first_matrix=%u matrix_bits=%08x/%08x; current pair refused",
+                    static_cast<unsigned long long>(spsNativeRightPoseMismatches),static_cast<unsigned long long>(spsExpectedPoseIdentity.frame),
+                    static_cast<long long>(spsExpectedPoseIdentity.displayTime),
+                    int(different[0]),int(different[1]),int(different[2]),int(different[3]),
+                    expectedPosition[0],expectedPosition[1],expectedPosition[2],position[0],position[1],position[2],
+                    expectedBits[0],expectedBits[1],expectedBits[2],actualBits[0],actualBits[1],actualBits[2],first,expectedWord,actualWord);log_line(line);
+            }
         }
-        spsAwaitingRightPose=false;spsExpectedWorldPose={};spsExpectedPoseView=0;return;
+        spsAwaitingRightPose=false;spsExpectedWorldPose={};spsExpectedPoseView=0;spsExpectedPoseIdentity={};return;
     }
     spsWorldPoseFrame.finish(reinterpret_cast<uintptr_t>(pointer),current,position,mode,flags);
+    spsNativePoseSourceReason=spsWorldPoseFrame.reason();
 }
 #undef LMU_NATIVE_NOINLINE
 void diagnoseNativeEye(const char* stage,unsigned eye,ID3D11Texture2D* texture,ID3D11RenderTargetView* rtv,
@@ -720,6 +769,18 @@ void worldSortHook(void* renderer,void* scene,void* view,std::int32_t group,
     }
     const auto generation=vrsInterruptionGeneration;
     ++outerSortDepth;
+    ID3D11DeviceContext* spsContext=nullptr;const NativeStereoViewInputs* spsViews=nullptr;unsigned spsEye=2;
+    if(spsRenderingOptIn&&insideHook&&view==focusView&&group==31&&callerRva==0x51df1d&&
+       spsRenderFrameIdentity.valid()&&!spsNativeViewRejected&&readable(view,sizeof(ViewSnapshot))){
+        const auto selectedEye=static_cast<ViewSnapshot*>(view)->eye_index;
+        const auto pointer=reinterpret_cast<uintptr_t>(renderer);
+        if(selectedEye>=0&&selectedEye<2&&pointer<=(std::numeric_limits<uintptr_t>::max)()-0x76f68&&
+           readable(reinterpret_cast<void*>(pointer+0x76f68),sizeof(spsContext))){
+            std::memcpy(&spsContext,reinterpret_cast<void*>(pointer+0x76f68),sizeof(spsContext));
+            spsViews=spsViewInputFrame.inputs(spsRenderFrameIdentity);spsEye=unsigned(selectedEye);
+        }
+    }
+    NativeSpsGroupScope spsGroup(spsContext,reinterpret_cast<uintptr_t>(renderer),reinterpret_cast<uintptr_t>(view),spsEye,spsViews,readable);
     worldSortOriginal(renderer,scene,view,group,flags,lastMainPass,optionalMaterial);
     stereo_audit_native_pass_end(nativePass);
     if(uploadScope){nativeUploadBatch.end();nativeUploadReuse.end();}selectedUploadCache=savedUploadCache;selectedUploadContext=savedUploadContext;
@@ -756,10 +817,11 @@ void nativeTransformHook(void* shader,void* view,void* mesh,bool alternateOwner,
     NativeStereoTransformArgs args{shader,view,mesh,address<void>(0x1b13630)};
     args.boundary=NativeStereoTransformBoundary::Helper;
     args.alternateOwner=alternateOwner;args.skipEyeConstants=skipEyeConstants;
+    if(spsRenderingOptIn)nativeSpsRuntime.transform(args);
     invoke_native_stereo_transform_helper(
         [&](unsigned entry){return stereo_audit_native_transform_begin({args,readable},entry);},
         [&]{nativeTransformOriginal(shader,view,mesh,alternateOwner,skipEyeConstants);},
-        [](const StereoNativeTransformToken& token,unsigned post){stereo_audit_native_transform_end(token,post);});
+        [](const StereoNativeTransformToken& token,unsigned post){stereo_audit_native_transform_end(token,post);},stereo_audit_enabled());
 }
 int nativePrepareHook(void* shader,void* view,void* mesh,std::uint32_t flags,bool reset){
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
@@ -768,10 +830,15 @@ int nativePrepareHook(void* shader,void* view,void* mesh,std::uint32_t flags,boo
     const bool known=caller==base+0x51f67e||caller==base+0x51f5c4;
     SpsCpuScope cpuScope(known?SpsCpuWork::preparation:SpsCpuWork::count);
     const StereoNativePrepareInfo preparation{shader, flags, reset, readable};
-    return invoke_native_stereo_transform(
+    const bool observeSps=spsRenderingOptIn&&nativeSpsRuntime.observing_group();
+    if(observeSps)nativeSpsRuntime.preparation_begin(
+        reinterpret_cast<uintptr_t>(shader),reinterpret_cast<uintptr_t>(view),reinterpret_cast<uintptr_t>(mesh),flags,reset,known?uint32_t(caller-base):0);
+    const int returned=invoke_native_stereo_transform(
         [&](unsigned){return known?stereo_audit_native_prepare_begin(mesh,&preparation):StereoNativePrepareToken{};},
         [&]{return nativePrepareOriginal(shader,view,mesh,flags,reset);},
-        [](const StereoNativePrepareToken& token,unsigned){stereo_audit_native_prepare_end(token);});
+        [](const StereoNativePrepareToken& token,unsigned){stereo_audit_native_prepare_end(token);},stereo_audit_enabled());
+    if(observeSps)nativeSpsRuntime.preparation_end(returned);
+    return returned;
 }
 void nativeUploadHook(void* cache,void* device,ID3D11DeviceContext* context,void* bindings){
     const auto caller=reinterpret_cast<std::uintptr_t>(LMU_CALLER_ADDRESS);
@@ -1090,9 +1157,18 @@ void renderHook(void* unknown, bool laterPass) {
         const auto worldPose=!spsNativePoseRejected&&nativeCameraStateHooked&&nativeCameraPoseHooked&&
             spsWorldPoseEpoch==spsNativePoseEpoch.load()?spsWorldPoseFrame.take(reinterpret_cast<uintptr_t>(view),camera):NativeStereoWorldPosePair{};
         spsExpectedWorldPose=worldPose;spsExpectedPoseView=worldPose.complete?reinterpret_cast<uintptr_t>(view):0;
+        spsExpectedPoseIdentity=worldPose.complete?frameInputs.identity:StereoFrameIdentity{};
         if(worldPose.complete){++spsNativePoseProduced;if(!spsNativePoseLogged){
             log_line("sps_prepare: native cockpit world-pose inputs connected; left position checked bit-for-bit; right view built directly from shared camera inputs; in-game right-eye equivalence remains to be checked");spsNativePoseLogged=true;}}
-        else ++spsNativePoseFallback;
+        else if(++spsNativePoseFallback==60){char line[640]{};
+            const auto* reason=spsWorldPoseEpoch==spsNativePoseEpoch.load()?spsNativePoseSourceReason:"camera-state boundary not captured on render thread";
+            uintptr_t renderer=0,table=0,getter=0;
+            if(readable(address<void>(0x1b12be8),8)){std::memcpy(&renderer,address<void>(0x1b12be8),8);
+                if(readable(reinterpret_cast<void*>(renderer),8)){std::memcpy(&table,reinterpret_cast<void*>(renderer),8);
+                    if(table<=UINTPTR_MAX-0x7c8&&readable(reinterpret_cast<void*>(table+0x7c8),8))std::memcpy(&getter,reinterpret_cast<void*>(table+0x7c8),8);}}
+            const auto rva=[](uintptr_t p){return p>=base&&p-base<=UINT32_MAX?unsigned(p-base):0u;};
+            std::snprintf(line,sizeof(line),"sps_prepare world-pose unavailable reason=%s camera_complete=%d camera_mode=%d transform_mode=%d offsets=%.7g/%.7g/%.7g/%.7g/%.7g/%.7g state_caller=%x pose_caller=%x state_getter=%x; native rendering retained",
+                reason,int(camera.complete),camera.cameraMode,camera.transformMode,camera.translation[0],camera.translation[1],camera.translation[2],camera.euler[0],camera.euler[1],camera.euler[2],rva(spsNativeStateCaller),rva(spsNativePoseCaller),rva(getter));log_line(line);}
         const bool prepared=ownedFrame&&projectionScales(scaleX,scaleY)&&
             spsFocusFrame.prepare(frameInputs,camera,reinterpret_cast<uintptr_t>(scene),
                 reinterpret_cast<uintptr_t>(view),nearZ,farZ,scaleX,scaleY,worldPose.complete?&worldPose:nullptr);
@@ -1100,7 +1176,8 @@ void renderHook(void* unknown, bool laterPass) {
             const auto* focus=spsFocusFrame.inputs(frameInputs.identity);
             if(focus&&spsViewInputFrame.prepare(*focus,worldPose,reinterpret_cast<uintptr_t>(scene),reinterpret_cast<uintptr_t>(view)))
                 ++spsNativeViewProduced;
-            else ++spsNativeViewRefused;
+            else if(++spsNativeViewRefused==60){char line[256]{};
+                std::snprintf(line,sizeof(line),"sps_prepare view producer unavailable reason=%s; native rendering retained",spsViewInputFrame.reason());log_line(line);}
         }
         if(prepared){++spsPreparationCounts.prepared;if(!spsPreparedLogged){
             log_line("sps_prepare: both focus cameras owned before left focus; current locked XR FOVs; native pose used when available; native eye draws retained");spsPreparedLogged=true;}}
@@ -1151,7 +1228,7 @@ void renderHook(void* unknown, bool laterPass) {
         }else{
             ++spsNativeViewRefused;spsNativeViewRejected=true;
             if(!spsNativeViewsRefusalLogged){char line[288]{};std::snprintf(line,sizeof(line),
-                "sps_prepare view input fallback: %s; producer disabled for session; original traversal/draws retained",spsViewInputFrame.reason());
+                "sps_prepare view input fallback: %s; current pair refused; original traversal/draws retained",spsViewInputFrame.reason());
                 log_line(line);spsNativeViewsRefusalLogged=true;}
         }
     }
@@ -1170,7 +1247,9 @@ void renderHook(void* unknown, bool laterPass) {
     const bool profileFocusGpu=profileContext&&renderProfile.gpu_start(profileContext,eye+2);
     ProfileScope focusSceneProfile(profile_eye(ProfileSlot::focus_scene0,eye));
     StereoAuditScope focusAudit(stereo_audit_eye(true,eye),view);
-    {SpsCpuPassScope cpuPass(eye+2,view);reinterpret_cast<SceneFn>(base+0x5de200)(scene,false,true);}
+    {SpsRenderFrameScope spsFrame(spsRenderingOptIn&&ownedFrame?frameInputs.identity:StereoFrameIdentity{});
+     SpsCpuPassScope cpuPass(eye+2,view);reinterpret_cast<SceneFn>(base+0x5de200)(scene,false,true);}
+    if(spsRenderingOptIn&&eye==1&&spsPreparationCounts.prepared>=120)nativeSpsRuntime.report_progress_once();
     if(captureOwnerFrame){
         NativeStereoFpGuard fp;std::lock_guard<std::mutex> lock(spsOwnerMutex);
         if(spsOwnerFrame.seal(frameInputs.identity)){
@@ -1479,15 +1558,21 @@ bool engine_start(ID3D11DeviceContext* context) {
     const bool stereoTiming=!std::strcmp(mode,"stereo-timing");
     stereoVrsMode=!std::strcmp(mode,"vrs");
     char prepareSetting[8]{};
-    spsPreparationOptIn=!std::strcmp(mode,"quad")&&GetEnvironmentVariableA("LMU_QV_SPS_PREPARE",prepareSetting,sizeof(prepareSetting))==1&&prepareSetting[0]=='1';
+    char renderSetting[8]{};
+    const bool renderingRequested=!std::strcmp(mode,"quad")&&GetEnvironmentVariableA("LMU_QV_SPS_RENDER",renderSetting,sizeof(renderSetting))==1&&renderSetting[0]=='1';
+    spsRenderingOptIn=renderingRequested&&native_sps_device_matches(context);
+    if(renderingRequested&&!spsRenderingOptIn)log_line("sps_render unavailable: early same-device shader/query tracking was not established; native rendering retained");
+    spsPreparationOptIn=!std::strcmp(mode,"quad")&&(spsRenderingOptIn||
+        (GetEnvironmentVariableA("LMU_QV_SPS_PREPARE",prepareSetting,sizeof(prepareSetting))==1&&prepareSetting[0]=='1'));
     char ownerSetting[8]{};
     spsOwnerCaptureOptIn=spsPreparationOptIn&&diagnostics_enabled()&&
         GetEnvironmentVariableA("LMU_QV_SPS_OWNER_INPUTS",ownerSetting,sizeof(ownerSetting))==1&&ownerSetting[0]=='1';
     nativeOwnerInputEnabled.store(false);spsOwnerCapture.reset(spsOwnerCaptureOptIn);
     spsFocusFrame.reset();spsPreparationCounts={};spsPreparedLogged=spsPreparationRefusedLogged=false;
     spsWorldPoseFrame.reset();spsNativePoseProduced=spsNativePoseFallback=0;spsNativePoseLogged=false;
-    ++spsNativePoseEpoch;spsWorldPoseEpoch=0;spsNativePoseRejected=false;
-    spsExpectedWorldPose={};spsExpectedPoseView=0;spsAwaitingRightPose=false;spsNativeRightPoseChecks=spsNativeRightPoseMismatches=0;
+    ++spsNativePoseEpoch;spsWorldPoseEpoch=0;spsNativePoseRejected=false;spsNativePoseSourceReason="native camera-state boundary not observed";
+    spsNativeStateCaller=spsNativePoseCaller=0;
+    spsExpectedWorldPose={};spsExpectedPoseView=0;spsExpectedPoseIdentity={};spsAwaitingRightPose=false;spsNativeRightPoseChecks=spsNativeRightPoseMismatches=0;spsRightMismatchKinds={};
     spsViewInputFrame.reset();spsNativeViewSettingsVerified=spsNativeViewRejected=spsNativeViewsLogged=spsNativeViewsRefusalLogged=false;
     spsNativeViewProduced=spsNativeViewRefused=0;spsNativeViewMatches[0]=spsNativeViewMatches[1]=0;
     {std::lock_guard<std::mutex> lock(spsOwnerMutex);spsOwnerFrame.reset();spsOwnerFrames=spsOwnerRoots=spsOwnerRefusals=0;
@@ -1656,7 +1741,7 @@ bool engine_start(ID3D11DeviceContext* context) {
     if(spsPreparationOptIn&&!spsOwnerCaptureOptIn)log_line("sps_prepare owner diagnostic collection disabled; camera preparation only");
     stereo_audit_configure(context,auditRequested,auditDirectory,log_line);
     const std::array<std::uint8_t,5> prepareCall0{0xe8,0x1c,0x34,0x04,0x00},prepareCall1{0xe8,0x62,0x33,0x04,0x00};
-    if((stereo_audit_enabled()||spsRequested)&&matches(nativePrepareRva,nativePrepareAnchor)&&hookTargetPlausible(nativePrepareRva)&&matches(0x51f5bf,prepareCall0)&&matches(0x51f679,prepareCall1)){
+    if((stereo_audit_enabled()||spsRequested||spsRenderingOptIn)&&matches(nativePrepareRva,nativePrepareAnchor)&&hookTargetPlausible(nativePrepareRva)&&matches(0x51f5bf,prepareCall0)&&matches(0x51f679,prepareCall1)){
         if(MH_CreateHook(address<void>(nativePrepareRva),reinterpret_cast<void*>(&nativePrepareHook),reinterpret_cast<void**>(&nativePrepareOriginal))==MH_OK){
             if(MH_EnableHook(address<void>(nativePrepareRva))==MH_OK){nativePrepareHooked=true;log_line(spsRequested?"sps_cpu_profile native preparation timing hook enabled; original calls retained":"stereo_audit native per-mesh preparation hook enabled; pointer identities anonymized; original preparation retained");}
             else MH_RemoveHook(address<void>(nativePrepareRva));
@@ -1665,7 +1750,7 @@ bool engine_start(ID3D11DeviceContext* context) {
     if (auditRequested && !nativePrepareHooked)
       log_line("stereo_audit native preparation hook unavailable; paired private proof requires "
                "this identity source");
-    if((stereo_audit_enabled()||spsRequested)&&nativePrepareHooked&&nativeTransformTargetVerified()){
+    if((stereo_audit_enabled()||spsRequested||spsRenderingOptIn)&&nativePrepareHooked&&nativeTransformTargetVerified()){
         if(MH_CreateHook(address<void>(nativeTransformRva),reinterpret_cast<void*>(&nativeTransformHook),
                          reinterpret_cast<void**>(&nativeTransformOriginal))==MH_OK){
             if(MH_EnableHook(address<void>(nativeTransformRva))==MH_OK){
@@ -1720,12 +1805,17 @@ bool engine_start(ID3D11DeviceContext* context) {
     renderProfile.configure(profiling,log_line,durationSeconds,flush_log);
     if(!std::strcmp(profileSetting,"1")&&!profiling)log_line("render_profile disabled: incompatible legacy timing/benchmark or stereo mode");
     installed.store(true);
+    if(spsRenderingOptIn&&(!nativePrepareHooked||!nativeTransformHooked||!nativeCameraStateHooked||!nativeCameraPoseHooked||!spsNativeViewSettingsVerified)){
+        spsRenderingOptIn=false;native_sps_stop();log_line("sps_render unavailable: complete native preparation/camera hooks required; native rendering retained");
+    }
+    if(spsRenderingOptIn)log_line("sps_render enabled: bounded paired focus draw replacement with actual right-input verification and native fallback");
     if(spsPreparationOptIn)log_line("sps_prepare enabled: early owned focus camera pair; existing native rendering order and fallback; no profiling required");
     log_line(stereoTiming ? "engine: verified build; stereo timing render hook only; no quad repeats or projection/UI changes" :
                            "engine: verified build; render/UI/projection/mask hooks enabled");
     return true;
 }
 void engine_stop() {
+    spsRenderingOptIn=false;spsRenderFrameIdentity={};native_sps_stop();
     ++spsNativePoseEpoch;
     nativeOwnerInputEnabled.store(false);
     if(nativeOwnerInputHooked){MH_DisableHook(address<void>(nativeOwnerRva));MH_RemoveHook(address<void>(nativeOwnerRva));nativeOwnerInputHooked=false;}
@@ -1747,10 +1837,12 @@ void engine_stop() {
         static_cast<unsigned long long>(spsNativeViewMatches[0]),static_cast<unsigned long long>(spsNativeViewMatches[1]));
         if(spsNativeViewSettingsVerified)log_line(line);}
     spsViewInputFrame.reset();spsNativeViewSettingsVerified=false;spsNativeViewRejected=false;
-    if(nativeCameraStateHooked||nativeCameraPoseHooked){char line[320]{};std::snprintf(line,sizeof(line),
-        "sps_prepare native world pose summary produced=%llu fallback=%llu right_checks=%llu right_mismatches=%llu; native draws retained",
+    if(nativeCameraStateHooked||nativeCameraPoseHooked){char line[512]{};std::snprintf(line,sizeof(line),
+        "sps_prepare native world pose summary produced=%llu fallback=%llu right_checks=%llu right_mismatches=%llu mismatch_mode=%llu mismatch_position=%llu mismatch_basis=%llu mismatch_translation=%llu; all right comparisons counted; detailed_samples_max=8",
         static_cast<unsigned long long>(spsNativePoseProduced),static_cast<unsigned long long>(spsNativePoseFallback),
-        static_cast<unsigned long long>(spsNativeRightPoseChecks),static_cast<unsigned long long>(spsNativeRightPoseMismatches));log_line(line);}
+        static_cast<unsigned long long>(spsNativeRightPoseChecks),static_cast<unsigned long long>(spsNativeRightPoseMismatches),
+        static_cast<unsigned long long>(spsRightMismatchKinds[0]),static_cast<unsigned long long>(spsRightMismatchKinds[1]),
+        static_cast<unsigned long long>(spsRightMismatchKinds[2]),static_cast<unsigned long long>(spsRightMismatchKinds[3]));log_line(line);}
     removeNativePoseHooks();
     sps_cpu_hooks::stop();
     stereo_audit_stop();

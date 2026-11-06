@@ -3,6 +3,7 @@
 #include "native_stereo_transform.hpp"
 #include "xr_frame_inputs.hpp"
 #include <unordered_set>
+#include <unordered_map>
 
 namespace lmuqv {
 inline constexpr size_t nativeStereoOwnerMeshLimit=32768;
@@ -30,6 +31,7 @@ struct NativeStereoOwnerInputs {
     // Entire unfiltered tree, including branches rejected by the first eye.
     std::vector<NativeStereoOwner> owners;
     std::vector<NativeStereoMatrix> world;
+    std::vector<NativeStereoOwnerWorld> worldInputs;
     // WorldRefresh propagates to descendants: a native parent refresh traverses
     // children. Copied world values at those nodes are stale, not draw inputs.
     std::vector<uint8_t> nativeRequirements;
@@ -77,7 +79,7 @@ inline bool vector(Reader& reader,uint64_t base,size_t offset,size_t limit,Vecto
 // The source/mesh descriptions do not own GPU resources or mutable native arrays.
 inline NativeStereoOwnerInputs capture_native_stereo_owner_inputs(
     const void* root,uint32_t globalMask,bool(*readable)(const void*,size_t),
-    NativeStereoOwnerInputLimits limits={}) noexcept {
+    NativeStereoOwnerInputLimits limits={},bool includeWorldRefresh=true) noexcept {
     NativeStereoFpGuard fp(true);
     NativeStereoOwnerInputs out;out.globalMask=globalMask;
     const auto refuse=[&](const char* reason){NativeStereoOwnerInputs failed;failed.reason=reason;failed.bytesRead=out.bytesRead;return failed;};
@@ -89,8 +91,10 @@ inline NativeStereoOwnerInputs capture_native_stereo_owner_inputs(
         const char* reason="incomplete owner input read";
         Reader reader(readable,out.bytesRead,limits.bytes,reason);
         std::unordered_set<uint64_t> ownerSet,sourceSet;
+        std::vector<uint64_t> attachments;
         const auto rootToken=uint64_t(reinterpret_cast<uintptr_t>(root));
         ownerSet.insert(rootToken);out.ownerTokens.push_back(rootToken);out.owners.emplace_back();out.world.emplace_back();out.nativeRequirements.push_back(NativeOwnerReady);
+        if(includeWorldRefresh){out.worldInputs.emplace_back();attachments.push_back(0);}
         for(size_t index=0;index<out.owners.size();++index){
             const auto token=out.ownerTokens[index];NativeStereoOwner node;uint64_t attachment=0;
             if(!reader.read(token,0,node.state.flags)||!reader.read(token,0x74,node.state.mask)||
@@ -114,11 +118,25 @@ inline NativeStereoOwnerInputs capture_native_stereo_owner_inputs(
             Vector children,sources;
             if(!vector(reader,token,0xa0,limits.owners-out.owners.size(),children,reason)||
                !vector(reader,token,0x88,limits.sources-out.sources.size(),sources,reason))return refuse(reason);
-            if(sources.count){
+            if(sources.count||includeWorldRefresh){
                 if(!reader.read(token,0x298,out.world[index]))return refuse(reason);
                 // Preserve dirty input bits without treating them as a prepared
                 // transform. Only a ready matrix is eligible for numeric use.
                 if(!worldPending)for(float value:out.world[index])if(!std::isfinite(value))return refuse("non-finite native owner matrix");
+            }
+            if(includeWorldRefresh){
+                auto& w=out.worldInputs[index];w.world=out.world[index];attachments[index]=attachment;
+                if(!reader.read(token,0x150,w.worldCorners)||!reader.read(token,0xdc,w.center)||
+                   !reader.read(token,0xe8,w.radius))return refuse(reason);
+                if(worldPending&&!(node.state.flags&0x20000u)){
+                    if(!reader.read(token,0x22c,w.localMetadata)||!reader.read(token,0x230,w.local)||
+                       !reader.read(token,0x28c,w.scale)||!reader.read(token,0xf0,w.localCorners))return refuse(reason);
+                    if(node.state.flags&0x200000u){
+                        uint64_t scene=0;
+                        if(!reader.read(token,0x3f8,scene)||!reader.read(scene,0,w.sceneFlags))return refuse(reason);
+                    }
+                }
+                w.available=true;
             }
             for(size_t i=0;i<sources.count;++i){
                 uint64_t geometry=0;if(!reader.read(sources.begin,i*8,geometry))return refuse(reason);
@@ -153,8 +171,22 @@ inline NativeStereoOwnerInputs capture_native_stereo_owner_inputs(
                 node.children.push_back(uint32_t(out.owners.size()));
                 out.ownerTokens.push_back(child);out.owners.emplace_back();out.world.emplace_back();
                 out.nativeRequirements.push_back(worldPending?NativeOwnerWorldRefresh:NativeOwnerReady);
+                if(includeWorldRefresh){out.worldInputs.emplace_back();attachments.push_back(0);}
             }
             out.owners[index]=std::move(node);
+        }
+        if(includeWorldRefresh){
+            std::unordered_map<uint64_t,uint32_t> indices;
+            for(uint32_t i=0;i<out.ownerTokens.size();++i)indices.emplace(out.ownerTokens[i],i);
+            for(size_t i=0;i<attachments.size();++i)if(attachments[i]){
+                const auto found=indices.find(attachments[i]);auto& w=out.worldInputs[i];
+                if(found!=indices.end())w.attachmentIndex=int32_t(found->second);
+                else if(out.nativeRequirements[i]&NativeOwnerWorldRefresh){
+                    if(!reader.read(attachments[i],0x298,w.attachmentWorld)||
+                       !reader.read(attachments[i],0x150,w.attachmentCorners))return refuse(reason);
+                    w.externalAttachmentAvailable=true;
+                }
+            }
         }
         out.complete=true;out.admissionReady=out.worldRefreshOwners==0&&out.boundsAdmissionOwners==0;
         out.reason=out.admissionReady?"owned unfiltered owner/source/mesh descriptions":"owned descriptions; per-eye bounds admission/native refresh pending";
@@ -170,9 +202,10 @@ inline NativeStereoOwnerPlanResult plan_native_stereo_owner_inputs(
     if(!inputs.complete)return {};
     // The extended planner can resolve bounds from explicit owned per-eye data.
     // A pending parent refresh still blocks the entire tree, including children.
-    if(inputs.worldRefreshOwners){NativeStereoOwnerPlanResult result;result.reason=NativeStereoOwnerPlanReason::UnsupportedOwnerFlags;return result;}
+    if(inputs.worldRefreshOwners&&inputs.worldInputs.empty()){NativeStereoOwnerPlanResult result;result.reason=NativeStereoOwnerPlanReason::UnsupportedOwnerFlags;return result;}
     try {
         NativeStereoOwnerPlanInput plan;plan.owners=inputs.owners;plan.globalMask=inputs.globalMask;plan.views=views;
+        plan.worldInputs=inputs.worldInputs;
         return build_native_stereo_owner_plan(plan);
     } catch(const std::bad_alloc&){NativeStereoOwnerPlanResult result;result.reason=NativeStereoOwnerPlanReason::AllocationFailure;return result;}
 }

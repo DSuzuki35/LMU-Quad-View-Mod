@@ -76,6 +76,8 @@ XrResult XRAPI_CALL fakeWait(XrSwapchain,const XrSwapchainImageWaitInfo* info){
 }
 namespace lmuqv {
 bool engine_start(ID3D11DeviceContext*){assert(false);return false;}
+bool native_sps_prepare(bool,void(*)(const char*)){return false;}
+void native_sps_stop(){}
 void engine_stop(){renderProfile.shutdown();}
 unsigned engine_game_eye(XrSwapchain){return 2;}
 bool stereo_audit_prepare(bool,const wchar_t*,void(*)(const char*)){return false;}

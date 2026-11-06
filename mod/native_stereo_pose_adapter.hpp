@@ -52,8 +52,11 @@ inline bool capture_native_stereo_pose_input(const CONTEXT& caller,const void* c
     NativeStereoWorldPoseInput input;
     if(!copy(caller.Rsp+0x50,input.origin.data(),12)||
        !copy(caller.Rbp-0x58,input.rotation.data(),16)||
-       !copy(caller.Rsp+0x70,input.rotation.data()+4,16)||
        !copy(caller.Rbp+0x560,input.rotation.data()+8,4))return false;
+    // The copy at rsp+0x70 belongs to the mutable head-angle matrix. Calls
+    // 0x362800/0x3628d0 can already have changed it. The native position path
+    // at 0xc8c201..0xc8c246 still uses the original four coefficients in XMM15.
+    std::memcpy(input.rotation.data()+4,&caller.Xmm15,16);
     const uintptr_t state=reinterpret_cast<uintptr_t>(cameraState);
     if(state>UINTPTR_MAX-0x410||!copy(state+0x3e0,input.scalars.data(),48))return false;
     std::memcpy(&input.offset[0],&caller.Xmm6.Low,4);

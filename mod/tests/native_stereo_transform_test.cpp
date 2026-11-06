@@ -170,6 +170,18 @@ void helper_capture() {
 }
 void forwarding() {
     const auto saved=_mm_getcsr(); int calls=0, ends=0;
+    // Disabled observation must forward exactly once without invoking either
+    // diagnostic callback, while retaining the original's result and FP state.
+    const int unobserved=invoke_native_stereo_transform(
+        [](unsigned)->int{assert(false);return 0;},
+        [&]{++calls;_mm_setcsr(0x1f82);return -73;},
+        [](int,unsigned){assert(false);},false);
+    assert(unobserved==-73&&calls==1&&_mm_getcsr()==0x1f82);
+    invoke_native_stereo_transform_helper(
+        [](unsigned)->int{assert(false);return 0;},
+        [&]{++calls;_mm_setcsr(0x1fbf);},
+        [](int,unsigned){assert(false);},false);
+    assert(calls==2&&_mm_getcsr()==0x1fbf);calls=0;
     _mm_setcsr(0x1fbf);
     const int result=invoke_native_stereo_transform(
         [](unsigned entry){assert(entry==0x1fbf);_mm_setcsr(0x9fc0);return 42;},

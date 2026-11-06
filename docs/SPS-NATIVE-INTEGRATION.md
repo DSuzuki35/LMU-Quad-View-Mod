@@ -3,8 +3,9 @@
 The [owned scene preparation and GPU backend](SPS-OWNED-BACKEND.md) now implements
 independent classification/order, resource snapshots, paired constant uploads,
 ordered mono/paired execution and per-eye target bridging. WARP and local GPU
-tests pass. These components do not yet suppress LMU's original passes; the
-native producer and effect/consumer boundaries below remain required.
+tests pass. The opt-in [native rendering adapter](SPS-RENDERING.md) now intercepts
+an eligible opaque draw pair while retaining native traversal and preparation.
+The broader independent scene replacement described below remains incomplete.
 
 The bounded ordinary-transform numeric prerequisite has passed on sampled native
 VectorXR calls. Step 3 now supplies an early owned focus-camera pair and copies
@@ -16,10 +17,14 @@ explicit single-frame diagnostic in source; further collector testing is deferre
 The owned planner now implements regular per-eye bounds admission from explicit
 owned center/corner and view inputs. The native producer now copies ready owner
 corners/radius and constructs their exact center; the connected cockpit producer
-supplies both eyes' complete view numbers. Live traversal equivalence and
-world-refresh effects remain open. Full draw-input
-ownership and native consumer scheduling remain open. No native preparation or
-draws are suppressed.
+supplies both eyes' complete view numbers. Ordinary world refresh now has an
+owned implementation integrated with admission.
+The source-input adapter reads actual classifier/source numbers and root bias
+before filtering. Live traversal equivalence and complete native effects remain
+open for independent scene replacement. The bounded native rendering path owns
+complete draw inputs, composites strict-depth opaque results at each original
+draw point, and suppresses the corresponding originals after validation. Native
+preparation remains in place. Actual game activation and performance are pending.
 
 ## Observed scheduling constraint
 
@@ -35,12 +40,15 @@ flowchart LR
 Both focus eyes reuse observed native color/depth banks. The next group accesses
 those banks before the right focus pass. Retaining the final XR image or delaying
 only left opaque draws does not preserve the native chain. The current backend
-renders into two-slice arrays; compatibility with native target views, initial
-contents and downstream consumers must be established before substituting it.
+renders into two-slice arrays. The native adapter handles strict LESS/GREATER
+opaque draws with a late depth-tested color/depth composite against each eye's
+actual native target contents. This preserves intervening consumers and bank
+reuse within its supported domain; other states retain native rendering.
 
-Investigate producing both eyes' inputs before the left opaque range. Replaying
-deferred consumers would require owning their full state/resource chain and
-accounting for its copies and synchronization. Neither approach is implemented.
+The adapter predicts the right helper constants from the current focus-view pair
+before the left draw. It validates the actual right packet and intervening
+resource writes before suppressing the right original. Native right visibility,
+material/bone preparation and consumers still run at their original boundaries.
 
 ## Contracts that remain open
 

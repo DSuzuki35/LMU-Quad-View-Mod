@@ -26,6 +26,8 @@ unsigned stereoAuditFrameEnds=0;
 unsigned stereoAuditPrepares=0;
 bool stereo_audit_prepare(bool enable,const wchar_t* path,void(*)(const char*)){assert(enable&&path&&*path);++stereoAuditPrepares;return true;}
 void stereo_audit_stop() {}
+bool native_sps_prepare(bool,void(*)(const char*)){return false;}
+void native_sps_stop() {}
 void stereo_audit_frame_end() {++stereoAuditFrameEnds;} // Verify wiring without installing hooks.
 void engine_stop() {renderProfile.shutdown();}
 ID3D11RenderTargetView* xr_outer_rtv(unsigned eye);

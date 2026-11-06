@@ -2,9 +2,11 @@
 
 The branch now contains a working D3D11 batch renderer for fully owned draw
 inputs, plus independent per-eye scene classification and ordering. Automated
-GPU comparisons pass on WARP and the local hardware device. **This backend is
-not yet connected to native LMU draw suppression.** The game continues its
-original passes. No CPU frametime improvement is established by these tests.
+GPU comparisons pass on WARP and the local hardware device. The opt-in
+[SPS rendering adapter](SPS-RENDERING.md) now connects a bounded opaque draw pair
+to native D3D11 interception. It keeps native preparation and suppresses each
+original draw only after its replacement succeeds. Actual LMU activation,
+visual correctness and net performance remain to be validated in game.
 
 ## Implemented components
 
@@ -14,10 +16,13 @@ original passes. No CPU frametime improvement is established by these tests.
 | `native_stereo_view_inverse.hpp` / `native_stereo_view_producer.hpp` | Native cofactor inverse/reciprocal order and complete paired view-number production with original-eye comparisons | Live equivalence of the connected cockpit controls and complete preparation effects |
 | `native_stereo_view_inputs.hpp` | Keyed per-eye bounds, classifier and transform inputs; validates native sign-flipped classifier/constant positions | Fresh right-eye world metadata before left rendering; no tracking-space substitution |
 | `native_stereo_owner_plan.hpp` | Independent admission for an ordered forest, shared copied state and emission-time states | Complete native bounds and refresh effects, actual selected-root coverage |
+| `native_stereo_world_refresh.hpp` | Ordinary native local-scale refresh, attached world products, corner transforms and native AABB/radius; integrated before owner admission, with emission-time world snapshots | Live traversal equivalence; camera-facing and active extra-matrix paths retain native fallback |
+| `native_stereo_scene_inputs.hpp` | Actual source classifier fields, separate sorting/classifier positions, lazy-finalizer state and exact native root bias, copied before filtering | Production root scheduling, verified bucket order, full preparation effects and executable draw resources |
 | `native_stereo_scene_plan.hpp` | Source position caches, per-eye classification, independent distance ordering and mesh keys | Native finalizers/submission callbacks; established bucket comparator and tie behavior |
 | `native_stereo_world_pose.hpp` / `native_stereo_pose_adapter.hpp` | Native cockpit origin/rotation/local-offset input reader; direct eye positions and view matrices with exact left checks | Live right-pose equivalence, bounds metadata and broader camera modes |
 | `stereo_constants.hpp` / `native_stereo_constants.hpp` | Owned helper patches, actual VS/PS shadow-to-buffer mapping, shared PS-b5 alias and paired shader CB banks | Complete material/bone preparation and snapshot/version boundaries |
 | `stereo_gpu_resources.hpp` | Immutable retention or GPU copies of mutable DEFAULT buffers/2D textures; typed SRV leases | Correct content capture/version points; mapped/dynamic sources currently refuse |
+| `stereo_draw_capture.hpp` / `native_stereo_draw_inputs.hpp` | Complete packets from actual bound shaders/layout, geometry, textures, samplers and state, with native CPU-shadow/buffer binding checks; no shader compilation or mapped WRITE reads | Production shader/layout registry, early per-eye preparation and native scheduling/suppression |
 | `stereo_pipeline.hpp` | Exact-byte cached original/converted shaders, owned input layouts, direct or GS array routing | Shader bytecode, binding layouts and supported material families |
 | `stereo_batch_plan.hpp` | Maximum noncrossing common pairs, retaining each eye's original order | Stable unique draw keys, independent valid input sequences |
 | `stereo_constant_arena.hpp` | Deduplicated 256-byte-aligned windows in 64 KiB pages; one WRITE_DISCARD map per page | Owned CB bytes; ordinary-buffer fallback where offsetting is unavailable |
@@ -111,7 +116,7 @@ Target copies preserve complete depth/MSAA subresources as required by
 1. Validate the connected cockpit world-pose/view producers and ready owner
    bounds at native traversal; establish real initial HDR/depth state.
    Copying the current left bank twice does not establish right-eye seeding.
-2. Complete native bounds/world-refresh inputs and source/material/bone/cache
+2. Connect the ordinary world/source producers to production traversal and preserve source/material/bone/cache
    effects at their original left/right times. The ordinary numeric transform
    alone cannot replace the native preparation wrapper.
 3. Produce complete owned draw inputs and exact constant mappings from that
@@ -124,3 +129,44 @@ Target copies preserve complete depth/MSAA subresources as required by
 
 No additional in-game collector run is required to use these automated tests.
 The expensive owner collector remains an explicit, single-frame diagnostic.
+
+The ordinary world refresh is now an owned implementation rather than an
+unresolved callback. It refreshes descendants before owner bounds admission,
+including children later rejected by one eye. Disabled subtrees keep the native
+skip behavior. Updated matrices are recorded at source emission time, so source
+position caches never consume a stale world matrix or another owner's later
+state. The native root reader supplies local matrices/metadata/scales, corners
+and attachment snapshots; its legacy description-only interface remains available.
+
+The new source-input adapter consumes real object fields while those objects
+are in scope. It supplies independently classified source inputs and distinguishes
+lazy finalizers that are currently no-ops from those requiring native effects.
+It requires an explicit verified bucket order and actual root/clamp bias. It
+does not enable continuous collection or suppress native traversal/draws.
+
+Both new components and their owner/source integration have debug and optimized
+tests. A private independent interpreter of the saved native world/scale/corner/
+radius instructions matches 31,744 output values across 512 synthetic cases
+bit for bit at both optimization levels. Captured instructions are interpreted
+as data and never executed. This validates the numeric implementation, not its
+eventual in-game scheduling or performance.
+
+Native source capture also records actual lazy-finalizer bits and point/spotlight
+scan gates. The source planner resolves null/already-finalized sources and
+empty/bypassed/zero-limit light scans, preserving scalar vector-end clears.
+`sourceEffectsComplete` covers these source effects only; material/bone draw
+preparation and rendering eligibility remain separate.
+
+The draw-input adapter now copies complete bindings into executable packets.
+Native constant shadows must match actual bound CB identities and ranges. It
+requires an established query boundary and cached source-shader/layout metadata;
+stale scopes, predication, stream output, unsupported graphics stages/outputs and
+mappable geometry refuse. A controlled GPU workload built through this adapter
+and native CPU-shadow reader reproduces separate original-shader color/depth
+exactly after the original geometry, constants and texture are mutated. The
+paired replay passes on WARP and the local hardware device through both routing
+paths. The native adapter adds creation-time shader/layout metadata, tracked
+resource writes, native query scopes and actual left/right draw interception.
+Its hook integration tests remove both original calls while matching separate
+native color/depth results. These fixtures use owned data; they do not establish
+successful activation in LMU.

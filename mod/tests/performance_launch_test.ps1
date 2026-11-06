@@ -23,10 +23,13 @@ try {
     [Environment]::SetEnvironmentVariable('LMU_QV_SPS_PREPARE','1','Process')
     [Environment]::SetEnvironmentVariable('LMU_QV_SPS_OWNER_INPUTS','1','Process')
     $spsDefault=& $fixture -Mode quad
+    if($spsDefault.Info.Environment['LMU_QV_SPS_RENDER'] -ne '0' -or $spsDefault.Run.SpsRendering){throw 'SPS rendering must be opt-in'}
     if($spsDefault.Info.Environment['LMU_QV_SPS_PROFILE'] -ne '0' -or $spsDefault.Run.SpsCpuProfiling){throw 'Inherited SPS profiling survived default launch'}
     if($spsDefault.Info.Environment['LMU_QV_SPS_PREPARE'] -ne '0' -or $spsDefault.Run.SpsPreparation){throw 'Inherited SPS preparation survived default launch'}
     if($spsDefault.Info.Environment['LMU_QV_SPS_OWNER_INPUTS'] -ne '0' -or $spsDefault.Run.SpsOwnerInputs){throw 'Inherited owner capture survived default launch'}
     foreach($quiet in @($false,$true)){
+        $rendering=& $fixture -Mode quad -SpsRendering -DisableDiagnostics:$quiet
+        if($rendering.Info.Environment['LMU_QV_SPS_RENDER'] -ne '1' -or !$rendering.Run.SpsRendering -or !$rendering.Run.SpsPreparation -or $rendering.Run.SpsOwnerInputs){throw 'SPS rendering environment or preparation dependency mismatch'}
         $preparation=& $fixture -Mode quad -SpsPreparation -DisableDiagnostics:$quiet
         if($preparation.Info.Environment['LMU_QV_SPS_PREPARE'] -ne '1' -or !$preparation.Run.SpsPreparation -or $preparation.Run.SpsCpuProfiling -or $preparation.Run.RenderProfiling){throw 'SPS preparation must be independent of diagnostics/profiling'}
         if($preparation.Info.Environment['LMU_QV_SPS_OWNER_INPUTS'] -ne '0' -or $preparation.Run.SpsOwnerInputs){throw 'Camera preparation enabled heavy owner capture'}
@@ -36,6 +39,8 @@ try {
     $rejected=$false;try {& $fixture -Mode quad -SpsOwnerInputs|Out-Null} catch {$rejected=$true}
     if(!$rejected){throw 'Owner capture accepted without SPS preparation'}
     foreach($mode in @('trace','stereo-timing')){
+        $rejected=$false;try {& $fixture -Mode $mode -SpsRendering|Out-Null} catch {$rejected=$true}
+        if(!$rejected){throw 'SPS rendering accepted a non-quad mode'}
         $rejected=$false;try {& $fixture -Mode $mode -SpsPreparation|Out-Null} catch {$rejected=$true}
         if(!$rejected){throw 'SPS preparation accepted a non-quad mode'}
     }

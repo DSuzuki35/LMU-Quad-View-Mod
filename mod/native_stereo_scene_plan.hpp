@@ -1,5 +1,6 @@
 #pragma once
 #include "native_stereo_view_inputs.hpp"
+#include "native_stereo_source_effects.hpp"
 #include <unordered_map>
 
 namespace lmuqv {
@@ -12,6 +13,7 @@ struct NativeStereoSceneSource {
     NativeStereoClassifyFloat3 localPosition{},sortingPosition{};
     NativeStereoPositionKind positionKind=NativeStereoPositionKind::SortingPoint;
     std::vector<uint32_t> meshes; // Owned IDs, not engine mesh-array pointers.
+    NativeStereoSourceFinalization finalization=NativeStereoSourceFinalization::Unknown;
 };
 struct NativeStereoSceneInput {
     StereoFrameIdentity identity;
@@ -23,26 +25,31 @@ struct NativeStereoSceneInput {
     // Native comparator/order must be identified by the producer. There is no
     // default inference from a material ID or the other eye's visible list.
     std::vector<NativeStereoBucketOrder> buckets;
+    std::vector<NativeStereoOwnerLightInputs> lights;
 };
 struct NativeStereoScenePacket {
     uint32_t source=0,mesh=0,owner=0,bucket=0;
     float squaredDistance=0;
     uint64_t key()const{return (uint64_t(source)<<32)|mesh;}
 };
-enum class NativeStereoSceneEffectKind {SourceFlags,PositionCache,FinalizeSource,OwnerSubmission};
+enum class NativeStereoSceneEffectKind {SourceFlags,PositionCache,FinalizeSource,OwnerSubmission,PointLightEnd,SpotLightEnd};
 struct NativeStereoSceneEffect {
     unsigned eye=0;
     NativeStereoSceneEffectKind kind{};
     uint32_t owner=0,source=0,flags=0;
+    uint64_t value=0;
+    NativeStereoClassifyFloat3 position{};
 };
 struct NativeStereoScenePlan {
-    bool complete=false,renderingEligible=false;
+    bool complete=false,renderingEligible=false,sourceEffectsComplete=false;
     const char* reason="incomplete scene input";
     StereoFrameIdentity identity;
     NativeStereoOwnerPlanResult owners;
     std::array<std::vector<NativeStereoScenePacket>,2> eyes;
     std::vector<NativeStereoSceneEffect> effects;
     std::vector<uint32_t> finalSourceFlags;
+    std::vector<NativeStereoClassifyFloat3> finalSourcePositions;
+    std::vector<uint64_t> finalPointLightEnds,finalSpotLightEnds;
     size_t positionCalculations=0;
 };
 
@@ -56,10 +63,13 @@ inline NativeStereoScenePlan prepare_native_stereo_scene(const NativeStereoScene
         return refuse("stale or incomplete scene/view identity");
     if((_mm_getcsr()&0xffc0u)!=0x1f80u||std::fegetround()!=FE_TONEAREST)return refuse("unsupported scene FP controls");
     if(in.sources.size()>nativeStereoOwnerSourceLimit||in.world.size()!=in.owners.owners.size()||
-       in.buckets.size()>nativeStereoSceneBucketLimit)return refuse("scene input limits");
+       in.buckets.size()>nativeStereoSceneBucketLimit||(!in.lights.empty()&&in.lights.size()!=in.owners.owners.size()))return refuse("scene input limits");
     try {
         auto ownerInput=in.owners;for(unsigned eye=0;eye<2;++eye)ownerInput.views[eye]=in.views.eyes[eye].owner;
         auto ownerPlan=build_native_stereo_owner_plan(ownerInput);if(!ownerPlan.complete)return refuse("owner admission unavailable");
+        for(size_t i=0;i<in.lights.size();++i)if(in.lights[i].available&&
+            (in.lights[i].spotBegin!=ownerInput.owners[i].state.pendingValue||in.lights[i].spotEnd!=ownerInput.owners[i].state.currentValue))
+            return refuse("inconsistent native owner light vector");
         std::unordered_map<uint32_t,size_t> sourceIndex;size_t meshCount=0;
         const auto finite=[](const NativeStereoClassifyFloat3& p){return std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z);};
         for(size_t i=0;i<in.sources.size();++i){const auto& s=in.sources[i];
@@ -70,6 +80,8 @@ inline NativeStereoScenePlan prepare_native_stereo_scene(const NativeStereoScene
             if(!finite(s.localPosition)||!finite(s.sortingPosition)||!finite(s.candidate.position))return refuse("non-finite source position");
             if(s.positionKind!=NativeStereoPositionKind::SortingPoint&&s.positionKind!=NativeStereoPositionKind::IndependentPoint)
                 return refuse("unknown source position kind");
+            if(s.finalization!=NativeStereoSourceFinalization::Unknown&&s.finalization!=NativeStereoSourceFinalization::Noop&&
+               s.finalization!=NativeStereoSourceFinalization::Native)return refuse("unknown source finalization state");
             // View-dependent owner refresh/special emission is not bypassed.
             if(ownerInput.owners[s.owner].state.flags&(0x21000000u|0x102000u|0x40000u))return refuse("native source preparation path required");
             for(float value:in.world[s.owner])if(!std::isfinite(value))return refuse("non-finite owner world matrix");
@@ -83,6 +95,12 @@ inline NativeStereoScenePlan prepare_native_stereo_scene(const NativeStereoScene
         NativeStereoScenePlan out;out.identity=in.identity;out.owners=std::move(ownerPlan);
         out.finalSourceFlags.reserve(in.sources.size());for(const auto& s:in.sources)out.finalSourceFlags.push_back(s.candidate.candidateFlags);
         std::vector<NativeStereoClassifyFloat3> positions;positions.reserve(in.sources.size());for(const auto& s:in.sources)positions.push_back(s.sortingPosition);
+        if(!in.lights.empty()){
+            out.finalPointLightEnds.reserve(in.lights.size());out.finalSpotLightEnds.reserve(in.lights.size());
+            for(size_t i=0;i<in.lights.size();++i){out.finalPointLightEnds.push_back(in.lights[i].pointEnd);
+                out.finalSpotLightEnds.push_back(out.owners.finalStates[i].currentValue);}
+        }
+        bool unresolved=false;
         out.effects.reserve(in.sources.size()*8+ownerInput.owners.size()*2);
         const auto point=[&](const NativeStereoClassifyFloat3& p,const NativeStereoMatrix& m,NativeStereoClassifyFloat3& result){
             float values[3]{};
@@ -99,9 +117,11 @@ inline NativeStereoScenePlan prepare_native_stereo_scene(const NativeStereoScene
                     const auto write=[&](uint32_t value){if(flags!=value)out.effects.push_back({eye,NativeStereoSceneEffectKind::SourceFlags,owner,id,value});flags=value;};
                     if(state.flags&0x40000000u)write(flags&~0x8040u);
                     if(!(flags&0x8000u)){
-                        if(!point(source.localPosition,in.world[owner],positions[index]))return refuse("non-finite source transform");
+                        const auto& world=traversal.emissionWorld.empty()?in.world[owner]:traversal.emissionWorld[at];
+                        if(!point(source.localPosition,world,positions[index]))return refuse("non-finite source transform");
                         ++out.positionCalculations;write(flags|0x8000u);
-                        out.effects.push_back({eye,NativeStereoSceneEffectKind::PositionCache,owner,id,flags});
+                        NativeStereoSceneEffect cache{eye,NativeStereoSceneEffectKind::PositionCache,owner,id,flags};
+                        cache.position=positions[index];out.effects.push_back(cache);
                     }
                     auto candidate=source.candidate;const auto& view=in.views.eyes[eye].classification;
                     candidate.candidateFlags=flags;candidate.ownerFlags=state.flags;
@@ -114,7 +134,9 @@ inline NativeStereoScenePlan prepare_native_stereo_scene(const NativeStereoScene
                     if((classification.returnedFlags&0x20000u)&&!(state.flags&0x80000000u))return refuse("native intersection preparation required");
                     if(flags&0x1000000u){write(flags|0x40000u);continue;}
                     if(flags&0x50000u)continue;
-                    out.effects.push_back({eye,NativeStereoSceneEffectKind::FinalizeSource,owner,id,flags});
+                    if(source.finalization!=NativeStereoSourceFinalization::Noop){
+                        out.effects.push_back({eye,NativeStereoSceneEffectKind::FinalizeSource,owner,id,flags});unresolved=true;
+                    }
                     if(flags&0x220u)continue;
                     const auto& p=positions[index];const auto& v=view.viewPosition;
                     const float dx=p.x-v.x,dy=p.y-v.y,dz=p.z-v.z;
@@ -123,7 +145,19 @@ inline NativeStereoScenePlan prepare_native_stereo_scene(const NativeStereoScene
                        !std::isfinite(zz)||!std::isfinite(yx)||!std::isfinite(distance))return refuse("non-finite sorting distance");
                     buckets[source.bucket].push_back({index,distance});appended=true;
                 }
-                if(appended&&!state.attachmentPresent)out.effects.push_back({eye,NativeStereoSceneEffectKind::OwnerSubmission,owner,0,0});
+                if(appended&&!state.attachmentPresent){
+                    if(!in.lights.empty()&&native_stereo_owner_lights_scalar_only(in.lights[owner])){
+                        const auto& light=in.lights[owner];
+                        if(out.finalPointLightEnds[owner]!=light.pointBegin){
+                            out.effects.push_back({eye,NativeStereoSceneEffectKind::PointLightEnd,owner,0,0,light.pointBegin});
+                            out.finalPointLightEnds[owner]=light.pointBegin;
+                        }
+                        if(out.finalSpotLightEnds[owner]!=light.spotBegin){
+                            out.effects.push_back({eye,NativeStereoSceneEffectKind::SpotLightEnd,owner,0,0,light.spotBegin});
+                            out.finalSpotLightEnds[owner]=light.spotBegin;
+                        }
+                    }else{out.effects.push_back({eye,NativeStereoSceneEffectKind::OwnerSubmission,owner,0,0});unresolved=true;}
+                }
             }
             out.eyes[eye].reserve(meshCount);
             for(size_t b=0;b<buckets.size();++b){auto& items=buckets[b];const auto order=in.buckets[b];
@@ -135,7 +169,9 @@ inline NativeStereoScenePlan prepare_native_stereo_scene(const NativeStereoScene
                     out.eyes[eye].push_back({source.id,mesh,source.owner,uint32_t(b),item.second});}
             }
         }
-        out.complete=true;out.reason="owned independent source classification/order; native effects still required";return out;
+        out.finalSourcePositions=std::move(positions);out.sourceEffectsComplete=!unresolved;
+        out.complete=true;out.reason=unresolved?"owned source classification/order; native source effects still required":
+            "owned source classification/order and resolved scalar source effects; draw preparation remains native";return out;
     }catch(const std::bad_alloc&){return refuse("scene preparation allocation failure");}
      catch(...){return refuse("scene preparation failure");}
 }

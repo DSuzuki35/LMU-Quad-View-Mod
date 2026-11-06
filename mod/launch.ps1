@@ -7,6 +7,7 @@ param(
     [switch]$RenderProfiling,
     [switch]$SpsCpuProfiling,
     [switch]$SpsPreparation,
+    [switch]$SpsRendering,
     [switch]$SpsOwnerInputs,
     [switch]$DisableDiagnostics,
     [switch]$StereoDrawAudit,
@@ -47,6 +48,10 @@ if ($UseRuntimeSettings) {
 if ($Mode -eq 'stereo-timing' -and !$DisableDiagnostics) { $GpuTiming = $true }
 if ($GpuTiming -and $Mode -eq 'trace') { throw 'Use stereo-timing for native stereo GPU measurements; trace has no engine hooks' }
 if($RenderProfiling -and ($Mode -ne 'quad' -or $GpuTiming -or $Benchmark)){throw 'RenderProfiling requires quad mode without legacy GPU timing or Benchmark.'}
+if($SpsRendering -and ($Mode -ne 'quad' -or $SpsCpuProfiling -or $SpsOwnerInputs -or $RenderProfiling -or $GpuTiming -or $Benchmark -or $StereoDrawAudit -or $StereoShaderCapture -or $StereoPairProof -or $CpuUploadReuse -or $CpuOuterReuse)){
+    throw 'SpsRendering requires quad mode with profiling, audit, owner collection and CPU upload reuse disabled.'
+}
+if($SpsRendering){$SpsPreparation=$true}
 if($SpsPreparation -and $Mode -ne 'quad'){throw 'SpsPreparation requires quad mode.'}
 if($SpsOwnerInputs -and !$SpsPreparation){throw 'SpsOwnerInputs requires SpsPreparation; it collects one scene frame and can cause a hitch.'}
 if($SpsCpuProfiling -and ($Mode -ne 'quad' -or $RenderProfiling -or $GpuTiming -or $Benchmark -or $StereoDrawAudit -or $StereoShaderCapture -or $StereoPairProof -or $CaptureViews -or $PixelStats -or $ScenePixelStats)){throw 'SpsCpuProfiling requires quad mode with other profilers and heavy captures disabled.'}
@@ -113,6 +118,7 @@ $info.Environment['LMU_QV_VECTORXR_DIRECT_INPUTS'] = $(if ($Backend -eq 'VectorX
 $info.Environment['LMU_QV_PROFILE'] = $(if ($RenderProfiling) { '1' } else { '0' })
 $info.Environment['LMU_QV_SPS_PROFILE'] = $(if ($SpsCpuProfiling) { '1' } else { '0' })
 $info.Environment['LMU_QV_SPS_PREPARE'] = $(if ($SpsPreparation) { '1' } else { '0' })
+$info.Environment['LMU_QV_SPS_RENDER'] = $(if ($SpsRendering) { '1' } else { '0' })
 $info.Environment['LMU_QV_SPS_OWNER_INPUTS'] = $(if ($SpsOwnerInputs) { '1' } else { '0' })
 $info.Environment['LMU_QV_DIAGNOSTICS'] = $(if ($DisableDiagnostics) { '0' } else { '1' })
 $info.Environment['LMU_QV_STEREO_AUDIT'] = $(if ($StereoDrawAudit) { '1' } else { '0' })
@@ -152,6 +158,7 @@ $run = [pscustomobject]@{
     RenderProfiling=[bool]$RenderProfiling;RenderProfileSeconds=$RenderProfileSeconds
     SpsCpuProfiling=[bool]$SpsCpuProfiling
     SpsPreparation=[bool]$SpsPreparation
+    SpsRendering=[bool]$SpsRendering
     SpsOwnerInputs=[bool]$SpsOwnerInputs
     StereoDrawAudit=[bool]$StereoDrawAudit
     StereoShaderCapture=[bool]($StereoDrawAudit -and $StereoShaderCapture)

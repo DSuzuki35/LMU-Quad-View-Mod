@@ -49,7 +49,11 @@ clear; an owner rejected by flags/masks does not. A right-only subtree remains
 available even when the left eye rejects its parent. Attachments preserve their
 native bounds bypass. Both view masks and both bounds views are explicit inputs.
 
-Pending world refresh (`0x400000`), transformed-plane paths (`0x200000`), missing
+The owner planner now resolves ordinary pending world refresh (`0x400000`) from
+explicit owned local transforms, scales, corners and attachment snapshots before
+calling this bounds evaluator. Its legacy interface without these snapshots
+still refuses dirty owners. Camera-facing refresh, active extra-matrix effects,
+transformed-plane paths (`0x200000`), missing
 input and unsupported floating-point controls refuse the plan. Nonfinite inputs
 or reached arithmetic return empty results. The full FP environment is preserved.
 This does not implement source/material/bone preparation, independent candidate

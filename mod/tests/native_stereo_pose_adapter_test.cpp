@@ -23,22 +23,25 @@ NOINLINE bool probe(){
     volatile uint64_t scratch[32]{};scratch[0]=caller;
     CONTEXT c;const bool ok=capture_native_caller_context(caller,slot,c,readable);
     assert(ok&&c.Rip==caller&&c.Rsp==slot+8&&scratch[0]==caller);
-    if(checkRegisters)assert(c.Xmm6.Low==0x3f000000u&&c.Xmm7.Low==0xbe800000u&&c.Xmm8.Low==0x40000000u);
+    if(checkRegisters)assert(c.Xmm6.Low==0x3f000000u&&c.Xmm7.Low==0xbe800000u&&c.Xmm8.Low==0x40000000u&&
+        c.Xmm15.Low==0x3e8000003e800000ull&&c.Xmm15.High==0x3e8000003e800000ll);
     return ok;
 }
 void nonvolatileRegisters(){
-    // Owned x64 fixture, not captured game code. Set XMM6/7/8 before calling
+    // Owned x64 fixture, not captured game code. Set XMM6/7/8/15 before calling
     // the compiled probe; save/restore the host's nonvolatile register values.
     // The reader stops at the probe's caller, so it never unwinds this fixture.
-    std::vector<uint8_t> code{0x48,0x83,0xec,0x58,
+    std::vector<uint8_t> code{0x48,0x83,0xec,0x68,
         0x0f,0x29,0x74,0x24,0x20,0x0f,0x29,0x7c,0x24,0x30,0x44,0x0f,0x29,0x44,0x24,0x40,
+        0x44,0x0f,0x29,0x7c,0x24,0x50,
         0xb8,0x00,0x00,0x00,0x3f,0x66,0x0f,0x6e,0xf0,
         0xb8,0x00,0x00,0x80,0xbe,0x66,0x0f,0x6e,0xf8,
-        0xb8,0x00,0x00,0x00,0x40,0x66,0x44,0x0f,0x6e,0xc0,0x48,0xb8};
+        0xb8,0x00,0x00,0x00,0x40,0x66,0x44,0x0f,0x6e,0xc0,
+        0xb8,0x00,0x00,0x80,0x3e,0x66,0x44,0x0f,0x6e,0xf8,0x66,0x45,0x0f,0x70,0xff,0x00,0x48,0xb8};
     const auto target=reinterpret_cast<uintptr_t>(&probe);
     for(unsigned i=0;i<8;++i)code.push_back(uint8_t(target>>(8*i)));
     const uint8_t tail[]{0xff,0xd0,0x0f,0x28,0x74,0x24,0x20,0x0f,0x28,0x7c,0x24,0x30,
-        0x44,0x0f,0x28,0x44,0x24,0x40,0x48,0x83,0xc4,0x58,0xc3};
+        0x44,0x0f,0x28,0x44,0x24,0x40,0x44,0x0f,0x28,0x7c,0x24,0x50,0x48,0x83,0xc4,0x68,0xc3};
     code.insert(code.end(),std::begin(tail),std::end(tail));
     auto* memory=VirtualAlloc(nullptr,code.size(),MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE);assert(memory);
     std::memcpy(memory,code.data(),code.size());DWORD old=0;assert(VirtualProtect(memory,code.size(),PAGE_EXECUTE_READ,&old));
@@ -55,10 +58,14 @@ int main(){
     const auto rsp=reinterpret_cast<uintptr_t>(stack.data());
     const std::array<float,3> origin{9,8,7};const std::array<float,9> rotation{1,2,3,4,5,6,7,8,9};
     std::memcpy(stack.data()+0x50,origin.data(),12);std::memcpy(stack.data()+0xa8,rotation.data(),16);
-    std::memcpy(stack.data()+0x70,rotation.data()+4,16);std::memcpy(stack.data()+0x660,rotation.data()+8,4);
+    // Head rotations have changed the stack copy, while translation still
+    // consumes the original coefficients preserved in the native XMM15.
+    const std::array<float,4> headRotated{-14,25,-36,47};
+    std::memcpy(stack.data()+0x70,headRotated.data(),16);std::memcpy(stack.data()+0x660,rotation.data()+8,4);
     std::array<std::array<float,6>,2> scalars{{{1,2,3,4,5,6},{1,2,3,7,8,9}}};
     std::memcpy(state.data()+0x3e0,scalars.data(),48);
     CONTEXT c{};c.Rsp=rsp;c.Rbp=rsp+0x100;c.R14=77;c.R15=88;c.R13=1;
+    std::memcpy(&c.Xmm15,rotation.data()+4,16);
     const float x=.5f,y=-.25f,z=2;std::memcpy(&c.Xmm6.Low,&x,4);std::memcpy(&c.Xmm7.Low,&y,4);std::memcpy(&c.Xmm8.Low,&z,4);
     NativeStereoWorldPoseInput out;
     assert(capture_native_stereo_pose_input(c,state.data(),77,88,readable,out));

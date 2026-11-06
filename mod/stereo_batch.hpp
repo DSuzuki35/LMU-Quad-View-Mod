@@ -36,8 +36,8 @@ class StereoBatch {
         }
         return true;
     }
-    void record(ID3D11DeviceContext* context,ID3D11DeviceContext1* context1,const StereoDrawPacket& d,
-        bool paired,unsigned eye,const Allocations& allocations,StereoTargetBridge& targets,bool emulateOffsets){
+    template<class Targets>void record(ID3D11DeviceContext* context,ID3D11DeviceContext1* context1,const StereoDrawPacket& d,
+        bool paired,unsigned eye,const Allocations& allocations,Targets& targets,bool emulateOffsets){
         auto* rt=targets.color_target(paired?2:eye);context->OMSetRenderTargets(1,&rt,targets.depth_target(paired?2:eye));
         context->OMSetBlendState(d.blend.get(),d.blendFactor.data(),d.sampleMask);context->OMSetDepthStencilState(d.depth.get(),d.stencilRef);
         context->RSSetState(d.raster.get());context->RSSetViewports(1,&d.viewport);context->RSSetScissorRects(1,&d.scissor);
@@ -75,7 +75,7 @@ public:
     StereoBatch()=default;
     StereoBatch(const StereoBatch&)=delete;
     StereoBatch& operator=(const StereoBatch&)=delete;
-    bool prepare(ID3D11DeviceContext* context,const StereoFrameIdentity& key,StereoTargetBridge& targets,
+    template<class Targets>bool prepare(ID3D11DeviceContext* context,const StereoFrameIdentity& key,Targets& targets,
         const std::array<std::vector<StereoDrawPacket>,2>& input,bool forceOrdinaryConstants=false) noexcept {
         if(identity_.valid()&&identity_.thread!=GetCurrentThreadId()){reason_="foreign batch thread";return false;}
         if(phase_==Phase::Ready||phase_==Phase::Preparing){reason_="batch still in flight";return false;}
@@ -87,6 +87,7 @@ public:
         phase_=Phase::Preparing;identity_=key;statistics_={};commands_.reset();target_.reset();
         try {
             for(const auto& eye:input)for(const auto& d:eye)if(!stereo_draw_detail::valid(d,key,device.get()))return fail("incomplete/unsupported owned draw");
+            if(!targets.accepts_packets(input,key))return fail("target packet domain refused");
             std::array<std::vector<StereoBatchDraw>,2> order;
             std::unordered_map<uint64_t,size_t> rightIndex;
             for(size_t i=0;i<input[1].size();++i)if(!rightIndex.emplace(input[1][i].key,i).second)return fail("duplicate right draw key");
@@ -116,7 +117,7 @@ public:
             phase_=Phase::Ready;reason_="owned stereo commands prepared";return true;
         }catch(...){return fail("batch preparation allocation failure");}
     }
-    bool execute(ID3D11DeviceContext* context,const StereoFrameIdentity& key,StereoTargetBridge& targets){
+    template<class Targets>bool execute(ID3D11DeviceContext* context,const StereoFrameIdentity& key,Targets& targets){
         if(phase_!=Phase::Ready||context!=immediate_.get()||key!=identity_||key.thread!=GetCurrentThreadId()||
            !targets.matches(context,key)||targets.color_target(2)!=target_.get()||!constants_.ready(key,generation_))return false;
         StereoComRef<ID3D11Predicate> predicate;BOOL value=FALSE;context->GetPredication(predicate.put(),&value);if(predicate){reason_="predication changed before batch execution";return false;}

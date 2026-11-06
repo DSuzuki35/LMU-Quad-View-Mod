@@ -6,6 +6,7 @@
 #include <new>
 #include <vector>
 #include "native_stereo_owner_bounds.hpp"
+#include "native_stereo_world_refresh.hpp"
 
 namespace lmuqv {
 inline constexpr std::size_t nativeStereoOwnerNodeLimit = 4096;
@@ -35,12 +36,16 @@ struct NativeStereoOwnerPlanInput {
     // Optional ordered forest. Empty retains the single-root interface.
     // These are actual roots; no fabricated owner/callback joins the trees.
     std::vector<std::uint32_t> roots;
+    // Optional complete numeric snapshots. Empty preserves the admission-only
+    // interface, in which a pending world refresh must refuse.
+    std::vector<NativeStereoOwnerWorld> worldInputs;
 };
 enum class NativeStereoOwnerEye { Left, Right };
 enum class NativeStereoOwnerField { CurrentValue, Flags };
 enum class NativeStereoOwnerPlanReason {
     None, NodeLimit, SourceLimit, InvalidRoot, InvalidChildIndex, InvalidTree,
-    DuplicateSourceId, UnsupportedOwnerFlags, AllocationFailure, UnsupportedOwnerBounds
+    DuplicateSourceId, UnsupportedOwnerFlags, AllocationFailure, UnsupportedOwnerBounds,
+    UnsupportedOwnerWorld
 };
 struct NativeStereoOwnerTransition {
     NativeStereoOwnerEye eye{};
@@ -52,6 +57,7 @@ struct NativeStereoOwnerEyePlan {
     std::vector<std::uint32_t> ownerOrder;
     // State seen by source emission, before this owner's children/final clear.
     std::vector<NativeStereoOwnerState> emissionStates;
+    std::vector<Matrix> emissionWorld;
     std::vector<std::uint32_t> sourceOrder; // Unfiltered, owned source IDs in DFS order.
 };
 struct NativeStereoOwnerPlanResult {
@@ -60,6 +66,8 @@ struct NativeStereoOwnerPlanResult {
     bool renderingEligible{false};
     NativeStereoOwnerPlanReason reason{NativeStereoOwnerPlanReason::None};
     std::vector<NativeStereoOwnerState> finalStates;
+    std::vector<NativeStereoOwnerWorld> finalWorld;
+    size_t worldRefreshes=0;
     std::array<NativeStereoOwnerEyePlan, 2> eyes{};
     std::vector<NativeStereoOwnerTransition> transitions;
 };
@@ -80,6 +88,7 @@ inline NativeStereoOwnerPlanResult build_native_stereo_owner_plan(
     };
     const auto count = in.owners.size();
     if (count == 0 || count > nativeStereoOwnerNodeLimit) return refuse(Reason::NodeLimit);
+    if(!in.worldInputs.empty()&&in.worldInputs.size()!=count)return refuse(Reason::UnsupportedOwnerWorld);
     const auto rootCount=in.roots.empty()?size_t(1):in.roots.size();
     if (rootCount>count||(in.roots.empty()&&in.root>=count)) return refuse(Reason::InvalidRoot);
     std::size_t sourceCount = 0, edgeCount = 0;
@@ -125,9 +134,9 @@ inline NativeStereoOwnerPlanResult build_native_stereo_owner_plan(
         sourceIds.reserve(sourceCount);
         for (const auto& owner : in.owners) {
             // Conservative whole-tree refusal, even behind rejected parents.
-            if (!owner.state.attachmentPresent && (owner.state.flags & 0x400000u))
+            if (in.worldInputs.empty()&&!owner.state.attachmentPresent && (owner.state.flags & 0x400000u))
                 return refuse(Reason::UnsupportedOwnerFlags);
-            if (!owner.state.attachmentPresent && (owner.state.flags & 0x80000u))
+            if (in.worldInputs.empty()&&!owner.state.attachmentPresent && (owner.state.flags & 0x80000u))
                 for(const auto& view:in.views)
                     if(!classify_native_stereo_owner_bounds(owner.bounds,view.bounds,owner.state.flags).available)
                         return refuse(Reason::UnsupportedOwnerBounds);
@@ -138,11 +147,14 @@ inline NativeStereoOwnerPlanResult build_native_stereo_owner_plan(
             return refuse(Reason::DuplicateSourceId);
 
         NativeStereoOwnerPlanResult out;
+        out.finalWorld=in.worldInputs;
+        std::vector<unsigned char> worldChanged(count,0);
         out.finalStates.reserve(count);
         for (const auto& owner : in.owners) out.finalStates.push_back(owner.state);
         for (auto& eye : out.eyes) {
             eye.ownerOrder.reserve(count);
             eye.emissionStates.reserve(count);
+            if(!in.worldInputs.empty())eye.emissionWorld.reserve(count);
             eye.sourceOrder.reserve(sourceCount);
         }
         // Each eye can assign current, execute three bounds writes and clear flags.
@@ -150,6 +162,7 @@ inline NativeStereoOwnerPlanResult build_native_stereo_owner_plan(
         struct Frame { std::uint32_t owner; std::size_t nextChild; };
         std::vector<Frame> stack;
         stack.reserve(count);
+        std::vector<uint32_t> refreshStack;refreshStack.reserve(count);
         for (std::size_t eyeIndex = 0; eyeIndex < 2; ++eyeIndex) {
             const auto eye = eyeIndex == 0 ? NativeStereoOwnerEye::Left : NativeStereoOwnerEye::Right;
             const auto write = [&](std::uint32_t index, NativeStereoOwnerField field,
@@ -162,6 +175,24 @@ inline NativeStereoOwnerPlanResult build_native_stereo_owner_plan(
                     write(index,NativeStereoOwnerField::Flags,state.flags,flags);state.flags=flags;}
             };
             bool boundsFailed=false;
+            bool worldFailed=false;
+            const auto refreshTree=[&](uint32_t root){
+                refreshStack.clear();refreshStack.push_back(root);
+                while(!refreshStack.empty()){
+                    const auto index=refreshStack.back();refreshStack.pop_back();
+                    auto& world=out.finalWorld[index];auto& state=out.finalStates[index];
+                    if(world.attachmentIndex < -1 || world.attachmentIndex>=int32_t(count))return false;
+                    const auto* parent=world.attachmentIndex>=0?&out.finalWorld[size_t(world.attachmentIndex)]:nullptr;
+                    const auto refreshed=refresh_native_stereo_world(world,state.flags,state.attachmentPresent,parent);
+                    if(!refreshed.complete)return false;
+                    if(refreshed.skipped)continue;
+                    write(index,NativeStereoOwnerField::Flags,state.flags,refreshed.flags);
+                    state.flags=refreshed.flags;world=refreshed.world;worldChanged[index]=1;++out.worldRefreshes;
+                    const auto& children=in.owners[index].children;
+                    for(auto i=children.rbegin();i!=children.rend();++i)refreshStack.push_back(*i);
+                }
+                return true;
+            };
             const auto enter = [&](std::uint32_t index) {
                 auto& state = out.finalStates[index];
                 if (!state.attachmentPresent) {
@@ -172,8 +203,16 @@ inline NativeStereoOwnerPlanResult build_native_stereo_owner_plan(
                 if ((state.flags & 0x20000u) || (state.mask & in.globalMask) != state.mask ||
                     (state.mask & in.views[eyeIndex].mask) != state.mask) return false;
                 if (!state.attachmentPresent) {
+                    if(state.flags&0x400000u){
+                        if(out.finalWorld.empty()||!refreshTree(index)){worldFailed=true;return false;}
+                    }
                     if(state.flags&0x80000u){
-                        const auto bounds=classify_native_stereo_owner_bounds(in.owners[index].bounds,in.views[eyeIndex].bounds,state.flags);
+                        auto inputBounds=in.owners[index].bounds;
+                        if(worldChanged[index]){
+                            const auto& w=out.finalWorld[index];inputBounds.available=true;
+                            inputBounds.corners=w.worldCorners;inputBounds.center=w.center;inputBounds.radius=w.radius;
+                        }
+                        const auto bounds=classify_native_stereo_owner_bounds(inputBounds,in.views[eyeIndex].bounds,state.flags);
                         if(!bounds.available){boundsFailed=true;return false;}
                         for(unsigned i=0;i<bounds.writeCount;++i){
                             write(index,NativeStereoOwnerField::Flags,state.flags,bounds.flagWrites[i]);state.flags=bounds.flagWrites[i];}
@@ -187,6 +226,7 @@ inline NativeStereoOwnerPlanResult build_native_stereo_owner_plan(
                 auto& plan = out.eyes[eyeIndex];
                 plan.ownerOrder.push_back(index);
                 plan.emissionStates.push_back(state);
+                if(!out.finalWorld.empty())plan.emissionWorld.push_back(out.finalWorld[index].world);
                 const auto& ids = in.owners[index].sourceIds;
                 plan.sourceOrder.insert(plan.sourceOrder.end(), ids.begin(), ids.end());
                 return true;
@@ -206,6 +246,7 @@ inline NativeStereoOwnerPlanResult build_native_stereo_owner_plan(
               }
             }
             if(boundsFailed)return refuse(Reason::UnsupportedOwnerBounds);
+            if(worldFailed)return refuse(Reason::UnsupportedOwnerWorld);
         }
         out.complete = true;
         return out;

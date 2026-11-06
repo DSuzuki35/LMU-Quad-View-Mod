@@ -33,6 +33,7 @@ public:
     uint32_t inputSlots=0;
     std::array<std::array<uint32_t,4>,2> resourceSlots{};
     bool direct=false;
+    bool fullColorOutput=false;
 };
 class StereoPipelineCache {
     StereoComRef<ID3D11Device> device_;
@@ -81,7 +82,8 @@ public:
                     if(FAILED(reflection->GetOutputParameterDesc(i,&output))||
                        (output.SystemValueType!=D3D_NAME_DEPTH&&output.SystemValueType!=D3D_NAME_DEPTH_GREATER_EQUAL&&
                         output.SystemValueType!=D3D_NAME_DEPTH_LESS_EQUAL&&
-                        (output.SystemValueType!=D3D_NAME_TARGET||output.SemanticIndex))){reason_="pixel shader requires an unsupported output target";return {};}}
+                        (output.SystemValueType!=D3D_NAME_TARGET||output.SemanticIndex))){reason_="pixel shader requires an unsupported output target";return {};}
+                    if(output.SystemValueType==D3D_NAME_TARGET&&!output.SemanticIndex&&output.Mask==15)p->fullColorOutput=true;}
                 for(UINT i=0;i<desc.BoundResources;++i){D3D11_SHADER_INPUT_BIND_DESC b{};
                     if(FAILED(reflection->GetResourceBindingDesc(i,&b))){reason_="shader binding reflection failed";return {};}
                     if(b.Type==D3D_SIT_CBUFFER||b.Type==D3D_SIT_SAMPLER)continue;

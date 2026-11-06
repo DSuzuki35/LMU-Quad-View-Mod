@@ -48,6 +48,7 @@ class StereoResourceLease {
 public:
     explicit operator bool()const{return bool(frozen_);}
     ID3D11Resource* resource()const{return frozen_?frozen_->resource.get():nullptr;}
+    ID3D11Resource* source_resource()const{return frozen_?frozen_->source.get():nullptr;}
     const StereoFrameIdentity& identity()const{return identity_;}
     bool same_contents(const StereoResourceLease& other)const{return frozen_&&frozen_==other.frozen_;}
 };
@@ -59,6 +60,7 @@ class StereoShaderResourceLease {
 public:
     explicit operator bool()const{return bool(resource_)&&bool(view_);}
     ID3D11ShaderResourceView* view()const{return view_.get();}
+    ID3D11Resource* source_resource()const{return resource_.source_resource();}
     const StereoFrameIdentity& identity()const{return resource_.identity();}
     bool same_binding(const StereoShaderResourceLease& other)const{
         return resource_.same_contents(other.resource_)&&!std::memcmp(&desc_,&other.desc_,sizeof(desc_));
@@ -131,6 +133,9 @@ public:
         out.resource_=lease;out.view_->GetDesc(&out.desc_);return out;
     }
     uint64_t copied_bytes()const{return copied_;}
+    bool matches(ID3D11DeviceContext* context,const StereoFrameIdentity& key)const{
+        return context_.get()==context&&identity_==key&&key.valid()&&key.thread==GetCurrentThreadId();
+    }
     size_t snapshots_created()const{return created_;}
     const char* reason()const{return reason_;}
 };

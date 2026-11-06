@@ -12,6 +12,7 @@
 #include "swapchain_sampling.hpp"
 #include "submission_pose.hpp"
 #include "stereo_audit.hpp"
+#include "native_sps.hpp"
 #include "vrs_gaze.hpp"
 #include "vrs_foveation.hpp"
 #include "benchmark_overlay.hpp"
@@ -494,6 +495,7 @@ XrResult XRAPI_CALL layerDestroyInstance(XrInstance instance) {
     std::lock_guard<std::recursive_mutex> lock(stateMutex);
     logf("xrDestroyInstance");
     if(s.session) {lmuqv::engine_stop();clearSession();}
+    lmuqv::native_sps_stop();
     lmuqv::stereo_audit_stop(); // Also releases early hooks when no session was created.
     XrResult r=next.DestroyInstance(instance);
     if(XR_SUCCEEDED(r)) s=State{};
@@ -1119,6 +1121,9 @@ XrResult XRAPI_CALL layerCreateApiLayerInstance(const XrInstanceCreateInfo* info
     }
     if(s.pixelEnabled)logf("pixel_stats_enabled minimumFrame=30 oneFrame=1 requireScene=%d",s.pixelRequireScene);
     char auditSetting[8]{};
+    char spsRenderSetting[8]{};
+    if(quad&&GetEnvironmentVariableA("LMU_QV_SPS_RENDER",spsRenderSetting,sizeof(spsRenderSetting))==1&&spsRenderSetting[0]=='1')
+        lmuqv::native_sps_prepare(true,lmuqv::log_line);
     if(quad&&lmuqv::diagnostics_enabled()&&GetEnvironmentVariableA("LMU_QV_STEREO_AUDIT",auditSetting,sizeof(auditSetting))==1&&auditSetting[0]=='1'){
         const auto auditDirectory=environmentWide(L"LMU_QV_STEREO_AUDIT_DIR");
         lmuqv::stereo_audit_prepare(true,auditDirectory.c_str(),lmuqv::log_line);

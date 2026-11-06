@@ -1,5 +1,9 @@
 # Single-pass stereo development
 
+Read the [current maintainer handoff](SPS-HANDOFF.md) first. It supersedes the
+historical implementation status below and distinguishes owned backend tests
+from actual native pass replacement.
+
 This integration carries the SPS research from `experiment/sps-0.2.0` at
 `61a5940` onto main v0.3.3 at `c38e122`. It does not enable native single-pass
 stereo. Older entries below retain their original version targets and source

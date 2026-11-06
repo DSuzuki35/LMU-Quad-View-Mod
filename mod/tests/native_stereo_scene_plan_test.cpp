@@ -17,7 +17,7 @@ NativeStereoSceneInput fixture(){
         in.owners.owners[i].sourceIds={s.id};in.sources.push_back(s);}
     in.sources[0].meshes={11,12};return in;
 }
-void empty(const NativeStereoScenePlan& p){assert(!p.complete&&!p.renderingEligible&&p.eyes[0].empty()&&p.eyes[1].empty()&&p.effects.empty()&&p.finalSourceFlags.empty()&&!p.owners.complete);}
+void empty(const NativeStereoScenePlan& p){assert(!p.complete&&!p.renderingEligible&&!p.sourceEffectsComplete&&p.eyes[0].empty()&&p.eyes[1].empty()&&p.effects.empty()&&p.finalSourceFlags.empty()&&p.finalSourcePositions.empty()&&p.finalPointLightEnds.empty()&&p.finalSpotLightEnds.empty()&&!p.owners.complete);}
 int main(){
     NativeStereoFpGuard defaults(true);auto in=fixture();auto out=prepare_native_stereo_scene(in);
     assert(out.complete&&!out.renderingEligible&&out.eyes[0].size()==3&&out.eyes[1].size()==4&&out.positionCalculations==0);
@@ -40,6 +40,40 @@ int main(){
     assert(out.eyes[0][0].squaredDistance==125&&out.eyes[1][0].squaredDistance==325);
     assert(out.owners.eyes[0].emissionStates[0].flags&0x40000000);
     assert(!(out.owners.eyes[1].emissionStates[0].flags&0x40000000));
+    // Source position caches consume the refreshed matrix at emission time,
+    // including a world refresh first reached only by the right traversal.
+    in=fixture();in.owners.worldInputs.resize(3);
+    for(unsigned i=0;i<3;++i){auto& w=in.owners.worldInputs[i];w.available=true;w.local=w.world=identity();w.local[12]=float(10*(i+1));}
+    in.owners.owners[1].state.flags=0x400000;
+    out=prepare_native_stereo_scene(in);
+    assert(out.complete&&out.owners.worldRefreshes==1&&out.positionCalculations==1);
+    assert(out.eyes[1][2].source==200&&out.eyes[1][2].squaredDistance==656);
+    assert(in.world[1][12]==0&&out.owners.eyes[1].emissionWorld[1][12]==20);
+    // Actual null/already-finalized sources and empty/bypassed light scans have
+    // no unresolved native source callback, but scalar vector clears remain.
+    in=fixture();in.lights.resize(3);
+    for(unsigned i=0;i<3;++i){auto& light=in.lights[i];light.available=true;
+        light.pointBegin=100+i*100;light.pointEnd=light.pointBegin+16;
+        light.spotBegin=500+i*100;light.spotEnd=light.spotBegin+8;
+        in.owners.owners[i].state.pendingValue=light.spotBegin;in.owners.owners[i].state.currentValue=light.spotEnd;
+        in.sources[i].finalization=NativeStereoSourceFinalization::Noop;}
+    out=prepare_native_stereo_scene(in);assert(out.complete&&out.sourceEffectsComplete&&!out.renderingEligible);
+    assert(out.finalPointLightEnds==std::vector<uint64_t>({100,200,300})&&out.finalSpotLightEnds==std::vector<uint64_t>({500,600,700}));
+    unsigned clears=0;for(const auto& effect:out.effects){
+        assert(effect.kind!=NativeStereoSceneEffectKind::FinalizeSource&&effect.kind!=NativeStereoSceneEffectKind::OwnerSubmission);
+        if(effect.kind==NativeStereoSceneEffectKind::PointLightEnd){assert(effect.eye==0||effect.owner==1);++clears;}}
+    assert(clears==3);
+    // A rejected owner resets its spot vector at entry, retaining point lights.
+    in.owners.owners[1].state.mask=4;out=prepare_native_stereo_scene(in);
+    assert(out.complete&&out.sourceEffectsComplete&&out.finalPointLightEnds[1]==216&&out.finalSpotLightEnds[1]==600);
+    auto& light=in.lights[0];light.pointSceneBegin=1000;light.pointSceneEnd=1008;light.pointLimit=1;
+    out=prepare_native_stereo_scene(in);assert(out.complete&&!out.sourceEffectsComplete);
+    light.pointLimit=-1;assert(!prepare_native_stereo_scene(in).sourceEffectsComplete);
+    light.flags=2;assert(prepare_native_stereo_scene(in).sourceEffectsComplete);
+    light.flags=0;light.pointLimit=0;assert(prepare_native_stereo_scene(in).sourceEffectsComplete);
+    light.spotSceneBegin=1000;light.spotSceneEnd=1008;light.spotLimit=1;
+    assert(!prepare_native_stereo_scene(in).sourceEffectsComplete);light.flags=4;assert(prepare_native_stereo_scene(in).sourceEffectsComplete);
+    ++light.spotBegin;empty(prepare_native_stereo_scene(in));
     in=fixture();in.sources[1].candidate.farCoefficient=10;out=prepare_native_stereo_scene(in);assert(out.complete&&out.eyes[1].size()==3);
     in=fixture();in.sources[0].positionKind=NativeStereoPositionKind::IndependentPoint;
     in.sources[0].candidate.position={0,0,2};in.sources[0].sortingPosition={0,0,50};in.sources[0].candidate.farCoefficient=10;

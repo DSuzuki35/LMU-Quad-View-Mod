@@ -65,14 +65,16 @@ try {
     $basic=@('math','focus_box','native_xr_views','gpu_timing','render_profile','swapchain_sampling','pipeline_stats','benchmark_control','vrs_scope_policy','nv_vrs','ui_d3d_state','focus_overlay','outer_resample','native_outer_texture','native_outer_bindings','stereo_instancing','stereo_audit_abi','stereo_audit','stereo_shader','stereo_draw_proof','native_upload_reuse','native_upload_batch','focus_image_lease')
     $basic += @('benchmark_timing_ownership','render_view_snapshot','frame_submission','late_begin_frame','view_crop','benchmark_native','benchmark_overlay','benchmark_frame','benchmark_gpu','vrs_foveation','vrs_gaze','native_outer_bank')
     $basic += @('stereo_audit_trigger','native_stereo_packets','native_stereo_camera','native_stereo_source','native_stereo_transform_audit','sps_cpu_profile','sps_cpu_profile_hooks')
-    $basic += @('stereo_gpu_resources','stereo_targets','stereo_constant_arena','stereo_pipeline','stereo_batch')
+    $basic += @('stereo_gpu_resources','stereo_targets','stereo_constant_arena','stereo_pipeline','stereo_batch','stereo_draw_capture','stereo_opaque_layer')
+    $basic += @('native_sps_hooks')
     foreach($test in $basic){
         $sources=@("tests/${test}_test.cpp")
         if($test -eq 'nv_vrs'){$sources+='nv_vrs.cpp'}
-        if($test -in @('stereo_shader','stereo_pipeline','stereo_batch')){$sources+='stereo_shader.cpp'}
+        if($test -in @('stereo_shader','stereo_pipeline','stereo_batch','stereo_draw_capture','stereo_opaque_layer')){$sources+='stereo_shader.cpp'}
         if($test -eq 'stereo_draw_proof'){$sources+=@('stereo_shader.cpp','stereo_draw_proof.cpp')}
         if($test -in @('stereo_audit','native_stereo_transform_audit')){$sources+=@('stereo_audit.cpp','stereo_shader.cpp','stereo_draw_proof.cpp');$sources+=$hooks}
         if($test -eq 'sps_cpu_profile_hooks'){$sources+=$hooks}
+        if($test -eq 'native_sps_hooks'){$sources+=@('native_sps.cpp','stereo_shader.cpp');$sources+=$hooks}
         Compile ($common+$sources+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+(Join-Path $build ($test+'_test.exe')))))
         if($test -eq 'vrs_scope_policy'){Run-Test ($test+'_test') @('--policy-only')}
         else{Run-Test ($test+'_test')}
@@ -82,14 +84,14 @@ try {
     foreach($optimization in @('/Od','/O2')){
         $numericCommon=@($common | Where-Object { $_ -ne '/O2' })+@($optimization)
         $suffix=if($optimization -eq '/Od'){'O0'}else{'O2'}
-        foreach($test in @('native_stereo_classify','native_stereo_classify_capture','native_stereo_owner_bounds','native_stereo_owner_plan','native_stereo_transform','native_stereo_focus_inputs','native_stereo_world_pose','native_stereo_pose_adapter','native_stereo_view_inputs','native_stereo_view_inverse','native_stereo_view_producer','native_stereo_scene_plan','native_stereo_owner_inputs','native_stereo_constants','stereo_batch_plan','stereo_constants')){
+        foreach($test in @('native_stereo_classify','native_stereo_classify_capture','native_stereo_owner_bounds','native_stereo_owner_plan','native_stereo_world_refresh','native_stereo_transform','native_stereo_focus_inputs','native_stereo_world_pose','native_stereo_pose_adapter','native_stereo_view_inputs','native_stereo_view_inverse','native_stereo_view_producer','native_stereo_scene_plan','native_stereo_scene_inputs','native_stereo_owner_inputs','native_stereo_constants','stereo_batch_plan','stereo_constants')){
             $name=$test+'_test_'+$suffix
             Compile ($numericCommon+@("tests/${test}_test.cpp",('/Fe'+(Join-Path $build ($name+'.exe')))))
             Run-Test $name
         }
     }
     foreach($test in @('engine_hooks','native_outer_fallback','benchmark_engine')){
-        Compile ($common+@("tests/${test}_test.cpp",'nv_vrs.cpp','stereo_audit.cpp','stereo_shader.cpp','stereo_draw_proof.cpp')+$hooks+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+(Join-Path $build ($test+'_test.exe')))))
+        Compile ($common+@("tests/${test}_test.cpp",'nv_vrs.cpp','native_sps.cpp','stereo_audit.cpp','stereo_shader.cpp','stereo_draw_proof.cpp')+$hooks+@('d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+(Join-Path $build ($test+'_test.exe')))))
         Run-Test ($test+'_test')
     }
     Run-Test 'engine_hooks_test' @('--process-identity')
@@ -115,7 +117,7 @@ try {
     Run-Test 'stereo_audit_test' @('--diagnostics-off')
     Run-Test 'stereo_audit_test' @('--shader-export')
     Run-Test 'stereo_audit_test' @('--pair-proof')
-    Compile ($common+@('/LD','xr_layer.cpp','engine_bridge.cpp','nv_vrs.cpp','stereo_audit.cpp','stereo_shader.cpp','stereo_draw_proof.cpp')+$hooks+@($versionResource,'d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+$LayerOutput)))
+    Compile ($common+@('/LD','xr_layer.cpp','engine_bridge.cpp','native_sps.cpp','nv_vrs.cpp','stereo_audit.cpp','stereo_shader.cpp','stereo_draw_proof.cpp')+$hooks+@($versionResource,'d3d11.lib','d3dcompiler.lib','advapi32.lib',('/Fe'+$LayerOutput)))
     $hasher=[Security.Cryptography.SHA256]::Create()
     $binaryStream=[IO.File]::OpenRead($LayerOutput)
     try { Write-Output ('SHA256 '+[BitConverter]::ToString($hasher.ComputeHash($binaryStream)).Replace('-','')) }

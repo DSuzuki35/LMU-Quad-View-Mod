@@ -91,9 +91,10 @@ public:
         pending_=false;
         if(!native_stereo_transform_default_controls(_mm_getcsr())||mode!=1||(transformFlags&2u)||
            !native_camera_detail::rigid(current))return fail("unsupported native pose transform");
-        if(!native_world_pose_detail::same(position,positions_[0])||
-           !native_world_pose_detail::same(current,native_world_pose_detail::set_position(current,position)))
-            return fail("native left pose does not match produced position");
+        if(!native_world_pose_detail::same(position,positions_[0]))
+            return fail("native left position differs from produced position");
+        if(!native_world_pose_detail::same(current,native_world_pose_detail::set_position(current,position)))
+            return fail("native left transform position arithmetic differs");
         pair_.constantPosition=positions_;pair_.current[0]=current;
         pair_.current[1]=native_world_pose_detail::set_position(current,positions_[1]);
         if(!native_camera_detail::finite(pair_.current[1]))return fail("non-finite right native pose");

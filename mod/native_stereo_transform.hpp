@@ -9,7 +9,8 @@ namespace lmuqv {
 // Preserve the signed preparation result and the exact original FP environment.
 // Diagnostic failures never retry/suppress the original; original exceptions propagate.
 template<class Begin,class Native,class End>
-int invoke_native_stereo_transform(Begin&& begin,Native&& native,End&& end) {
+int invoke_native_stereo_transform(Begin&& begin,Native&& native,End&& end,bool observe=true) {
+    if(!observe)return native();
     const unsigned entry=_mm_getcsr();
     using Token=decltype(begin(entry));Token token{};
     {NativeStereoFpGuard guard;try{token=begin(entry);}catch(...){}}
@@ -21,7 +22,8 @@ int invoke_native_stereo_transform(Begin&& begin,Native&& native,End&& end) {
 // The verified 0x562aca caller consumes no return value from 0x565260.
 // Forward its five arguments once and preserve FP state around diagnostics.
 template<class Begin,class Native,class End>
-void invoke_native_stereo_transform_helper(Begin&& begin,Native&& native,End&& end) {
+void invoke_native_stereo_transform_helper(Begin&& begin,Native&& native,End&& end,bool observe=true) {
+    if(!observe){native();return;}
     const unsigned entry=_mm_getcsr();
     using Token=decltype(begin(entry));Token token{};
     {NativeStereoFpGuard guard;try{token=begin(entry);}catch(...){}}
